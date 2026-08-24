@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+
+# uv
+uv.lock
+
+# Test / tooling
+.pytest_cache/
+.ruff_cache/
+
+# LMD skills are installed artefacts, reproducible via:
+#   lean-md skill install <name> --local
+.claude/skills/
