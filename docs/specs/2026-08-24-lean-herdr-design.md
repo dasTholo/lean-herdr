@@ -264,9 +264,8 @@ Nicht getestet: Herdr selbst, lean-ctx selbst, `claude --resume`.
 
 ## Offene Punkte
 
-1. **lean-ctx Projekt-Root** — steht auf `lean-ctx`/`lean-md` und wandert; die
-   ctx_*-Tools verweigern dadurch `lean-herdr`. `LEAN_CTX_EXTRA_ROOTS=/home/tholo/Scripts`
-   oder eigenes Fenster. Umgebung, nicht Design.
+1. ~~**lean-ctx Projekt-Root**~~ — erledigt 2026-08-24: `lean-herdr` ist in
+   `allow_paths` eingetragen, die ctx_*-Tools erreichen das Projekt.
 2. **`lean-ctx allow herdr`** — ohne diesen Eintrag kann ein Agent unter
    lean-ctx-Gating Herdr nicht steuern. Gehört ins README. Ebenso `uv`.
 3. **Probe-Plugins** — `probe.dot`, `probe.underscore`, `probe.all` sind aus der
