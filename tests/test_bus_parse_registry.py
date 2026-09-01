@@ -109,4 +109,4 @@ def test_agents_in_registry_liefert_pid_traeger(sample):
 def test_busmessage_ist_unveraenderlich():
     m = BusMessage.from_raw({"id": "a", "from_agent": "x"})
     with pytest.raises(FrozenInstanceError):
-        m.id = "b"  # type: ignore[misc]
+        m.id = "b"  # type: ignore[misc]  # ty: ignore[invalid-assignment]

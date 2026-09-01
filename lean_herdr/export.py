@@ -21,7 +21,8 @@ OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
 
 def _format(err: dict[str, Any]) -> str:
     name = err.get("name") or err.get("type") or "error"
-    data = err.get("data") if isinstance(err.get("data"), dict) else {}
+    roh = err.get("data")
+    data: dict[str, Any] = roh if isinstance(roh, dict) else {}
     message = data.get("message") or err.get("message") or ""
     status = data.get("statusCode") or data.get("status_code") or err.get("statusCode")
     teile = [str(name)]
