@@ -1,0 +1,121 @@
+{
+  "agents": [
+    {
+      "agent_id": "mcp-2018183-70c877bf",
+      "agent_type": "claude",
+      "pid": 2018183,
+      "project_root": "/home/tholo/Scripts/lean-herdr",
+      "role": "builder",
+      "started_at": "2026-09-01T09:58:12.114203991Z",
+      "last_active": "2026-09-01T10:04:44.882110447Z",
+      "status": "active",
+      "status_message": null,
+      "process_identity": "claude"
+    },
+    {
+      "agent_id": "mcp-2212801-3d19af52",
+      "agent_type": "opencode",
+      "pid": 2212801,
+      "project_root": null,
+      "role": "orchestrator",
+      "started_at": "2026-09-01T09:57:03.550117620Z",
+      "last_active": "2026-09-01T10:05:01.201884733Z",
+      "status": "active",
+      "status_message": null,
+      "process_identity": "opencode"
+    }
+  ],
+  "scratchpad": [
+    {
+      "id": "m-ohne-projekt",
+      "from_agent": "mcp-2212801-3d19af52",
+      "to_agent": "mcp-2018183-70c877bf",
+      "task_id": "T1",
+      "category": "task",
+      "priority": "normal",
+      "privacy": "project",
+      "message": "Bau die Funktion foo.",
+      "metadata": {"role": "builder", "branch": ""},
+      "project_root": null,
+      "timestamp": "2026-09-01T10:00:08.404790674Z",
+      "read_by": [],
+      "expires_at": null
+    },
+    {
+      "id": "m-mit-projekt",
+      "from_agent": "mcp-2018183-70c877bf",
+      "to_agent": "mcp-2212801-3d19af52",
+      "task_id": "T1",
+      "category": "result",
+      "priority": "normal",
+      "privacy": "project",
+      "message": "fertig, drei Tests gruen",
+      "metadata": {},
+      "project_root": "/home/tholo/Scripts/lean-herdr",
+      "timestamp": "2026-09-01T10:04:41.112097331Z",
+      "read_by": ["mcp-2212801-3d19af52"],
+      "expires_at": "2099-01-01T00:00:00.000000000Z"
+    },
+    {
+      "id": "m-fremdes-projekt",
+      "from_agent": "mcp-999999-aaaaaaaa",
+      "to_agent": null,
+      "task_id": null,
+      "category": "note",
+      "priority": "low",
+      "privacy": "project",
+      "message": "gehoert einem anderen Projekt",
+      "metadata": {},
+      "project_root": "/home/tholo/Scripts/anderes-projekt",
+      "timestamp": "2026-09-01T09:12:00.000000000Z",
+      "read_by": [],
+      "expires_at": null
+    },
+    {
+      "id": "m-abgelaufen",
+      "from_agent": "mcp-2018183-70c877bf",
+      "to_agent": "mcp-2212801-3d19af52",
+      "task_id": "T0",
+      "category": "result",
+      "priority": "normal",
+      "privacy": "project",
+      "message": "Antwort von gestern",
+      "metadata": {},
+      "project_root": null,
+      "timestamp": "2026-08-31T22:00:00.000000000Z",
+      "read_by": [],
+      "expires_at": "2026-09-01T06:00:00.000000000Z"
+    },
+    {
+      "id": "m-anonym",
+      "from_agent": "anonymous",
+      "to_agent": null,
+      "task_id": null,
+      "category": "note",
+      "priority": "normal",
+      "privacy": "project",
+      "message": "ein CLI-Post ohne Registrierung",
+      "metadata": {},
+      "project_root": null,
+      "timestamp": "2026-09-01T10:02:19.667401002Z",
+      "read_by": [],
+      "expires_at": null
+    },
+    {
+      "id": "m-blockiert",
+      "from_agent": "mcp-2018183-70c877bf",
+      "to_agent": "mcp-2212801-3d19af52",
+      "task_id": "T2",
+      "category": "blocked",
+      "priority": "high",
+      "privacy": "project",
+      "message": "brauche eine Entscheidung zum Datenmodell",
+      "metadata": {},
+      "project_root": null,
+      "timestamp": "2026-09-01T10:05:00.000000000Z",
+      "read_by": [],
+      "expires_at": null
+    }
+  ],
+  "updated_at": "2026-09-01T10:05:01.201884733Z"
+}
