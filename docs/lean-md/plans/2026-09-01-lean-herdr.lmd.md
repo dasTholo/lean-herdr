@@ -129,6 +129,11 @@ benutzt.
 
     [tool.pytest.ini_options]
     testpaths = ["tests"]
+    # Integrationstests laufen NUR auf ausdrueckliche Anforderung (`-m integration`).
+    # Ohne das hier fuehrt ein blosses `pytest -q` sie mit aus, sobald die Binaries
+    # installiert sind — und `herdr plugin link` registriert dann echt ein Plugin im
+    # System des Nutzers.
+    addopts = "-m 'not integration'"
     markers = [
         "integration: braucht echte lean-ctx-/herdr-/wt-Binaries, nicht in CI",
     ]
