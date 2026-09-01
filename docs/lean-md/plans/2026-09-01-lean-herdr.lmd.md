@@ -122,6 +122,11 @@ benutzt.
     line-length = 100
     target-version = "py314"
 
+    [tool.ruff.lint.per-file-ignores]
+    # PGH005 haelt FakeProc.called_with(...) fuer eine Mock-Assertion. FakeProc ist
+    # kein Mock, called_with eine real definierte Methode in tests/doubles.py.
+    "tests/*.py" = ["PGH005"]
+
     [tool.pytest.ini_options]
     testpaths = ["tests"]
     markers = [
