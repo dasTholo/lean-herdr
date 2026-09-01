@@ -237,7 +237,7 @@ benutzt.
         with pytest.raises(BusError):
             canonical_root(tmp_path)
 
-@call tdd(canonical_root_aus_linked_worktree)
+@call tdd(-k canonical_root_aus_linked_worktree)
 
 Run: `uv sync --dev` — Expected: `.venv` angelegt, pytest und ruff installiert.
 
@@ -256,16 +256,17 @@ Run: `uv sync --dev` — Expected: `.venv` angelegt, pytest und ruff installiert
 
 **Files:** Modify `lean_herdr/bus.py`. Create
 `tests/fixtures/registry.sample.json`, `tests/test_bus_parse_registry.py`.
-**Interfaces:** Produces `lean_herdr.bus.BusMessage` (frozen dataclass) und
-`parse_registry(data, *, project_root, task_id=None, from_agent=None) -> list[BusMessage]`
-sowie `read_registry(path=None) -> dict`.
+**Interfaces:** Produces `lean_herdr.bus.BusMessage` (frozen dataclass, mit
+`is_expired(now) -> bool`), `parse_zeit(text) -> datetime | None`,
+`parse_registry(data, *, project_root, task_id=None, from_agent=None, now=None) -> list[BusMessage]`
+sowie `read_registry(path=None) -> dict` und `agents_in_registry(data) -> list[dict]`.
 
 `ctx_agent read` verlangt Registrierung im selben Prozess, und `lean-ctx call` ist
 je Aufruf ein eigener Prozess — **es gibt keinen CLI-Weg, den Bus zu lesen** (B9).
 Die Datei ist der einzige Weg, und sie ist ein internes Format ohne Zusage. Der
 eingefrorene Test macht einen Bruch sichtbar; verhindern kann er ihn nicht.
 
-**Drei Befunde aus der echten Datei, die die Spec nicht nennt** — sie entscheiden
+**Vier Befunde aus der echten Datei, die die Spec nicht nennt** — sie entscheiden
 die Implementierung:
 
 1. Die Nachrichten liegen unter dem Top-Level-Schlüssel **`scratchpad`**, nicht
@@ -275,21 +276,160 @@ die Implementierung:
    Ein strikter Gleichheitsfilter verwirft fast alles. Regel: akzeptiert wird der
    kanonische Root **oder** `None` — nie ein fremder Pfad.
 3. `expires_at` ist ebenfalls oft `null`, trotz der behaupteten 12-h-TTL. Eine
-   Nachricht ohne `expires_at` gilt als nicht abgelaufen.
+   Nachricht ohne `expires_at` gilt als nicht abgelaufen — eine **mit** einem
+   vergangenen `expires_at` fällt weg. Sonst könnte eine tote Antwort von gestern
+   als aktuelles Ergebnis gewählt werden.
+4. Zeitstempel sind RFC 3339 mit **neun** Nachkommastellen
+   (`2026-08-01T15:10:08.404790674Z`). `datetime.fromisoformat` verträgt nur bis
+   zu sechs — ein direkter Aufruf wirft `ValueError`. Die Stelle ist gekürzt, nicht
+   gerundet.
 
-Erst die Probe ziehen, dann den Parser dagegen schreiben:
+Die Probe steht **wörtlich hier**, sie wird nicht aus der lebenden Registry
+gezogen. Zwei Gründe: ein `jq`-Schnitt über `~/.local/share/lean-ctx` hängt davon
+ab, dass auf dieser Maschine gerade passende Nachrichten liegen — auf einer
+frischen scheitert die Task an ihrer eigenen Vorbereitung. Und er nähme echte
+Nachrichten aus **fremden Projekten** mit ins Repo. Der Inhalt unten ist an der
+echten Datei abgelesen und dann anonymisiert; Form und Feldnamen sind unverändert.
 
-Run: `mkdir -p tests/fixtures && jq '{agents: [.agents[0:2][]], scratchpad: [.scratchpad[0:6][]], updated_at}' ~/.local/share/lean-ctx/agents/registry.json > tests/fixtures/registry.sample.json`
-— Expected: Datei existiert, `jq -e '.scratchpad | length > 0' tests/fixtures/registry.sample.json` ist wahr.
+`tests/fixtures/registry.sample.json` (neu):
+
+    {
+      "agents": [
+        {
+          "agent_id": "mcp-2018183-70c877bf",
+          "agent_type": "claude",
+          "pid": 2018183,
+          "project_root": "/home/tholo/Scripts/lean-herdr",
+          "role": "builder",
+          "started_at": "2026-09-01T09:58:12.114203991Z",
+          "last_active": "2026-09-01T10:04:44.882110447Z",
+          "status": "active",
+          "status_message": null,
+          "process_identity": "claude"
+        },
+        {
+          "agent_id": "mcp-2212801-3d19af52",
+          "agent_type": "opencode",
+          "pid": 2212801,
+          "project_root": null,
+          "role": "orchestrator",
+          "started_at": "2026-09-01T09:57:03.550117620Z",
+          "last_active": "2026-09-01T10:05:01.201884733Z",
+          "status": "active",
+          "status_message": null,
+          "process_identity": "opencode"
+        }
+      ],
+      "scratchpad": [
+        {
+          "id": "m-ohne-projekt",
+          "from_agent": "mcp-2212801-3d19af52",
+          "to_agent": "mcp-2018183-70c877bf",
+          "task_id": "T1",
+          "category": "task",
+          "priority": "normal",
+          "privacy": "project",
+          "message": "Bau die Funktion foo.",
+          "metadata": {"role": "builder", "branch": ""},
+          "project_root": null,
+          "timestamp": "2026-09-01T10:00:08.404790674Z",
+          "read_by": [],
+          "expires_at": null
+        },
+        {
+          "id": "m-mit-projekt",
+          "from_agent": "mcp-2018183-70c877bf",
+          "to_agent": "mcp-2212801-3d19af52",
+          "task_id": "T1",
+          "category": "result",
+          "priority": "normal",
+          "privacy": "project",
+          "message": "fertig, drei Tests gruen",
+          "metadata": {},
+          "project_root": "/home/tholo/Scripts/lean-herdr",
+          "timestamp": "2026-09-01T10:04:41.112097331Z",
+          "read_by": ["mcp-2212801-3d19af52"],
+          "expires_at": "2099-01-01T00:00:00.000000000Z"
+        },
+        {
+          "id": "m-fremdes-projekt",
+          "from_agent": "mcp-999999-aaaaaaaa",
+          "to_agent": null,
+          "task_id": null,
+          "category": "note",
+          "priority": "low",
+          "privacy": "project",
+          "message": "gehoert einem anderen Projekt",
+          "metadata": {},
+          "project_root": "/home/tholo/Scripts/anderes-projekt",
+          "timestamp": "2026-09-01T09:12:00.000000000Z",
+          "read_by": [],
+          "expires_at": null
+        },
+        {
+          "id": "m-abgelaufen",
+          "from_agent": "mcp-2018183-70c877bf",
+          "to_agent": "mcp-2212801-3d19af52",
+          "task_id": "T0",
+          "category": "result",
+          "priority": "normal",
+          "privacy": "project",
+          "message": "Antwort von gestern",
+          "metadata": {},
+          "project_root": null,
+          "timestamp": "2026-08-31T22:00:00.000000000Z",
+          "read_by": [],
+          "expires_at": "2026-09-01T06:00:00.000000000Z"
+        },
+        {
+          "id": "m-anonym",
+          "from_agent": "anonymous",
+          "to_agent": null,
+          "task_id": null,
+          "category": "note",
+          "priority": "normal",
+          "privacy": "project",
+          "message": "ein CLI-Post ohne Registrierung",
+          "metadata": {},
+          "project_root": null,
+          "timestamp": "2026-09-01T10:02:19.667401002Z",
+          "read_by": [],
+          "expires_at": null
+        },
+        {
+          "id": "m-blockiert",
+          "from_agent": "mcp-2018183-70c877bf",
+          "to_agent": "mcp-2212801-3d19af52",
+          "task_id": "T2",
+          "category": "blocked",
+          "priority": "high",
+          "privacy": "project",
+          "message": "brauche eine Entscheidung zum Datenmodell",
+          "metadata": {},
+          "project_root": null,
+          "timestamp": "2026-09-01T10:05:00.000000000Z",
+          "read_by": [],
+          "expires_at": null
+        }
+      ],
+      "updated_at": "2026-09-01T10:05:01.201884733Z"
+    }
 
 Die Probe wird anschließend **nicht mehr angefasst**. Sie ist der eingefrorene
 Vertrag; ein Formatwechsel bei lean-ctx bricht den Test sichtbar.
+
+Run: `jq -r '.scratchpad[0] | keys | join(",")' ~/.local/share/lean-ctx/agents/registry.json`
+— Expected: dieselben dreizehn Feldnamen wie in der Probe. Weichen sie ab, hat
+lean-ctx sein Format geändert — dann ist die Probe zu erneuern, nicht der Test
+aufzuweichen.
 
 Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hinter
 `canonical_root()`):
 
     import json
+    import re
     from dataclasses import dataclass
+    from datetime import datetime, timezone
     from typing import Any
 
     REGISTRY_PATH = Path.home() / ".local" / "share" / "lean-ctx" / "agents" / "registry.json"
@@ -297,6 +437,26 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
     #: Top-Level-Schluessel, unter dem lean-ctx die Bus-Nachrichten ablegt.
     #: An einer echten registry.json verifiziert (2026-09-01) — nicht "messages".
     MESSAGES_KEY = "scratchpad"
+
+    #: lean-ctx schreibt NEUN Nachkommastellen; fromisoformat vertraegt hoechstens
+    #: sechs und wirft sonst ValueError. Gemessen: 2026-08-01T15:10:08.404790674Z.
+    _NANOSEKUNDEN = re.compile(r"(\.\d{6})\d+")
+
+
+    def parse_zeit(text: str | None) -> datetime | None:
+        """RFC-3339-Zeitstempel → aware datetime. Unlesbares wird zu None.
+
+        None heisst hier ausdruecklich 'unbekannt', nicht 'jetzt' und nicht
+        'abgelaufen' — ein unlesbarer Zeitstempel darf keine Nachricht verwerfen.
+        """
+        if not text:
+            return None
+        normal = _NANOSEKUNDEN.sub(r"\1", str(text).replace("Z", "+00:00"))
+        try:
+            wert = datetime.fromisoformat(normal)
+        except ValueError:
+            return None
+        return wert if wert.tzinfo else wert.replace(tzinfo=timezone.utc)
 
 
     @dataclass(frozen=True)
@@ -335,6 +495,17 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
                 expires_at=raw.get("expires_at"),
             )
 
+        def is_expired(self, now: datetime) -> bool:
+            """Abgelaufen? Ohne oder mit unlesbarem expires_at: nein.
+
+            Die 12-h-TTL steht nur in der Dokumentation; im Feld ist das Feld
+            meistens null. Fehlt es, gilt die Nachricht unbegrenzt — steht dort
+            aber eine vergangene Zeit, ist sie tot und darf nicht mehr als
+            aktuelles Ergebnis durchgehen.
+            """
+            frist = parse_zeit(self.expires_at)
+            return frist is not None and frist <= now
+
 
     def read_registry(path: str | Path | None = None) -> dict[str, Any]:
         """registry.json laden. Fehlt sie oder ist sie kaputt: BusError.
@@ -362,12 +533,14 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
         project_root: str | Path,
         task_id: str | None = None,
         from_agent: str | None = None,
+        now: datetime | None = None,
     ) -> list[BusMessage]:
         """Bus-Nachrichten dieses Projekts, optional auf Aufgabe und Absender gefiltert.
 
         `project_root` ist ein Kanonisierungsergebnis (canonical_root()), kein $PWD.
         Nachrichten ohne `project_root` werden mitgenommen — lean-ctx setzt das Feld
-        nicht immer —, Nachrichten eines fremden Roots nie.
+        nicht immer —, Nachrichten eines fremden Roots nie. Abgelaufene fallen weg;
+        `now` ist injizierbar, damit der Test keine Uhr braucht.
         """
         if MESSAGES_KEY not in data:
             raise BusError(
@@ -375,12 +548,15 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
                 f"Format geaendert? vorhanden: {sorted(data)}"
             )
         wanted = str(Path(project_root).resolve())
+        jetzt = now if now is not None else datetime.now(timezone.utc)
         out: list[BusMessage] = []
         for raw in data[MESSAGES_KEY] or ():
             if not isinstance(raw, dict):
                 continue
             msg = BusMessage.from_raw(raw)
             if msg.project_root is not None and msg.project_root != wanted:
+                continue
+            if msg.is_expired(jetzt):
                 continue
             if task_id is not None and msg.task_id != task_id:
                 continue
@@ -397,6 +573,7 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
 `tests/test_bus_parse_registry.py` (neu):
 
     import json
+    from datetime import datetime, timezone
     from pathlib import Path
 
     import pytest
@@ -406,10 +583,14 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
         BusMessage,
         agents_in_registry,
         parse_registry,
+        parse_zeit,
         read_registry,
     )
 
     FIXTURE = Path(__file__).parent / "fixtures" / "registry.sample.json"
+    PROJEKT = "/home/tholo/Scripts/lean-herdr"
+    #: Fest, nicht `now()`: die Probe ist eingefroren, die Uhr darf nicht mitreden.
+    JETZT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 
 
     @pytest.fixture
@@ -432,11 +613,32 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
 
 
     def test_parse_registry_nimmt_projektlose_nachrichten_mit(sample):
-        msgs = parse_registry(sample, project_root="/home/tholo/Scripts/lean-herdr")
+        msgs = parse_registry(sample, project_root=PROJEKT, now=JETZT)
         assert msgs, "projektlose Nachrichten (project_root=null) duerfen nicht wegfallen"
-        assert all(
-            m.project_root in (None, "/home/tholo/Scripts/lean-herdr") for m in msgs
-        )
+        assert all(m.project_root in (None, PROJEKT) for m in msgs)
+        assert "m-fremdes-projekt" not in [m.id for m in msgs]
+
+
+    def test_neun_nachkommastellen_sind_lesbar():
+        """fromisoformat vertraegt hoechstens sechs — lean-ctx schreibt neun."""
+        wert = parse_zeit("2026-08-01T15:10:08.404790674Z")
+        assert wert is not None and wert.tzinfo is not None
+        assert wert.year == 2026 and wert.microsecond == 404790
+        assert parse_zeit(None) is None and parse_zeit("morgen frueh") is None
+
+
+    def test_abgelaufene_nachrichten_fallen_weg(sample):
+        """Eine tote Antwort von gestern darf nicht als Ergebnis durchgehen."""
+        ids = [m.id for m in parse_registry(sample, project_root=PROJEKT, now=JETZT)]
+        assert "m-abgelaufen" not in ids
+        assert "m-mit-projekt" in ids, "expires_at in der Zukunft bleibt gueltig"
+        assert "m-ohne-projekt" in ids, "ohne expires_at gilt unbegrenzt"
+
+
+    def test_vor_dem_ablauf_ist_die_nachricht_noch_da(sample):
+        frueher = datetime(2026, 9, 1, 5, 0, tzinfo=timezone.utc)
+        ids = [m.id for m in parse_registry(sample, project_root=PROJEKT, now=frueher)]
+        assert "m-abgelaufen" in ids
 
 
     def test_parse_registry_verwirft_fremden_root():
@@ -482,14 +684,16 @@ Ergänzung in `lean_herdr/bus.py` (neuer Code, an die bestehenden Importe und hi
         with pytest.raises(Exception):
             m.id = "b"  # type: ignore[misc]
 
-@call tdd(parse_registry_verwirft_fremden_root)
+@call tdd(-k parse_registry_verwirft_fremden_root)
+
+@call tdd(-k abgelaufene_nachrichten_fallen_weg)
 
 ### Verify & Close
 
 @call verify(lean_herdr/bus.py)
 @call gate(lean_herdr/bus.py tests/test_bus_parse_registry.py)
 @call commit("lean_herdr/bus.py tests/", "feat(bus): parse_registry gegen eingefrorene registry.json-Probe")
-@call remember_decision("lean-herdr: Bus-Nachrichten stehen in registry.json unter dem Schluessel 'scratchpad' (nicht 'messages'); project_root ist meist null und darf nicht wegfiltern; agents[].pid traegt den Join-Schluessel")
+@call remember_decision("lean-herdr: Bus-Nachrichten stehen in registry.json unter dem Schluessel 'scratchpad' (nicht 'messages'); project_root ist meist null und darf nicht wegfiltern; agents[].pid traegt den Join-Schluessel. expires_at wird ausgewertet: fehlt es, gilt die Nachricht unbegrenzt, liegt es in der Vergangenheit, faellt sie weg. Zeitstempel haben NEUN Nachkommastellen — fromisoformat vertraegt sechs, deshalb parse_zeit(). Die Fixture steht woertlich im Plan, sie wird nie aus der lebenden Registry gezogen (fremde Projektnachrichten gehoeren nicht ins Repo)")
 @phase-end
 
 @phase "task-3"
@@ -696,7 +900,7 @@ harmlosen `None` auf Systemen ohne `/proc`.
     def test_process_group_ohne_proc_ist_none(tmp_path: Path):
         assert process_group(1, tmp_path) is None
 
-@call tdd(resolve_agent_id_faellt_auf_die_prozessgruppe_zurueck)
+@call tdd(-k resolve_agent_id_faellt_auf_die_prozessgruppe_zurueck)
 
 ### Verify & Close
 
@@ -710,8 +914,12 @@ harmlosen `None` auf Systemen ohne `/proc`.
 ## Task 4: Export-Fehlererkennung — Erfolg am Inhalt, nie am Zustand
 
 **Files:** Create `lean_herdr/export.py`, `tests/test_export.py`.
-**Interfaces:** Produces `find_error(export) -> str | None` und
-`session_id_from_agent_list(agent_list, name) -> str | None`.
+**Interfaces:** Produces `find_error(export) -> str | None`,
+`session_id_from_agent_list(agent_list, name) -> str | None`,
+`claude_session_path(session_id, project_root) -> Path`,
+`read_jsonl(path) -> list[dict]`,
+`opencode_messages(session_id, db_path=None) -> list[dict]`,
+`session_error(kind, session_id, project_root) -> str | None`.
 
 `herdr agent prompt --wait` meldete Erfolg (`agent_status: idle`,
 `interactive_ready: true`) für einen Turn, der mit HTTP 401 gescheitert war (H1).
@@ -724,6 +932,30 @@ steht im nativen Session-Export:
 Die Session-ID dafür liefert Herdr selbst über `agent_session.value` — und sie
 **wechselt bei jedem `/clear`**, darf also nie gecacht werden (Fallstrick 1).
 
+**`herdr agent export` gibt es nicht.** Gegen herdr 0.8.2 nachgesehen:
+`herdr agent` kennt `list`, `get`, `read`, `send-keys`, `prompt`, `wait` — keinen
+Export. Herdr liefert nur die **ID**; den Export muss man dort holen, wo der Agent
+ihn ablegt, und das ist je Agentenart etwas völlig anderes:
+
+| Agent | Ablage | verifiziert |
+|---|---|---|
+| Claude Code | `~/.claude/projects/<slug>/<session_id>.jsonl`, `slug` = Projektpfad mit `/`→`-` | 11 Dateien im Projekt-Slug vorhanden |
+| opencode | SQLite `~/.local/share/opencode/opencode.db`, Tabelle `message`, Spalte `data` (JSON) | 5 Nachrichten mit `error` gefunden |
+
+Und das Fehlerobjekt darin ist **exakt das aus der Spec** — hier eine echte Zeile
+aus der opencode-DB:
+
+    {"name": "APIError", "data": {"message": "User not found.",
+     "statusCode": 401, "isRetryable": false, "responseHeaders": {…}}}
+
+`find_error()` liest beide Formen, weil es rekursiv nach `error` sucht.
+
+**Nebenbefund für die Spec:** dieselbe DB trägt `session.cost`,
+`session.tokens_input/output/cache_read` — real gefüllt (gemessen: $0.15, $0.20 je
+Sitzung). Die Spec sagt, ein echter Kostendeckel existiere nicht (H3, B5); das
+bleibt richtig für einen *Deckel*, aber eine **Messung** ist für opencode-Agenten
+sehr wohl möglich. Nicht Teil dieser Task — ein Punkt für die Spec.
+
 `lean_herdr/export.py` (neu):
 
     """Nativer Session-Export → Fehlerobjekt.
@@ -734,10 +966,16 @@ Die Session-ID dafür liefert Herdr selbst über `agent_session.value` — und s
 
     from __future__ import annotations
 
+    import json
+    import sqlite3
+    from pathlib import Path
     from typing import Any, Iterable
 
     #: Schluessel, unter denen die Agenten ihr Fehlerobjekt ablegen.
     ERROR_KEYS = ("error", "lastError", "last_error")
+
+    #: opencode legt seine Sitzungen in genau einer SQLite-Datei ab.
+    OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
 
 
     def _format(err: dict[str, Any]) -> str:
@@ -796,9 +1034,104 @@ Die Session-ID dafür liefert Herdr selbst über `agent_session.value` — und s
                 return session
         return None
 
+
+    # -- Die zwei Ablagen --------------------------------------------------
+
+    def claude_session_path(session_id: str, project_root: str | Path) -> Path:
+        """~/.claude/projects/<slug>/<session_id>.jsonl — slug = Pfad mit / → -."""
+        slug = str(Path(project_root).resolve()).replace("/", "-")
+        return Path.home() / ".claude" / "projects" / slug / f"{session_id}.jsonl"
+
+
+    def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
+        """JSONL-Zeilen lesen. Fehlt die Datei oder ist eine Zeile kaputt: ueberspringen."""
+        try:
+            roh = Path(path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return []
+        zeilen: list[dict[str, Any]] = []
+        for zeile in roh.splitlines():
+            zeile = zeile.strip()
+            if not zeile:
+                continue
+            try:
+                daten = json.loads(zeile)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(daten, dict):
+                zeilen.append(daten)
+        return zeilen
+
+
+    def opencode_messages(
+        session_id: str, db_path: str | Path | None = None
+    ) -> list[dict[str, Any]]:
+        """message.data dieser Sitzung aus opencodes SQLite-Ablage.
+
+        Nur lesend und `immutable=1`: opencode schreibt in dieselbe Datei, waehrend
+        wir lesen — ohne diese Flags riskiert man `database is locked`.
+        """
+        pfad = Path(db_path) if db_path is not None else OPENCODE_DB
+        if not pfad.is_file():
+            return []
+        try:
+            con = sqlite3.connect(f"file:{pfad}?mode=ro&immutable=1", uri=True, timeout=2.0)
+        except sqlite3.Error:
+            return []
+        try:
+            zeilen = con.execute(
+                "SELECT data FROM message WHERE session_id = ? ORDER BY time_created",
+                (session_id,),
+            ).fetchall()
+        except sqlite3.Error:
+            return []
+        finally:
+            con.close()
+        nachrichten: list[dict[str, Any]] = []
+        for (roh,) in zeilen:
+            try:
+                daten = json.loads(roh)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(daten, dict):
+                nachrichten.append(daten)
+        return nachrichten
+
+
+    def session_error(
+        kind: str,
+        session_id: str | None,
+        project_root: str | Path,
+        *,
+        db_path: str | Path | None = None,
+    ) -> str | None:
+        """Der Fehler dieser Sitzung, egal welcher Agent sie gefuehrt hat.
+
+        None heisst: kein Fehler gefunden — auch dann, wenn die Ablage fehlt.
+        Der Aufrufer unterscheidet das nicht, weil beides dieselbe Folge hat:
+        es gibt keinen Beleg fuer ein Scheitern, also bleibt es bei `no_reply`.
+        """
+        if not session_id:
+            return None
+        if kind == "claude":
+            return find_error(read_jsonl(claude_session_path(session_id, project_root)))
+        if kind == "opencode":
+            return find_error(opencode_messages(session_id, db_path))
+        return None
+
 `tests/test_export.py` (neu):
 
-    from lean_herdr.export import find_error, session_id_from_agent_list
+    import json
+    import sqlite3
+
+    from lean_herdr.export import (
+        claude_session_path,
+        find_error,
+        opencode_messages,
+        read_jsonl,
+        session_error,
+        session_id_from_agent_list,
+    )
 
     GESCHEITERT = {
         "messages": [
@@ -842,7 +1175,69 @@ Die Session-ID dafür liefert Herdr selbst über `agent_session.value` — und s
         assert session_id_from_agent_list(agents, "builder") == "1b7c63c4"
         assert session_id_from_agent_list(agents, "weg") is None
 
-@call tdd(find_error_liest_die_verschachtelte_apierror)
+
+    def test_claude_pfad_ist_der_slug_des_projektwurzelpfads(tmp_path):
+        pfad = claude_session_path("abc123", tmp_path)
+        erwartet = str(tmp_path.resolve()).replace("/", "-")
+        assert pfad.parent.name == erwartet
+        assert pfad.name == "abc123.jsonl"
+
+
+    def test_read_jsonl_ueberspringt_kaputte_zeilen(tmp_path):
+        datei = tmp_path / "s.jsonl"
+        datei.write_text('{"a": 1}\nkein json\n\n{"b": 2}\n', encoding="utf-8")
+        assert read_jsonl(datei) == [{"a": 1}, {"b": 2}]
+
+
+    def test_read_jsonl_ist_leer_wenn_die_datei_fehlt(tmp_path):
+        assert read_jsonl(tmp_path / "gibt-es-nicht.jsonl") == []
+
+
+    def _opencode_db(tmp_path, session_id, nachrichten):
+        """Minimale Nachbildung der echten Ablage: message(session_id, data, time_created)."""
+        pfad = tmp_path / "opencode.db"
+        con = sqlite3.connect(pfad)
+        con.execute(
+            "CREATE TABLE message (session_id TEXT, data TEXT, time_created INTEGER)"
+        )
+        for i, nachricht in enumerate(nachrichten):
+            con.execute(
+                "INSERT INTO message VALUES (?, ?, ?)",
+                (session_id, json.dumps(nachricht), i),
+            )
+        con.commit()
+        con.close()
+        return pfad
+
+
+    def test_opencode_messages_liest_nur_die_eigene_sitzung(tmp_path):
+        pfad = _opencode_db(tmp_path, "s1", [{"role": "user"}, {"role": "assistant"}])
+        con = sqlite3.connect(pfad)
+        con.execute("INSERT INTO message VALUES ('s2', '{\"role\": \"fremd\"}', 9)")
+        con.commit()
+        con.close()
+        assert opencode_messages("s1", pfad) == [{"role": "user"}, {"role": "assistant"}]
+
+
+    def test_opencode_messages_ist_leer_ohne_datenbank(tmp_path):
+        assert opencode_messages("s1", tmp_path / "weg.db") == []
+
+
+    def test_session_error_findet_den_fehler_in_der_opencode_ablage(tmp_path):
+        pfad = _opencode_db(tmp_path, "s1", [GESCHEITERT["messages"][1]])
+        fehler = session_error("opencode", "s1", tmp_path, db_path=pfad)
+        assert fehler == "APIError: User not found. (401)"
+
+
+    def test_session_error_ist_none_ohne_session_id(tmp_path):
+        assert session_error("opencode", None, tmp_path) is None
+        assert session_error("claude", "", tmp_path) is None
+
+
+    def test_session_error_kennt_nur_die_zwei_ablagen(tmp_path):
+        assert session_error("codex", "s1", tmp_path) is None
+
+@call tdd(-k find_error_liest_die_verschachtelte_apierror)
 
 ### Verify & Close
 
@@ -858,11 +1253,11 @@ Die Session-ID dafür liefert Herdr selbst über `agent_session.value` — und s
 **Files:** Create `lean_herdr/herdr.py`, `tests/doubles.py`, `tests/test_herdr.py`.
 **Interfaces:** Produces `class Herdr` mit
 `is_available() -> bool`, `run(*args, timeout=None) -> dict`,
-`pane_split(cwd, *, direction, env, focus) -> str | None`,
+`pane_list(workspace=None) -> list[dict]`,
+`pane_split(cwd, *, pane, direction, env, focus) -> str | None`,
 `agent_start(name, *, kind, pane, agent_args) -> dict`,
 `agent_prompt(name, text, *, wait, timeout_ms) -> dict`,
-`agent_list() -> list[dict]`, `agent_export(name) -> dict`,
-`pane_process_info(pane) -> dict`,
+`agent_list() -> list[dict]`, `pane_process_info(pane) -> dict`,
 `report_metadata(scope, target, token, value) -> bool`,
 `workspace_list() -> list[dict]`, `workspace_close(workspace) -> dict`,
 `worktree_list(cwd) -> dict`, `worktree_open(*, cwd, path, label) -> dict`.
@@ -873,8 +1268,9 @@ Die Form ist aus `lean-ctx/integrations/hermes-lean-ctx/transport.py` übernomme
 nicht der Inhalt: **eine Klasse kapselt allen Außenverkehr, `is_available()`
 cacht.** Damit hat jeder Test genau einen Ort zum Fälschen.
 
-Zwei Regeln wohnen in dieser Klasse, weil sie sonst an drei Stellen falsch gemacht
-werden:
+Vier Regeln wohnen in dieser Klasse, weil sie sonst an drei Stellen falsch gemacht
+werden. Die ersten zwei stehen in der Spec, die letzten zwei sind gegen herdr 0.8.2
+nachgemessen:
 
 - **`herdr agent start` hat kein `--env`** (H9). Die Umgebung kommt ausschließlich
   vom Pane, in dem der Agent gestartet wird; der Agent erbt sie, sein MCP-Server
@@ -882,6 +1278,16 @@ werden:
   `LEAN_CTX_ROLE`.
 - **Steuerbefehle ohne `--wait` senden** (H4). `/clear` löst keinen
   Lifecycle-Wechsel aus; mit `--wait` scheitert der Aufruf mit exit 1.
+- **`--json` gibt es nicht.** Weder global (`herdr --help` nennt es nirgends) noch
+  je Unterbefehl; angehängt bricht der Aufruf mit `unknown option`, exit 2 ab.
+  Herdr schreibt ohnehin immer JSON. Die Spec und die Handbefehle in Task 11/12
+  waren an dieser Stelle falsch — hier wird es einmal richtig gemacht, und alle
+  Aufrufer erben es.
+- **`report-metadata` nimmt die ID positional und verlangt `--source`.** Gemessen:
+  `herdr pane report-metadata [OPTIONS] --source <ID> <PANE_ID>`. Es gibt kein
+  `--pane`/`--workspace` an dieser Stelle, und ohne `--source` bricht der Aufruf
+  ab. `--source` ist der Namensraum unserer Tokens (`lean.herdr`), damit ein
+  fremdes Plugin sie nicht überschreibt.
 
 `lean_herdr/herdr.py` (neu):
 
@@ -929,12 +1335,15 @@ werden:
             return self._available
 
         def run(self, *args: str, timeout: float | None = None) -> dict[str, Any]:
-            """`herdr <args> --json` ausfuehren und die Antwort als dict liefern."""
+            """`herdr <args>` ausfuehren und die Antwort als dict liefern.
+
+            KEIN --json anhaengen: Herdr 0.8.2 kennt den Schalter nicht (weder global
+            noch je Unterbefehl) und bricht mit exit 2 ab. Es gibt ihn nicht, weil
+            Herdr ohnehin immer JSON auf stdout schreibt.
+            """
             if not self.is_available():
                 return {}
             cmd = [self.binary, *args]
-            if "--json" not in cmd:
-                cmd.append("--json")
             try:
                 proc = self._runner(
                     cmd,
@@ -963,10 +1372,19 @@ werden:
 
         # -- Panes und Agenten --------------------------------------------
 
+        def pane_list(self, workspace: str | None = None) -> list[dict[str, Any]]:
+            """Panes, optional auf einen Workspace eingeschraenkt."""
+            args = ["pane", "list"]
+            if workspace:
+                args += ["--workspace", workspace]
+            panes = self._result(self.run(*args), "panes")
+            return [p for p in (panes or ()) if isinstance(p, dict)]
+
         def pane_split(
             self,
             cwd: str | Path,
             *,
+            pane: str | None = None,
             direction: str = "right",
             env: dict[str, str] | None = None,
             focus: bool = False,
@@ -974,14 +1392,22 @@ werden:
             """Neuen Pane anlegen und seine pane_id liefern.
 
             Der einzige Ort fuer --env: `agent start` kennt kein --env (H9).
+
+            `pane` waehlt den Pane, der geteilt wird — und damit den Workspace, in
+            dem der neue landet. Ohne ihn teilt Herdr `--current`, also IMMER den
+            Workspace des Aufrufers. Fuer einen Arbeiter im Worktree ist das
+            falsch: `workspace close <worktree_workspace>` wuerde ihn nicht
+            beenden.
             """
-            args = ["pane", "split", "--current", "--direction", direction, "--cwd", str(cwd)]
+            ziel = ["--pane", pane] if pane else ["--current"]
+            args = ["pane", "split", *ziel, "--direction", direction, "--cwd", str(cwd)]
             if not focus:
                 args.append("--no-focus")
             for key, value in (env or {}).items():
                 args += ["--env", f"{key}={value}"]
             data = self.run(*args)
-            pane = self._result(data, "pane_id") or self._result(data, "pane", "id")
+            # Gemessen gegen 0.8.2: {"result": {"pane": {"pane_id": "w1:p7", ...}}}.
+            pane = self._result(data, "pane", "pane_id") or self._result(data, "pane_id")
             return str(pane) if pane else None
 
         def agent_start(
@@ -1018,22 +1444,33 @@ werden:
             agents = self._result(self.run("agent", "list"), "agents")
             return [a for a in (agents or ()) if isinstance(a, dict)]
 
-        def agent_export(self, name: str) -> dict[str, Any]:
-            """Nativer Session-Export — der einzige Ort mit dem error-Objekt (H1)."""
-            return self.run("agent", "export", name)
-
         def pane_process_info(self, pane: str) -> dict[str, Any]:
             return self.run("pane", "process-info", "--pane", pane)
 
         # -- Sichtbarkeit --------------------------------------------------
 
-        def report_metadata(self, scope: str, target: str, token: str, value: str) -> bool:
-            """`herdr <scope> report-metadata --<scope> <id> --token <token>=<wert>`.
+        SOURCE = "lean.herdr"
+
+        def report_metadata(
+            self, scope: str, target: str, token: str, value: str
+        ) -> bool:
+            """`herdr <scope> report-metadata <id> --source lean.herdr --token k=v`.
+
+            Zwei gemessene Eigenheiten (0.8.2): die ID ist POSITIONAL, nicht
+            `--pane`/`--workspace`; und `--source` ist Pflicht — ohne sie exit 2.
+            Die Source ist der Namensraum, unter dem unsere Tokens stehen; ein
+            fremdes Plugin ueberschreibt sie damit nicht.
 
             scope ist "pane" oder "workspace". True, wenn der Aufruf durchging.
             """
             data = self.run(
-                scope, "report-metadata", f"--{scope}", target, "--token", f"{token}={value}"
+                scope,
+                "report-metadata",
+                target,
+                "--source",
+                self.SOURCE,
+                "--token",
+                f"{token}={value}",
             )
             return bool(data)
 
@@ -1080,12 +1517,24 @@ werden:
 
     @dataclass
     class FakeProc:
-        """Ersetzt subprocess.run. `replies` bildet ein Argument-Praefix auf JSON ab."""
+        """Ersetzt subprocess.run. `replies` bildet ein Argument-Praefix auf eine
+        Antwort ab.
+
+        Zwei Antwortformen, weil es zwei CLIs gibt: Herdr gibt JSON aus, `lean-ctx
+        call` Klartext. Ein **str** wird deshalb wortwoertlich zu stdout, alles
+        andere per json.dumps — sonst liesse sich eine Fehlerzeile wie
+        `error: -32602: …` nicht faelschen, weil json.dumps sie in
+        Anfuehrungszeichen setzte.
+        """
 
         replies: dict[tuple[str, ...], Any] = field(default_factory=dict)
         calls: list[list[str]] = field(default_factory=list)
         raises: Exception | None = None
         default: Any = field(default_factory=dict)
+
+        @staticmethod
+        def _stdout(antwort: Any) -> str:
+            return antwort if isinstance(antwort, str) else json.dumps(antwort)
 
         def __call__(self, cmd: list[str], **kwargs: Any) -> Completed:
             self.calls.append(list(cmd))
@@ -1093,8 +1542,8 @@ werden:
                 raise self.raises
             for praefix, antwort in self.replies.items():
                 if tuple(cmd[1 : 1 + len(praefix)]) == praefix:
-                    return Completed(stdout=json.dumps(antwort))
-            return Completed(stdout=json.dumps(self.default))
+                    return Completed(stdout=self._stdout(antwort))
+            return Completed(stdout=self._stdout(self.default))
 
         def called_with(self, *tokens: str) -> bool:
             """Kam ein Aufruf vor, der alle Tokens in dieser Reihenfolge enthaelt?"""
@@ -1137,7 +1586,8 @@ werden:
 
 
     def test_pane_split_setzt_env_paare(fake):
-        fake.replies = {("pane", "split"): {"result": {"pane_id": "w2:p2"}}}
+        # Die echte Antwort von 0.8.2, verbatim in der Form: pane_id liegt UNTER pane.
+        fake.replies = {("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}}}
         pane = h(fake).pane_split(
             "/repo", env={"LEAN_CTX_TOOL_PROFILE": "standard", "LEAN_CTX_ROLE": "builder"}
         )
@@ -1145,6 +1595,31 @@ werden:
         assert fake.called_with("--env", "LEAN_CTX_TOOL_PROFILE=standard")
         assert fake.called_with("--env", "LEAN_CTX_ROLE=builder")
         assert "--no-focus" in fake.calls[0]
+        assert "--current" in fake.calls[0], "ohne Ziel-Pane bleibt es der eigene Workspace"
+
+
+    def test_pane_split_mit_ziel_pane_landet_im_fremden_workspace(fake):
+        """Der Ziel-Pane bestimmt den Workspace des neuen Panes — nicht --current."""
+        fake.replies = {("pane", "split"): {"result": {"pane": {"pane_id": "w2:p3"}}}}
+        assert h(fake).pane_split("/repo.feat", pane="w2:p1") == "w2:p3"
+        assert fake.called_with("--pane", "w2:p1")
+        assert "--current" not in fake.calls[0]
+
+
+    def test_pane_list_filtert_auf_den_workspace(fake):
+        fake.replies = {("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}}}
+        assert h(fake).pane_list("w2") == [{"pane_id": "w2:p1"}]
+        assert fake.called_with("--workspace", "w2")
+
+
+    def test_kein_aufruf_haengt_json_an(fake):
+        """Regression: --json existiert in herdr nicht und bricht mit exit 2 ab."""
+        herdr = h(fake)
+        herdr.agent_list()
+        herdr.pane_split("/repo")
+        herdr.agent_prompt("builder", "los", wait=False)
+        herdr.report_metadata("pane", "w1:p1", "ctx", "T1")
+        assert all("--json" not in call for call in fake.calls)
 
 
     def test_agent_start_reicht_native_argumente_nach_doppelstrich(fake):
@@ -1195,21 +1670,27 @@ werden:
     def test_report_metadata_baut_das_token_paar(fake):
         fake.default = {"result": {"ok": True}}
         assert h(fake).report_metadata("workspace", "w2", "esc", "T1: reviewer lehnt ab")
-        assert fake.called_with("--workspace", "w2", "--token", "esc=T1: reviewer lehnt ab")
+        # ID positional, --source Pflicht — gemessen gegen 0.8.2.
+        assert fake.called_with(
+            "workspace", "report-metadata", "w2",
+            "--source", "lean.herdr",
+            "--token", "esc=T1: reviewer lehnt ab",
+        )
+        assert "--workspace" not in fake.calls[0]
 
 
     def test_worktree_open_nimmt_den_repo_root_als_cwd(fake):
         h(fake).worktree_open(cwd="/repo", path="/repo.feat", label="feat/auth")
         assert fake.called_with("--cwd", "/repo", "--path", "/repo.feat", "--label", "feat/auth")
 
-@call tdd(pane_split_setzt_env_paare)
+@call tdd(-k pane_split_setzt_env_paare)
 
 ### Verify & Close
 
 @call verify(lean_herdr/herdr.py)
 @call gate(lean_herdr/herdr.py tests/doubles.py tests/test_herdr.py)
 @call commit("lean_herdr/herdr.py tests/", "feat(herdr): CLI-Wrapper mit Timeout, Env nur am Pane (H9), /clear ohne --wait (H4)")
-@call remember_decision("lean-herdr: aller Herdr-Verkehr laeuft ueber lean_herdr.herdr.Herdr und wird bei Fehlern zu {} statt zu einer Ausnahme; tests/doubles.FakeProc ist das aufzeichnende Doppel fuer alle subprocess-CLIs")
+@call remember_decision("lean-herdr: aller Herdr-Verkehr laeuft ueber lean_herdr.herdr.Herdr und wird bei Fehlern zu {} statt zu einer Ausnahme; tests/doubles.FakeProc ist das aufzeichnende Doppel fuer alle subprocess-CLIs. Gemessen gegen herdr 0.8.2: --json existiert nicht (Herdr gibt immer JSON), pane split liefert result.pane.pane_id, report-metadata nimmt die ID positional und verlangt --source (wir nutzen lean.herdr), und agent export gibt es ueberhaupt nicht")
 @phase-end
 
 @phase "task-6"
@@ -1218,10 +1699,12 @@ werden:
 @call recall_context("lean-herdr canonical_root project-root FakeProc")
 
 **Files:** Create `lean_herdr/leanctx.py`, `tests/test_leanctx.py`.
-**Interfaces:** Produces `class LeanCtx` mit
-`is_available() -> bool`, `call(tool, arguments) -> dict`,
-`post(*, message, to_agent=None, task_id=None, category="task", metadata=None) -> dict`,
-`session_resume() -> dict`, `handoff_show() -> dict`.
+**Interfaces:** Produces `CtxAntwort` (frozen: `ok: bool`, `text: str`,
+`error: str | None`, `json() -> dict`) und `class LeanCtx` mit
+`is_available() -> bool`, `call(tool, arguments) -> CtxAntwort`,
+`post(*, message, to_agent=None, task_id=None, category="task", metadata=None) -> CtxAntwort`,
+`session_resume() -> CtxAntwort`, `handoff_list() -> CtxAntwort`,
+`handoff_show(path) -> CtxAntwort`, `newest_handoff(list_text) -> str | None`.
 
 `--project-root` ist bei `lean-ctx call` ein **Pflichtflag**, und genau dort
 entsteht der einzige Weg zu einem zweiten Bus: zeigt es auf einen Worktree-Pfad,
@@ -1230,18 +1713,34 @@ legt lean-ctx dort ein eigenes Projekt an (B12) — nachgewiesen in der echten
 Haupt-Repo steht. Die Klasse nimmt den Root im Konstruktor entgegen und setzt ihn
 bei **jedem** Aufruf; ein Aufrufer kann ihn nicht vergessen.
 
-Zwei Grenzen, die aus den Messungen folgen:
+**`lean-ctx call` gibt Klartext aus, kein JSON.** Gegen 3.10.1 gemessen, alle vier
+Formen:
+
+| Aufruf | stdout |
+|---|---|
+| `ctx_session {"action":"resume"}` | fertiger Bericht zwischen `--- SESSION RESUME … ---` und `---` |
+| `ctx_handoff {"action":"list"}` | `Handoff Ledgers (9):` + nummerierte Pfadzeilen |
+| `ctx_handoff {"action":"show","path":…}` | zwei Kopfzeilen, danach ein JSON-Rumpf |
+| Fehler | eine Zeile `error: -32602: path is required for action=show` |
+
+Ein `json.loads(proc.stdout)` scheitert deshalb bei **jedem** Aufruf. Ein Wrapper,
+der daraus `{}` macht, wäre nicht bloß nutzlos: er verwechselt Timeout, Fehler und
+leere Sitzung — und genau diese Unterscheidung braucht Task 15, um eine Notiz auf
+stderr schreiben zu können. Deshalb gibt es `CtxAntwort`.
+
+Zwei weitere Grenzen, die aus den Messungen folgen:
 
 - **Keine Schreibaktion über `ctx_session`.** `lean-ctx call ctx_session
   {task,finding,decision}` meldet Erfolg und persistiert nichts (B1). Geschrieben
   wird ausschließlich von Pane-Agenten.
 - **Kein `ctx_agent read`.** Registrierung ist prozessgebunden, und `lean-ctx call`
-  ist je Aufruf ein eigener Prozess (B9). Gelesen wird über `bus.parse_registry()`.
-  `post` dagegen geht anonym durch und kommt an.
+  ist je Aufruf ein eigener Prozess (B9) — gemessen: `Error: agent must be
+  registered first`. Gelesen wird über `bus.parse_registry()`. `post` dagegen geht
+  anonym durch und kommt an.
 
 `lean_herdr/leanctx.py` (neu):
 
-    """lean-ctx-CLI → dict, mit erzwungenem kanonischem --project-root.
+    """lean-ctx-CLI → CtxAntwort, mit erzwungenem kanonischem --project-root.
 
     ctx_session-Schreibaktionen fehlen hier absichtlich: sie melden Erfolg und
     persistieren nichts (B1). ctx_agent read fehlt ebenfalls: es verlangt eine
@@ -1251,12 +1750,51 @@ Zwei Grenzen, die aus den Messungen folgen:
     from __future__ import annotations
 
     import json
+    import re
     import shutil
     import subprocess
+    from dataclasses import dataclass
     from pathlib import Path
     from typing import Any
 
     DEFAULT_TIMEOUT_S = 5.0
+
+    #: `lean-ctx call` meldet Fehler als erste Zeile, nicht ueber den Exit-Code.
+    FEHLER_PRAEFIXE = ("error:", "Error:")
+
+    #: Zeilen aus `ctx_handoff list`: "  1. /pfad/zur/datei.json"
+    LEDGER_ZEILE = re.compile(r"^\s*\d+\.\s+(\S+)\s*$", re.M)
+
+
+    @dataclass(frozen=True)
+    class CtxAntwort:
+        """Eine Antwort von `lean-ctx call` — Text, nicht JSON.
+
+        Drei Zustaende, die auseinandergehalten werden MUESSEN:
+        ok=True  + text≠""  → Antwort mit Inhalt
+        ok=True  + text=""  → gueltige, aber leere Antwort (frisches Projekt)
+        ok=False + error    → unavailable | timeout | die Fehlerzeile von lean-ctx
+        """
+
+        ok: bool
+        text: str = ""
+        error: str | None = None
+
+        def json(self) -> dict[str, Any]:
+            """Eingebetteter JSON-Rumpf, falls einer da ist — sonst {}.
+
+            `ctx_handoff show` schreibt zwei Kopfzeilen und danach JSON; andere
+            Aufrufe gar keins. Deshalb ab der ersten `{` versuchen und schweigen,
+            wenn es nicht aufgeht.
+            """
+            start = self.text.find("{")
+            if start < 0:
+                return {}
+            try:
+                daten = json.loads(self.text[start:])
+            except json.JSONDecodeError:
+                return {}
+            return daten if isinstance(daten, dict) else {}
 
 
     class LeanCtx:
@@ -1280,9 +1818,10 @@ Zwei Grenzen, die aus den Messungen folgen:
                 self._available = shutil.which(self.binary) is not None
             return self._available
 
-        def _run(self, args: list[str]) -> dict[str, Any]:
+        def _run(self, args: list[str]) -> CtxAntwort:
+            """Nie werfen, aber IMMER unterscheiden, warum nichts kam."""
             if not self.is_available():
-                return {}
+                return CtxAntwort(False, error="unavailable")
             try:
                 proc = self._runner(
                     [self.binary, *args],
@@ -1290,15 +1829,17 @@ Zwei Grenzen, die aus den Messungen folgen:
                     text=True,
                     timeout=self.timeout,
                 )
-            except (OSError, subprocess.SubprocessError):
-                return {}
-            try:
-                data = json.loads(proc.stdout)
-            except json.JSONDecodeError:
-                return {}
-            return data if isinstance(data, dict) else {}
+            except subprocess.TimeoutExpired:
+                return CtxAntwort(False, error="timeout")
+            except (OSError, subprocess.SubprocessError) as exc:
+                return CtxAntwort(False, error=f"spawn_failed: {exc}")
+            text = (proc.stdout or "").strip()
+            erste = text.splitlines()[0] if text else ""
+            if proc.returncode != 0 or erste.startswith(FEHLER_PRAEFIXE):
+                return CtxAntwort(False, text, error=erste or f"exit {proc.returncode}")
+            return CtxAntwort(True, text)
 
-        def call(self, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+        def call(self, tool: str, arguments: dict[str, Any]) -> CtxAntwort:
             """`lean-ctx call <tool> --project-root <kanonisch> --json '<args>'`."""
             return self._run(
                 [
@@ -1321,7 +1862,7 @@ Zwei Grenzen, die aus den Messungen folgen:
             task_id: str | None = None,
             category: str = "task",
             metadata: dict[str, Any] | None = None,
-        ) -> dict[str, Any]:
+        ) -> CtxAntwort:
             """Nachricht auf den Bus legen.
 
             `to_agent` MUSS eine lean-ctx-agent_id sein. Ein freundlicher Name wird
@@ -1339,24 +1880,54 @@ Zwei Grenzen, die aus den Messungen folgen:
 
         # -- Kontext (nur lesend) -------------------------------------------
 
-        def session_resume(self) -> dict[str, Any]:
-            """Fertiger Wiederaufnahme-Bericht: Projekt, Findings, Archive, Statistik."""
+        def session_resume(self) -> CtxAntwort:
+            """Fertiger Wiederaufnahme-Bericht: Projekt, Findings, Archive, Statistik.
+
+            Der Text ist das Ergebnis, nicht ein Rohstoff. Er wird nicht zerlegt
+            und nicht nachgebaut — Task 14 rahmt ihn nur.
+            """
             return self.call("ctx_session", {"action": "resume"})
 
-        def handoff_show(self) -> dict[str, Any]:
-            """Kuratierte Datei-Referenzen zum laufenden Handoff."""
-            return self.call("ctx_handoff", {"action": "show"})
+        def handoff_list(self) -> CtxAntwort:
+            """Alle Handoff-Ledger, neueste zuerst."""
+            return self.call("ctx_handoff", {"action": "list"})
+
+        def handoff_show(self, path: str | Path) -> CtxAntwort:
+            """Ein Ledger. `path` ist PFLICHT — ohne ihn: `error: -32602`."""
+            return self.call("ctx_handoff", {"action": "show", "path": str(path)})
+
+
+    def newest_handoff(list_text: str) -> str | None:
+        """Erster Pfad aus `ctx_handoff list` — die Liste kommt neueste zuerst."""
+        treffer = LEDGER_ZEILE.search(list_text or "")
+        return treffer.group(1) if treffer else None
 
 `tests/test_leanctx.py` (neu):
 
     import json
+    import subprocess
 
     import pytest
 
-    from lean_herdr.leanctx import LeanCtx
-    from tests.doubles import FakeProc, which_stub
+    from lean_herdr.leanctx import CtxAntwort, LeanCtx, newest_handoff
+    from tests.doubles import Completed, FakeProc, which_stub
 
     ROOT = "/home/tholo/Scripts/lean-herdr"
+
+    #: Verbatim gemessen gegen lean-ctx 3.10.1.
+    RESUME_TEXT = (
+        "--- SESSION RESUME (post-compaction) ---\n"
+        "Project: lean-herdr\n"
+        "Task: Plan ueberarbeiten\n"
+        "Key findings: registry.json traegt die Nachrichten unter scratchpad\n"
+        "Stats: 104 calls, 1382898 tok saved\n"
+        "---"
+    )
+    LEDGER_TEXT = (
+        "Handoff Ledgers (9):\n"
+        "  1. /home/tholo/.local/share/lean-ctx/handoffs/20260901-neu.json\n"
+        "  2. /home/tholo/.local/share/lean-ctx/handoffs/20260621-alt.json"
+    )
 
 
     @pytest.fixture
@@ -1412,20 +1983,79 @@ Zwei Grenzen, die aus den Messungen folgen:
         assert not verboten & {n for n in dir(LeanCtx) if not n.startswith("_")}
 
 
+    def test_handoff_show_ohne_pfad_gibt_es_nicht(fake):
+        """Gemessen: `show` ohne path antwortet `error: -32602`."""
+        LeanCtx(ROOT, runner=fake).handoff_show("/pfad/l.json")
+        assert args_of(fake.calls[0]) == {"action": "show", "path": "/pfad/l.json"}
+
+
+    # -- Die drei Zustaende, die auseinandergehalten werden muessen ----------
+
+    def test_klartext_wird_nicht_als_json_gelesen(monkeypatch):
+        """Der Kernbefund: `lean-ctx call` gibt Text aus, nie JSON."""
+        monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
+        antwort = LeanCtx(
+            ROOT, runner=lambda *a, **k: Completed(stdout=RESUME_TEXT)
+        ).session_resume()
+        assert antwort.ok and "Project: lean-herdr" in antwort.text
+
+
+    def test_leere_ausgabe_ist_gueltig_und_kein_fehler(monkeypatch):
+        """Frisches Projekt: ok, aber ohne Inhalt — nicht dasselbe wie ein Fehler."""
+        monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
+        antwort = LeanCtx(ROOT, runner=lambda *a, **k: Completed(stdout="")).session_resume()
+        assert antwort.ok is True and antwort.text == "" and antwort.error is None
+
+
+    def test_fehlerzeile_wird_als_fehler_erkannt(monkeypatch):
+        """lean-ctx meldet Fehler in der ersten Zeile, nicht ueber den Exit-Code."""
+        monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
+        antwort = LeanCtx(
+            ROOT,
+            runner=lambda *a, **k: Completed(
+                stdout="error: -32602: path is required for action=show"
+            ),
+        ).handoff_show("")
+        assert antwort.ok is False and "path is required" in (antwort.error or "")
+
+
+    def test_timeout_ist_von_leer_unterscheidbar(monkeypatch):
+        monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
+        fake = FakeProc(raises=subprocess.TimeoutExpired(cmd=["lean-ctx"], timeout=1))
+        antwort = LeanCtx(ROOT, runner=fake).session_resume()
+        assert antwort.ok is False and antwort.error == "timeout"
+
+
     def test_ohne_binary_kein_aufruf(monkeypatch):
         monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(False))
         fake = FakeProc()
-        assert LeanCtx(ROOT, runner=fake).session_resume() == {}
+        antwort = LeanCtx(ROOT, runner=fake).session_resume()
+        assert antwort == CtxAntwort(False, error="unavailable")
         assert fake.calls == []
 
-@call tdd(ein_worktree_pfad_kommt_nie_ins_flag)
+
+    def test_eingebettetes_json_wird_gefunden_wenn_es_da_ist():
+        """`ctx_handoff show`: zwei Kopfzeilen, dann JSON."""
+        antwort = CtxAntwort(True, ' ctx_handoff show\n path: /x.json\n{"schema_version": 1}')
+        assert antwort.json() == {"schema_version": 1}
+        assert CtxAntwort(True, RESUME_TEXT).json() == {}
+
+
+    def test_newest_handoff_nimmt_den_ersten_eintrag():
+        assert newest_handoff(LEDGER_TEXT).endswith("20260901-neu.json")
+        assert newest_handoff("Handoff Ledgers (0):") is None
+        assert newest_handoff("") is None
+
+@call tdd(-k klartext_wird_nicht_als_json_gelesen)
+
+@call tdd(-k ein_worktree_pfad_kommt_nie_ins_flag)
 
 ### Verify & Close
 
 @call verify(lean_herdr/leanctx.py)
 @call gate(lean_herdr/leanctx.py tests/test_leanctx.py)
 @call commit("lean_herdr/leanctx.py tests/test_leanctx.py", "feat(leanctx): call-Gateway mit erzwungenem kanonischem --project-root")
-@call remember_decision("lean-herdr: LeanCtx setzt --project-root bei jedem Aufruf selbst; ctx_session kennt hier nur Leseaktionen (B1), der Bus wird nie ueber die CLI gelesen (B9), to_agent ist immer eine agent_id, nie ein Name (B7)")
+@call remember_decision("lean-herdr: LeanCtx setzt --project-root bei jedem Aufruf selbst; ctx_session kennt hier nur Leseaktionen (B1), der Bus wird nie ueber die CLI gelesen (B9), to_agent ist immer eine agent_id, nie ein Name (B7). Gemessen gegen lean-ctx 3.10.1: `lean-ctx call` schreibt KLARTEXT auf stdout, nie JSON — Fehler kommen als erste Zeile `error: -32602: …` bei Exit 0. Deshalb CtxAntwort(ok, text, error) statt dict: nur so sind Timeout, Fehler und gueltig-leer unterscheidbar. ctx_handoff show verlangt `path`; die Liste kommt ueber action=list, neueste zuerst")
 @phase-end
 
 @phase "task-7"
@@ -1499,7 +2129,7 @@ sichert, dass die Stelle existiert.
 
         1. Pruefen: category=result, nicht reject
         2. Pfad und Workspace aufloesen, SOLANGE es den Worktree noch gibt:
-             herdr worktree list --cwd <repo_root> --json
+             herdr worktree list --cwd <repo_root>
                → .result.worktrees[] | select(.branch=="<branch>")
                    | {path, open_workspace_id}
         3. herdr workspace close <workspace_id>
@@ -1530,7 +2160,7 @@ sichert, dass die Stelle existiert.
 
     Setze zuerst den Workspace-Token, dann halte an:
 
-        herdr workspace report-metadata --workspace <id> --token esc="<task_id>: <grund>"
+        herdr workspace report-metadata <id> --source lean.herdr --token esc="<task_id>: <grund>"
 
     Danach in dein Terminal — und dann nichts mehr:
 
@@ -1621,6 +2251,8 @@ sichert, dass die Stelle existiert.
     ## Ablauf
 
     1. Bus lesen: `ctx_call(name="ctx_agent", arguments={"action":"read"})`.
+       Der Tool-Name kann bei deinem Agenten anders praefixiert sein — nimm ihn
+       nicht hart an.
     2. Den Auftrag des ORCHESTRATOR bearbeiten: er nennt `task_id` und Branch.
     3. Pruefen, was tatsaechlich im Baum steht — `git diff`, `git log`, die
        Dateien. Du sitzt im Worktree des Branches; was du siehst, ist die Arbeit.
@@ -1655,6 +2287,7 @@ sichert, dass die Stelle existiert.
 
 `tests/test_roles.py` (neu):
 
+    import re
     from pathlib import Path
 
     import pytest
@@ -1684,12 +2317,23 @@ sichert, dass die Stelle existiert.
         assert "Modellschritt" in text
 
 
+    #: Entweder der unausgefuellte Platzhalter oder eine echte lean-ctx-agent_id.
+    ORCHESTRATOR_ZEILE = re.compile(
+        r"^\s*ORCHESTRATOR = (<ORCHESTRATOR_AGENT_ID>|mcp-\d+-[0-9a-f]+)\s*$", re.M
+    )
+
+
     @pytest.mark.parametrize("name", ARBEITER)
     def test_arbeiter_kennen_die_orchestrator_id_stelle(name):
-        """Vertrauen wird beim Start gesetzt, nicht von der Nachricht behauptet."""
+        """Vertrauen wird beim Start gesetzt, nicht von der Nachricht behauptet.
+
+        Der Test muss beide Zustaende ertragen: die Datei im Repo traegt den
+        Platzhalter, dieselbe Datei nach dem Bootstrap die eingesetzte ID. Ein
+        Test auf den Platzhalter allein wuerde genau dann rot, wenn die Rolle
+        richtig eingerichtet ist.
+        """
         text = (ROLES / f"{name}.md").read_text(encoding="utf-8")
-        assert "ORCHESTRATOR = " in text
-        assert "<ORCHESTRATOR_AGENT_ID>" in text
+        assert ORCHESTRATOR_ZEILE.search(text), "ORCHESTRATOR-Zeile fehlt oder ist leer"
 
 
     @pytest.mark.parametrize("name", ARBEITER)
@@ -1716,7 +2360,7 @@ sichert, dass die Stelle existiert.
         text = (ROLES / "orchestrator.md").read_text(encoding="utf-8")
         assert "nie den Exit-Code" in text
 
-@call tdd(jede_rolle_hat_eine_grenze)
+@call tdd(-k jede_rolle_hat_eine_grenze)
 
 ### Verify & Close
 
@@ -1958,6 +2602,7 @@ einem stdio-Server, **nicht** über die CLI-Anzeige — die behauptet etwas ande
     """Profil-Test: `minimal` muss ctx_call enthalten."""
 
     import json
+    import os
     import shutil
     import subprocess
 
@@ -1978,18 +2623,26 @@ einem stdio-Server, **nicht** über die CLI-Anzeige — die behauptet etwas ande
 
 
     def tools_unter(profil: str, tmp_path) -> set[str]:
-        if shutil.which("lean-ctx") is None:
+        """Echter stdio-Handshake gegen den installierten Server.
+
+        HOME zeigt auf tmp_path, damit keine Nutzerkonfiguration mitspricht — aber
+        PATH bleibt der echte. lean-ctx liegt typischerweise in `~/.cargo/bin` oder
+        `~/.local/bin`; ein zusammengesetzter Minimal-PATH wuerde den Server nicht
+        mehr finden, und der Test scheiterte an sich selbst statt am Profil.
+        """
+        binary = shutil.which("lean-ctx")
+        if binary is None:
             pytest.skip("lean-ctx nicht installiert")
         eingabe = "".join(json.dumps(m) + "\n" for m in (INITIALIZE, INITIALIZED, LIST))
         proc = subprocess.run(
-            ["lean-ctx"],
+            [binary],
             input=eingabe,
             capture_output=True,
             text=True,
             timeout=60,
             cwd=tmp_path,
             env={
-                "PATH": "/usr/bin:/bin:/usr/local/bin",
+                **os.environ,
                 "HOME": str(tmp_path),
                 "LEAN_CTX_TOOL_PROFILE": profil,
             },
@@ -2018,7 +2671,7 @@ einem stdio-Server, **nicht** über die CLI-Anzeige — die behauptet etwas ande
     def test_standard_bringt_ctx_session_mit(tmp_path):
         assert {"ctx_call", "ctx_session"} <= tools_unter("standard", tmp_path)
 
-@call tdd(lean_ctx_wird_als_stdio_server_registriert)
+@call tdd(-k lean_ctx_wird_als_stdio_server_registriert)
 
 Run: `uv run pytest -q -m integration tests/test_tool_profile.py` — Expected:
 `2 passed` (oder `2 skipped`, wenn `lean-ctx` nicht im PATH ist).
@@ -2066,7 +2719,7 @@ Prompt von acht Wörtern.
     4. Aufgabe gerichtet auf den Bus          ctx_agent post (to_agent, task_id)
     5. Klingeln                               agent prompt --wait --timeout
     6. Antwort suchen                         registry.json, gefiltert auf (task_id, from_agent)
-    7. keine Antwort → Export auf `error`     find_error(agent export)
+    7. keine Antwort → Ablage auf `error`     session_error(kind, session_id, root)
 
 `--profile` überschreibt nur; die Voreinstellung folgt der Rolle
 (`orchestrator` → `minimal`, sonst `standard`). `--kind` und `--model` haben keine
@@ -2105,7 +2758,7 @@ eine Schleife, die der Orchestrator selbst dreht — jeder Blick ~20 K Token.
         parse_registry,
         read_registry,
     )
-    from lean_herdr.export import find_error
+    from lean_herdr.export import session_error, session_id_from_agent_list
     from lean_herdr.herdr import Herdr
     from lean_herdr.join import resolve_agent_id
     from lean_herdr.leanctx import LeanCtx
@@ -2263,13 +2916,19 @@ eine Schleife, die der Orchestrator selbst dreht — jeder Blick ~20 K Token.
             return _ergebnis(False, req, pane, None, error="no_agent_id")
 
         # Der Bus traegt den Inhalt, der Prompt nur die Klingel.
-        leanctx.post(
+        gepostet = leanctx.post(
             message=req.task,
             to_agent=agent_id,
             task_id=req.task_id,
             category="task",
             metadata={"role": req.role, "branch": req.worktree or ""},
         )
+        if not gepostet.ok:
+            # Ohne Aufgabe auf dem Bus ist die Klingel sinnlos: der Arbeiter faende
+            # nichts und wir haetten am Ende ein irrefuehrendes `no_reply`.
+            return _ergebnis(
+                False, req, pane, agent_id, error=f"post_failed: {gepostet.error}"
+            )
         herdr.agent_prompt(
             name,
             f"Neue Aufgabe {req.task_id} liegt auf dem Bus.",
@@ -2295,8 +2954,12 @@ eine Schleife, die der Orchestrator selbst dreht — jeder Blick ~20 K Token.
                 result=antwort.message,
             )
 
-        # Keine Antwort: die Wahrheit steht im nativen Export, nicht im Zustand (H1).
-        fehler = find_error(herdr.agent_export(name))
+        # Keine Antwort: die Wahrheit steht in der Sitzungsablage, nicht im Zustand
+        # (H1). Herdr liefert nur die ID; gelesen wird bei Claude die JSONL-Datei,
+        # bei opencode die SQLite-Ablage — `herdr agent export` gibt es nicht.
+        fehler = session_error(
+            req.kind, session_id_from_agent_list(herdr.agent_list(), name), root
+        )
         if fehler:
             return _ergebnis(False, req, pane, agent_id, error=f"agent_error: {fehler}")
         return _ergebnis(False, req, pane, agent_id, error="no_reply")
@@ -2423,7 +3086,7 @@ Run: `chmod +x bin/herdr-dispatch` — Expected: keine Ausgabe.
         monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
         monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
         h_proc, l_proc = FakeProc(), FakeProc()
-        h_proc.replies = {("pane", "split"): {"result": {"pane_id": "w1:p6"}}}
+        h_proc.replies = {("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}}}
         return h_proc, l_proc, tmp_path / "registry.json"
 
 
@@ -2491,17 +3154,59 @@ Run: `chmod +x bin/herdr-dispatch` — Expected: keine Ausgabe.
         }
 
 
-    def test_keine_antwort_mit_fehler_im_export_ist_agent_error(welt):
+    def test_keine_antwort_mit_fehler_in_der_ablage_ist_agent_error(
+        welt, tmp_path, monkeypatch
+    ):
+        """Der ganze Weg echt: agent list → session_id → JSONL-Datei → error.
+
+        `herdr agent export` gibt es nicht; die Wahrheit liegt in der Ablage des
+        Agenten. Deshalb faelscht der Test kein Exportkommando, sondern legt die
+        Datei an, die Claude Code wirklich schreibt.
+        """
         h_proc, _, _ = welt
         h_proc.replies = {
-            ("pane", "split"): {"result": {"pane_id": "w1:p6"}},
-            ("agent", "export"): {
-                "error": {"name": "APIError", "data": {"message": "User not found.", "statusCode": 401}}
+            ("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}},
+            ("agent", "list"): {
+                "result": {
+                    "agents": [
+                        {
+                            "name": "builder",
+                            "pane_id": "w1:p6",
+                            "agent_session": {"value": "sid1"},
+                        }
+                    ]
+                }
             },
         }
+        monkeypatch.setenv("HOME", str(tmp_path))
+        ablage = tmp_path / ".claude" / "projects" / str(ROOT.resolve()).replace("/", "-")
+        ablage.mkdir(parents=True)
+        (ablage / "sid1.jsonl").write_text(
+            json.dumps({"role": "user", "content": "los"}) + "\n"
+            + json.dumps(
+                {
+                    "role": "assistant",
+                    "error": {
+                        "name": "APIError",
+                        "data": {"message": "User not found.", "statusCode": 401},
+                    },
+                }
+            ) + "\n",
+            encoding="utf-8",
+        )
         ergebnis = lauf(welt, reg=registry())
         assert ergebnis["ok"] is False
         assert ergebnis["error"] == "agent_error: APIError: User not found. (401)"
+
+
+    def test_gescheiterter_bus_post_ist_nicht_no_reply(welt):
+        """Ohne Aufgabe auf dem Bus waere `no_reply` eine Luege ueber die Ursache."""
+        _, l_proc, _ = welt
+        # str → wortwoertlich auf stdout: genau die Fehlerform von lean-ctx.
+        l_proc.replies = {("call", "ctx_agent"): "error: -32603: bus unavailable"}
+        ergebnis = lauf(welt, reg=registry(antwort()))
+        assert ergebnis["ok"] is False
+        assert ergebnis["error"].startswith("post_failed:")
 
 
     def test_fremde_antwort_zaehlt_nicht(welt):
@@ -2572,9 +3277,9 @@ Run: `chmod +x bin/herdr-dispatch` — Expected: keine Ausgabe.
         ergebnis = json.loads(zeilen[0])
         assert ergebnis["ok"] is False and ergebnis["error"].startswith("dispatch_crashed")
 
-@call tdd(erfolgreicher_durchlauf_legt_die_aufgabe_auf_den_bus)
+@call tdd(-k erfolgreicher_durchlauf_legt_die_aufgabe_auf_den_bus)
 
-@call tdd(keine_antwort_mit_fehler_im_export_ist_agent_error)
+@call tdd(-k keine_antwort_mit_fehler_in_der_ablage_ist_agent_error)
 
 Run: `bin/herdr-dispatch --help` — Expected: Usage-Zeile mit `role`, `--kind`,
 `--model`, `--role-file`, `--task-id`, `--task`, `--worktree`, `--profile`,
@@ -2598,12 +3303,13 @@ Run: `bin/herdr-dispatch --help` — Expected: Usage-Zeile mit `role`, `--kind`,
 Modify `lean_herdr/dispatch.py` (`dispatch()` löst `req.worktree` auf),
 `tests/test_dispatch.py` (zwei Fälle ergänzen).
 **Interfaces:** Produces
-`WorktreeTarget` (frozen: `path: Path`, `workspace_id: str | None`),
+`WorktreeTarget` (frozen: `path: Path`, `workspace_id: str`),
 `repo_root_from(worktree_list) -> Path | None`,
 `find_worktree(worktree_list, branch) -> dict | None`,
 `wt_switch(branch, *, cwd, runner) -> Path | None`,
+`anchor_pane(herdr, workspace_id) -> str | None`,
 `ensure_worktree(branch, *, herdr, cwd, runner) -> WorktreeTarget`,
-`WorktrunkMissing`.
+`WorktrunkMissing`, `WorktreeOpenFailed`.
 
 Drei Werkzeuge, disjunkte Zuständigkeit — **eigene Worktree-Verwaltung ist ein
 Non-Goal**, `wt merge` allein wäre ein Projekt für sich:
@@ -2622,7 +3328,7 @@ Zwei Fallstricke, die die Implementierung bestimmen:
 - **`worktree open --cwd` muss der Repo-Root sein** (H8). Aus einem
   Linked-Worktree-Workspace heraus lehnt Herdr ab:
   `{"error": {"code": "linked_worktree_source", …}}`. Der Root wird über
-  `worktree list --cwd $PWD --json` → `.result.source.repo_root` **aufgelöst**,
+  `worktree list --cwd $PWD` → `.result.source.repo_root` **aufgelöst**,
   nie angenommen.
 - **`wt list --format=json` hat zwei Schemata** (W2) — deshalb wird es nicht
   geparst: `wt switch --format json` liefert den Pfad direkt, und die Zuordnung
@@ -2654,10 +3360,25 @@ Zwei Fallstricke, die die Implementierung bestimmen:
         """`wt` ist nicht installiert — ohne --worktree laeuft trotzdem alles."""
 
 
+    class WorktreeOpenFailed(RuntimeError):
+        """Der Baum steht, aber Herdr hat keinen Workspace darauf geoeffnet.
+
+        Das ist ein Abbruchgrund, kein Schoenheitsfehler: ohne Workspace laeuft
+        der Pane zwar im richtigen Verzeichnis, aber der Abbau findet ihn nicht
+        mehr und ein `linked_worktree_source` (H8) bliebe unbemerkt.
+        """
+
+
     @dataclass(frozen=True)
     class WorktreeTarget:
+        """Ein Worktree, wie der Dispatch ihn braucht: Pfad UND Workspace.
+
+        `workspace_id` ist nicht optional. Ein Ziel ohne Workspace waere nur halb
+        da — der Pane kaeme in den falschen Workspace und der Abbau fiele aus.
+        """
+
         path: Path
-        workspace_id: str | None
+        workspace_id: str
 
 
     def repo_root_from(worktree_list: dict[str, Any]) -> Path | None:
@@ -2701,55 +3422,127 @@ Zwei Fallstricke, die die Implementierung bestimmen:
         return Path(pfad) if pfad else None
 
 
+    def _open_workspace(
+        herdr: Herdr, *, repo_root: Path, path: Path, branch: str
+    ) -> str:
+        """Worktree bei Herdr oeffnen und die Workspace-ID liefern — oder scheitern.
+
+        --cwd MUSS der Repo-Root sein; aus einem Linked-Worktree-Workspace heraus
+        lehnt Herdr mit `linked_worktree_source` ab (H8). Genau dieser Fall kaeme
+        sonst als leeres dict zurueck und saehe aus wie Erfolg.
+        """
+        geoeffnet = herdr.worktree_open(cwd=repo_root, path=path, label=branch)
+        ergebnis = geoeffnet.get("result") or {}
+        workspace = ergebnis.get("open_workspace_id") or ergebnis.get("workspace_id")
+        if not workspace:
+            grund = (geoeffnet.get("error") or {}).get("code") or "keine workspace_id"
+            raise WorktreeOpenFailed(f"worktree open fuer {branch}: {grund}")
+        return str(workspace)
+
+
+    def anchor_pane(herdr: Herdr, workspace_id: str) -> str | None:
+        """Irgendein Pane dieses Workspaces — der Ankerpunkt fuers Teilen.
+
+        `pane split --current` teilt den Workspace des Aufrufers, also den des
+        Orchestrators. Ein so entstandener Arbeiter liegt im falschen Workspace:
+        `workspace close <worktree_workspace>` beendet ihn nicht, und der Abbau
+        laesst eine Leiche stehen. Deshalb wird gezielt ein Pane des
+        Worktree-Workspaces geteilt.
+        """
+        for pane in herdr.pane_list(workspace_id):
+            pane_id = pane.get("pane_id")
+            if pane_id:
+                return str(pane_id)
+        return None
+
+
     def ensure_worktree(
         branch: str, *, herdr: Herdr, cwd: str | Path, runner: Any = subprocess.run
     ) -> WorktreeTarget:
         """Worktree des Branches — vorhandenen wiederverwenden, sonst anlegen.
 
         Reihenfolge: erst Herdr fragen (der Worktree kann schon offen sein), dann
-        worktrunk erzeugen lassen, dann bei Herdr registrieren.
+        worktrunk erzeugen lassen, dann bei Herdr registrieren. Am Ende steht in
+        JEDEM Fall eine Workspace-ID; ein Ziel ohne sie waere nur halb da.
         """
         liste = herdr.worktree_list(cwd)
         repo_root = repo_root_from(liste) or Path(cwd)
 
         vorhanden = find_worktree(liste, branch)
         if vorhanden and vorhanden.get("path"):
+            pfad = Path(vorhanden["path"])
+            # Der Baum kann stehen, ohne dass ein Workspace darauf zeigt — z. B.
+            # nach einem Herdr-Neustart. Dann wird er hier nachgeoeffnet.
+            workspace = vorhanden.get("open_workspace_id")
             return WorktreeTarget(
-                path=Path(vorhanden["path"]),
-                workspace_id=vorhanden.get("open_workspace_id"),
+                path=pfad,
+                workspace_id=str(workspace)
+                if workspace
+                else _open_workspace(herdr, repo_root=repo_root, path=pfad, branch=branch),
             )
 
         pfad = wt_switch(branch, cwd=repo_root, runner=runner)
         if pfad is None:
             raise WorktrunkMissing(f"wt switch lieferte keinen Pfad fuer {branch}")
 
-        # --cwd MUSS der Repo-Root sein; aus einem Linked-Worktree-Workspace
-        # heraus lehnt Herdr mit `linked_worktree_source` ab (H8).
-        geoeffnet = herdr.worktree_open(cwd=repo_root, path=pfad, label=branch)
-        workspace = (geoeffnet.get("result") or {}).get("open_workspace_id") or (
-            geoeffnet.get("result") or {}
-        ).get("workspace_id")
-        return WorktreeTarget(path=pfad, workspace_id=str(workspace) if workspace else None)
+        return WorktreeTarget(
+            path=pfad,
+            workspace_id=_open_workspace(
+                herdr, repo_root=repo_root, path=pfad, branch=branch
+            ),
+        )
 
 Änderung in `lean_herdr/dispatch.py` — `dispatch()` löst `req.worktree` auf, bevor
-es den Pane anlegt. Nur dieser Block ändert sich; der Rest bleibt:
+es den Pane anlegt. Zwei Stellen ändern sich; der Rest bleibt:
 
-@call patch("lean_herdr/dispatch.py", "in dispatch(): vor der Agentensuche req.worktree aufloesen und ziel_cwd darauf setzen")
+@call patch("lean_herdr/dispatch.py", "in dispatch(): req.worktree zu Pfad UND Ankerpane aufloesen und beides an pane_split geben")
 
-Der neue Block, wörtlich (er ersetzt die Zeile `ziel_cwd = cwd if cwd is not None
-else root`):
+**Erstens**, statt der Zeile `ziel_cwd = cwd if cwd is not None else root`:
 
         ziel_cwd = cwd if cwd is not None else root
+        # None heisst: im eigenen Workspace teilen (--current). Nur der
+        # Worktree-Fall setzt einen Anker.
+        ziel_pane: str | None = None
         if req.worktree:
             try:
                 ziel = ensure_worktree(req.worktree, herdr=herdr, cwd=root)
             except WorktrunkMissing:
                 return _ergebnis(False, req, None, None, error="worktrunk_missing")
+            except WorktreeOpenFailed as exc:
+                # Nicht weiterlaufen: ein Pane im richtigen Verzeichnis, den der
+                # Abbau nicht kennt, ist schlimmer als ein sauberer Abbruch.
+                return _ergebnis(False, req, None, None, error=f"worktree_open_failed: {exc}")
             ziel_cwd = ziel.path
+            ziel_pane = anchor_pane(herdr, ziel.workspace_id)
+            if ziel_pane is None:
+                return _ergebnis(False, req, None, None, error="no_anchor_pane")
+
+**Zweitens** bekommt der `pane_split`-Aufruf den Anker:
+
+            pane = herdr.pane_split(
+                ziel_cwd,
+                pane=ziel_pane,
+                env={
+                    "LEAN_CTX_TOOL_PROFILE": profile_for(req.role, req.profile),
+                    "LEAN_CTX_ROLE": req.role,
+                },
+            ) or ""
 
 Dazu der Import am Kopf der Datei:
 
-    from lean_herdr.worktree import WorktrunkMissing, ensure_worktree
+    from lean_herdr.worktree import (
+        WorktreeOpenFailed,
+        WorktrunkMissing,
+        anchor_pane,
+        ensure_worktree,
+    )
+
+**Warum der zweite Teil kein Detail ist:** `pane split --current` teilt immer den
+Workspace des Aufrufers — das ist der des Orchestrators. Der Arbeiter liefe dann
+zwar mit der richtigen `cwd`, läge aber im falschen Workspace; `herdr workspace
+close <worktree_workspace>` beim Abbau (Task 12) beendete ihn nicht, und die
+Aufräumkette der Spec bräche genau an ihrer letzten Stelle. Die `cwd` allein
+bestimmt den Workspace **nicht**.
 
 `tests/test_worktree.py` (neu):
 
@@ -2760,8 +3553,10 @@ Dazu der Import am Kopf der Datei:
 
     from lean_herdr.herdr import Herdr
     from lean_herdr.worktree import (
+        WorktreeOpenFailed,
         WorktreeTarget,
         WorktrunkMissing,
+        anchor_pane,
         ensure_worktree,
         find_worktree,
         repo_root_from,
@@ -2853,12 +3648,63 @@ Dazu der Import am Kopf der Datei:
         monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: "/usr/bin/wt")
         assert wt_switch("f", cwd="/repo", runner=lambda *a, **k: Completed(stdout="{}")) is None
 
+
+    def test_vorhandener_worktree_ohne_workspace_wird_nachgeoeffnet(h):
+        """Der Baum kann ohne offenen Workspace dastehen — dann wird er geoeffnet."""
+        herdr, proc = h
+        proc.replies = {
+            ("worktree", "list"): {
+                "result": {
+                    "source": {"repo_root": "/repo"},
+                    "worktrees": [
+                        {"branch": "feat/auth", "path": "/repo.feat-auth",
+                         "open_workspace_id": None}
+                    ],
+                }
+            },
+            ("worktree", "open"): {"result": {"open_workspace_id": "w5"}},
+        }
+        ziel = ensure_worktree("feat/auth", herdr=herdr, cwd="/repo")
+        assert ziel == WorktreeTarget(path=Path("/repo.feat-auth"), workspace_id="w5")
+        assert proc.called_with("worktree", "open", "--cwd", "/repo")
+
+
+    def test_gescheitertes_worktree_open_ist_ein_fehler_kein_ziel(h, monkeypatch):
+        """Ein Ziel ohne Workspace saehe aus wie Erfolg und braeche spaeter den Abbau."""
+        herdr, proc = h
+        proc.replies = {
+            ("worktree", "list"): LISTE_LEER,
+            ("worktree", "open"): {"error": {"code": "linked_worktree_source"}},
+        }
+        monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: "/usr/bin/wt")
+        runner = lambda *a, **k: Completed(  # noqa: E731
+            stdout=json.dumps({"path": "/repo.feat-auth"})
+        )
+        with pytest.raises(WorktreeOpenFailed, match="linked_worktree_source"):
+            ensure_worktree("feat/auth", herdr=herdr, cwd="/repo", runner=runner)
+
+
+    def test_anchor_pane_nimmt_einen_pane_des_ziel_workspaces(h):
+        herdr, proc = h
+        proc.replies = {
+            ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1", "workspace_id": "w2"}]}}
+        }
+        assert anchor_pane(herdr, "w2") == "w2:p1"
+        assert proc.called_with("--workspace", "w2")
+
+
+    def test_anchor_pane_ist_none_wenn_der_workspace_leer_ist(h):
+        herdr, proc = h
+        proc.replies = {("pane", "list"): {"result": {"panes": []}}}
+        assert anchor_pane(herdr, "w2") is None
+
 Ergänzung in `tests/test_dispatch.py` (neue Fälle, an die vorhandenen anhängen):
 
     def test_worktree_dispatch_startet_den_pane_im_worktree(welt, monkeypatch):
         h_proc, _, _ = welt
         h_proc.replies = {
-            ("pane", "split"): {"result": {"pane_id": "w2:p1"}},
+            ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
+            ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
             ("worktree", "list"): {
                 "result": {
                     "source": {"repo_root": "/repo"},
@@ -2876,6 +3722,46 @@ Ergänzung in `tests/test_dispatch.py` (neue Fälle, an die vorhandenen anhänge
         assert "builder-feat-auth" in start
 
 
+    def test_worktree_dispatch_teilt_einen_pane_des_worktree_workspaces(welt):
+        """Sonst laege der Arbeiter im Orchestrator-Workspace und ueberlebte den Abbau."""
+        h_proc, _, _ = welt
+        h_proc.replies = {
+            ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
+            ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+            ("worktree", "list"): {
+                "result": {
+                    "source": {"repo_root": "/repo"},
+                    "worktrees": [
+                        {"branch": "feat/auth", "path": "/repo.feat-auth",
+                         "open_workspace_id": "w2"}
+                    ],
+                }
+            },
+        }
+        lauf(welt, reg=registry(antwort()), request=req(worktree="feat/auth"))
+        split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+        assert "--pane" in split and "w2:p1" in split
+        assert "--current" not in split
+
+
+    def test_worktree_ohne_ankerpane_bricht_ab(welt):
+        h_proc, _, _ = welt
+        h_proc.replies = {
+            ("pane", "list"): {"result": {"panes": []}},
+            ("worktree", "list"): {
+                "result": {
+                    "source": {"repo_root": "/repo"},
+                    "worktrees": [
+                        {"branch": "feat/auth", "path": "/repo.feat-auth",
+                         "open_workspace_id": "w2"}
+                    ],
+                }
+            },
+        }
+        ergebnis = lauf(welt, reg=registry(antwort()), request=req(worktree="feat/auth"))
+        assert ergebnis["ok"] is False and ergebnis["error"] == "no_anchor_pane"
+
+
     def test_fehlendes_worktrunk_meldet_worktrunk_missing(welt, monkeypatch):
         monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: None)
         h_proc, _, _ = welt
@@ -2885,9 +3771,9 @@ Ergänzung in `tests/test_dispatch.py` (neue Fälle, an die vorhandenen anhänge
         ergebnis = lauf(welt, reg=registry(), request=req(worktree="feat/neu"))
         assert ergebnis["error"] == "worktrunk_missing"
 
-@call tdd(neuer_worktree_wird_erzeugt_und_am_repo_root_registriert)
+@call tdd(-k neuer_worktree_wird_erzeugt_und_am_repo_root_registriert)
 
-@call tdd(worktree_dispatch_startet_den_pane_im_worktree)
+@call tdd(-k worktree_dispatch_teilt_einen_pane_des_worktree_workspaces)
 
 ### Verify & Close
 
@@ -2895,7 +3781,7 @@ Ergänzung in `tests/test_dispatch.py` (neue Fälle, an die vorhandenen anhänge
 @call gate("lean_herdr/worktree.py lean_herdr/dispatch.py tests")
 @call review_change()
 @call commit("lean_herdr/worktree.py lean_herdr/dispatch.py tests", "feat(worktree): --worktree loest ueber worktrunk und herdr worktree auf")
-@call remember_decision("lean-herdr: ensure_worktree() nutzt `wt switch --create --no-cd --format json --yes` und registriert bei Herdr mit --cwd = repo_root (H8); `wt list` wird nie geparst (W2); fehlendes wt → error worktrunk_missing, aber nur bei --worktree")
+@call remember_decision("lean-herdr: ensure_worktree() nutzt `wt switch --create --no-cd --format json --yes` und registriert bei Herdr mit --cwd = repo_root (H8); `wt list` wird nie geparst (W2); fehlendes wt → error worktrunk_missing, aber nur bei --worktree. WorktreeTarget.workspace_id ist Pflicht: ein Arbeiter im Worktree entsteht aus `pane split --pane <pane des worktree-workspaces>`, nie aus --current — sonst laege er im Orchestrator-Workspace und ueberlebte `workspace close`")
 @phase-end
 
 @phase "task-11"
@@ -2916,9 +3802,10 @@ Endebedingung greift (Punkt 4) und was `minimal` beim Geld wirklich spart
 Run:
 
     herdr pane split --current --direction right --cwd "$PWD" --no-focus \
-      --env LEAN_CTX_TOOL_PROFILE=minimal --env LEAN_CTX_ROLE=orchestrator --json
+      --env LEAN_CTX_TOOL_PROFILE=minimal --env LEAN_CTX_ROLE=orchestrator
 
-— Expected: JSON mit `result.pane_id`, z. B. `w1:p2`.
+— Expected: JSON mit `result.pane.pane_id`, z. B. `w1:p2`. Kein `--json` anhängen:
+den Schalter gibt es nicht, Herdr gibt ohnehin immer JSON.
 
 Run: `herdr agent start orch --kind opencode --pane <pane_id> -- --agent orchestrator`
 — Expected: der Pane zeigt opencode mit dem Agenten `orchestrator`. Schlägt es mit
@@ -2928,26 +3815,53 @@ Run: `herdr agent start orch --kind opencode --pane <pane_id> -- --agent orchest
 Vertrauensmodell: eine Bus-Nachricht kann nicht behaupten, der Orchestrator zu
 sein, und ohne diesen Eintrag verweigert jeder Arbeiter die Annahme.
 
+Aufgelöst wird mit **dem Code aus Task 3**, nicht mit einem zweiten, von Hand
+gebauten Weg. Ein `jq`-Einzeiler auf `.agents[] | select(.pid == $pid)` trifft nur
+den Glücksfall, in dem der lean-ctx-Prozess *die* Pane-Shell ist; steht er als
+Kind daneben — der häufigere Fall —, bleibt er dauerhaft leer, und der Bootstrap
+hinge an einem Fehler, den Task 3 längst behandelt.
+
 Run:
 
-    herdr pane process-info --pane <pane_id> --json | jq -r '.result.process_info.shell_pid'
+    uv run python - <<'PY'
+    from lean_herdr.bus import agents_in_registry, read_registry
+    from lean_herdr.herdr import Herdr
+    from lean_herdr.join import pane_for_agent, resolve_agent_id
 
-— Expected: eine PID, z. B. `2212801`.
+    h = Herdr()
+    agents = h.agent_list()
+    pane = pane_for_agent(agents, "orch")
+    print(pane or "kein Pane fuer 'orch' — laeuft der Agent?")
+    print(
+        resolve_agent_id(
+            agents,
+            h.pane_process_info(pane) if pane else {},
+            agents_in_registry(read_registry()),
+            name="orch",
+        )
+        or "noch keine agent_id — der MCP-Server ist noch nicht oben"
+    )
+    PY
 
-Run:
+— Expected: zwei Zeilen, die zweite eine ID der Form `mcp-<pid>-<hex>`. Steht dort
+stattdessen der Hinweis auf den MCP-Server, nach wenigen Sekunden wiederholen: der
+Server registriert sich erst beim ersten Werkzeugaufruf des Agenten.
 
-    jq -r --argjson pid <pid> \
-      '.agents[] | select(.pid == $pid) | .agent_id' \
+Wer den rohen Blick zur Gegenprobe will — er zeigt **nur** den direkten Treffer:
+
+    herdr pane process-info --pane <pane_id> | jq -r '.result.process_info.shell_pid'
+    jq -r --argjson pid <pid> '.agents[] | select(.pid == $pid) | .agent_id' \
       ~/.local/share/lean-ctx/agents/registry.json
-
-— Expected: eine ID der Form `mcp-<pid>-<hex>`. Kommt nichts, ist der MCP-Server
-noch nicht oben — nach wenigen Sekunden wiederholen. Steht der lean-ctx-Prozess
-als Kind der Shell, liefert `resolve_agent_id()` (Task 3) denselben Wert über die
-Prozessgruppe; hier reicht der direkte Blick.
 
 @call patch("roles/builder.md", "<ORCHESTRATOR_AGENT_ID> durch die aufgeloeste ID ersetzen")
 
 @call patch("roles/reviewer.md", "<ORCHESTRATOR_AGENT_ID> durch die aufgeloeste ID ersetzen")
+
+Diese Ersetzung darf `tests/test_roles.py` nicht rot machen — deshalb prüft
+`test_arbeiter_kennen_die_orchestrator_id_stelle` aus Task 7 die **Zeile**
+`ORCHESTRATOR = <Platzhalter | mcp-…>` und nicht den Platzhalter selbst. Ein Test,
+der den Platzhalter verlangt, wäre genau dann rot, wenn die Rolle richtig
+eingerichtet ist.
 
 **Schritt 3 — eine echte Aufgabe zuteilen.** Aus dem Orchestrator-Pane heraus,
 mit seinen eigenen Worten; hier zur Nachvollziehbarkeit der Aufruf selbst:
@@ -2998,7 +3912,7 @@ und Task 7 braucht eine schärfere Formulierung.
 **Schritt 6 — Kosten notieren (offener Punkt 13).** Für den Orchestrator zeigt
 `herdr agent list` keine Telemetrie (H3, nur Claude-Agenten). Was zählbar ist:
 
-Run: `herdr agent list --json | jq -r '.result.agents[] | "\(.name)\t\(.context // "-")\t\(.usage // "-")"'`
+Run: `herdr agent list | jq -r '.result.agents[] | "\(.name)\t\(.context // "-")\t\(.usage // "-")"'`
 — Expected: eine Zeile je Agent; für den Builder Zahlen, für den opencode-Orchestrator `-`.
 
 Das Ergebnis kommt als Notiz ins README, damit die Hochrechnung der Spec eine
@@ -3038,7 +3952,7 @@ Run:
 
 — Expected: `"ok": true`. Danach:
 
-Run: `herdr worktree list --cwd "$PWD" --json | jq -r '.result.worktrees[] | "\(.branch)\t\(.path)\t\(.open_workspace_id)"'`
+Run: `herdr worktree list --cwd "$PWD" | jq -r '.result.worktrees[] | "\(.branch)\t\(.path)\t\(.open_workspace_id)"'`
 — Expected: eine Zeile `feat/probe`, ein Pfad neben dem Repo, eine Workspace-ID
 wie `w2`.
 
@@ -3052,34 +3966,74 @@ die Nebenläufigkeitsprobe (Punkt 2):
 
 Run:
 
-    bin/herdr-dispatch reviewer --kind opencode --model <anderes-modell> \
+    bin/herdr-dispatch reviewer --kind opencode --model openrouter/openai/gpt-5.6-sol \
       --role-file roles/reviewer.md --worktree feat/probe --task-id T2 \
       --task "Pruefe den Commit auf feat/probe. Antworte mit category result oder reject." \
       --timeout-ms 300000
+
+Das Modell ist bewusst benannt und bewusst ein anderes als das des Builders
+(`sonnet`): der Wert eines Reviewers liegt genau in den anderen Blindstellen —
+ein Reviewer aus derselben Familie prüft weitgehend seine eigenen Annahmen.
+`openrouter/openai/gpt-5.6-sol` ist gegen `opencode models` (1.18.25) verifiziert;
+mit demselben Modell ist der Review dieses Plans gelaufen. Steht es nicht zur
+Verfügung, tut es jedes Nicht-Anthropic-Modell aus derselben Liste — die
+Modellwahl ist ein Urteil und gehört in die Rollendatei des Orchestrators, nicht
+ins Skript.
 
 — Expected: `"ok": true` und `"category": "result"`. Der Pane liegt im **selben**
 Worktree, aber es ist ein **neuer** Agent: `agent_name` ist `reviewer-feat-probe`,
 nicht `builder-feat-probe`.
 
-Run: `herdr agent list --json | jq -r '.result.agents[] | "\(.name)\t\(.pane_id)"'`
+Run: `herdr agent list | jq -r '.result.agents[] | "\(.name)\t\(.pane_id)"'`
 — Expected: `builder-feat-probe` und `reviewer-feat-probe` mit **verschiedenen**
 pane_ids. Träfe der Reviewer-Dispatch den laufenden Builder, stünde hier nur ein
 Eintrag — genau der Fehler, den der Schlüssel `(branch, rolle)` verhindert.
 
-**Schritt 3 — Abbau in dieser Reihenfolge.** Die Umkehrung hinterlässt einen Pane
+**Schritt 3 — das Testtor am echten Merge prüfen, bevor gemergt wird.** Ein
+separater `wt hook pre-merge project:test`-Aufruf nach einem gelungenen Merge
+beweist nur, dass das Kommando läuft — nicht, dass worktrunk es beim Merge
+ausführt und dass ein Fehlschlag den Merge **verhindert**. Genau das ist aber die
+Zusage. Also erst der Fehlschlag:
+
+Run: im Worktree eine sicher rote Datei anlegen und committen:
+
+    cd <path>
+    printf 'def test_absichtlich_rot():\n    assert False, "Tor-Probe"\n' \
+      > tests/test_tor_probe.py
+    git add tests/test_tor_probe.py && git commit -m "test: Tor-Probe (wird zurueckgenommen)"
+
+Run: `wt -C <path> merge main --yes`
+— Expected: **Exit ≠ 0**, eine Zeile über den fehlgeschlagenen `pre-merge`-Hook,
+**kein** `✓ Merged to main`. Läuft der Merge trotzdem durch, ist das Tor wirkungslos
+— dann greift `.config/wt.toml` nicht, und Task 8 ist der Ort für die Korrektur,
+nicht dieser Durchlauf.
+
+Run: `git log --oneline -1 main` — Expected: **unverändert**, der Commit von vor
+der Probe.
+Run: `git branch -a` — Expected: `feat/probe` steht noch da; ein abgebrochener
+Merge entfernt nichts.
+
+Danach die Probe zurücknehmen:
+
+    git -C <path> revert --no-edit HEAD
+
+**Schritt 4 — Abbau in dieser Reihenfolge.** Die Umkehrung hinterlässt einen Pane
 in undefiniertem Zustand, weil `wt merge` den Checkout entfernt:
 
-Run: `herdr worktree list --cwd "$PWD" --json | jq -r '.result.worktrees[] | select(.branch=="feat/probe") | "\(.path)\t\(.open_workspace_id)"'`
+Run: `herdr worktree list --cwd "$PWD" | jq -r '.result.worktrees[] | select(.branch=="feat/probe") | "\(.path)\t\(.open_workspace_id)"'`
 — Expected: Pfad und Workspace-ID. **Zuerst auflösen** — nach dem Merge vergisst
 Herdr die Zuordnung, und der Pane bliebe als Leiche stehen.
 
 Run: `herdr workspace close <workspace_id>` — Expected: der Workspace verschwindet,
 das Verzeichnis bleibt.
 
-Run: `wt -C <path> merge main --yes` — Expected: `✓ Squashed`, `✓ Merged to main`
-und eine Zeile über das Entfernen im Hintergrund. Die Warnung
-`▲ Cannot change directory — shell integration installed but not active` ist im
-nicht-interaktiven Aufruf harmlos.
+Run: `wt -C <path> merge main --yes` — Expected: der `pre-merge`-Hook läuft
+**sichtbar** durch (`uv run pytest -q`, PASS), danach `✓ Squashed`,
+`✓ Merged to main` und eine Zeile über das Entfernen im Hintergrund. Beim ersten
+Mal fragt worktrunk nach Freigabe für das Projektkommando — `wt config approvals`;
+ohne sie überspringt worktrunk den Hook, und Schritt 3 hätte fälschlich bestanden.
+Die Warnung `▲ Cannot change directory — shell integration installed but not
+active` ist im nicht-interaktiven Aufruf harmlos.
 
 **`-C <path>` ist die Sicherung, nicht Kosmetik.** Ohne sie merged worktrunk den
 **aktuellen** Worktree — also `main` — in den Feature-Branch, meldet
@@ -3089,13 +4043,6 @@ Run: `git log --oneline -1 main` — Expected: der Squash-Commit der Probe.
 Run: `git branch -a` — Expected: `feat/probe` ist weg (ggf. wenige Sekunden warten,
 die Entfernung läuft im Hintergrund, W3).
 
-**Schritt 4 — das Testtor prüfen.** `pre-merge` läuft nach dem Rebase und vor dem
-Merge; ein Fehlschlag bricht ab:
-
-Run: `wt hook pre-merge project:test --yes` — Expected: `uv run pytest -q` läuft
-und meldet PASS. Beim ersten Mal fragt worktrunk nach Freigabe für das
-Projektkommando — `wt config approvals`.
-
 @call patch("README.md", "Abschnitt 'Gemessen' um das Ergebnis von Stufe 4 ergaenzen: parallele Arbeiter, Abbau-Reihenfolge, pre-merge-Tor")
 
 ### Verify & Close
@@ -3103,7 +4050,7 @@ Projektkommando — `wt config approvals`.
 @call verify(README.md)
 @call gate("README.md")
 @call commit("README.md", "chore(stufe4): Worktree-Durchlauf mit zwei Arbeitern und Merge bestanden")
-@call remember_decision("lean-herdr Stufe 4: zwei Arbeiter im selben Worktree bekommen getrennte Panes ueber (branch, rolle); Abbau IMMER erst workspace close, dann wt -C <path> merge main --yes; ohne -C faehrt main auf den Feature-Branch (W1)")
+@call remember_decision("lean-herdr Stufe 4: zwei Arbeiter im selben Worktree bekommen getrennte Panes ueber (branch, rolle); Abbau IMMER erst workspace close, dann wt -C <path> merge main --yes; ohne -C faehrt main auf den Feature-Branch (W1). Das pre-merge-Tor wird am echten Merge geprueft — absichtlich roter Test, Merge muss abbrechen — nicht mit einem separaten Hook-Aufruf danach; ohne `wt config approvals` ueberspringt worktrunk den Hook stillschweigend. Reviewer-Modell im Durchlauf: openrouter/openai/gpt-5.6-sol, bewusst aus einer anderen Familie als der Builder")
 @phase-end
 
 @phase "task-13"
@@ -3166,6 +4113,24 @@ verifiziert; `command` läuft relativ zum Plugin-Verzeichnis:
     title = "lean-ctx-Digest in den Agenten dieses Panes schicken"
     contexts = ["pane"]
     command = ["python3", "-m", "lean_herdr", "inject"]
+
+    # Der Ein-Tastendruck-Bootstrap: Pane mit minimal-Profil aufmachen und den
+    # opencode-Orchestrator darin starten. Workspace-Kontext, weil der neue Pane
+    # in DIESEN Workspace gehoert.
+    [[actions]]
+    id = "bootstrap"
+    title = "Orchestrator in diesem Workspace starten"
+    description = "Legt einen Pane mit LEAN_CTX_TOOL_PROFILE=minimal an und startet den opencode-Orchestrator darin."
+    contexts = ["workspace"]
+    command = ["python3", "-m", "lean_herdr", "bootstrap"]
+
+Warum der Bootstrap eine **Aktion** ist und kein Event-Handler: er startet einen
+Agenten, kostet also Geld und Bildschirm. Das ist eine Entscheidung des Menschen,
+kein Nebeneffekt eines Fokuswechsels — dieselbe Begründung wie bei `inject`. Und
+er widerspricht nicht der Regel „das Plugin zeigt, der Orchestrator handelt": ein
+Pane aufzumachen ist kein Agentenhandeln, sondern das, was ein Mensch sonst von
+Hand tippt (Task 11, Schritt 1). Der Handler selbst bleibt ein One-Shot-Prozess
+ohne Agent-Identität.
 
 `lean_herdr/config.py` (neu) — Form übernommen aus
 `lean-ctx/integrations/hermes-lean-ctx` (`from_env`, Apache-2.0):
@@ -3249,19 +4214,22 @@ verifiziert; `command` läuft relativ zum Plugin-Verzeichnis:
 
     from __future__ import annotations
 
+    import importlib
     import sys
     from pathlib import Path
 
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-    from lean_herdr import handlers  # noqa: E402
     from lean_herdr.config import Config  # noqa: E402
 
+    #: Subcommand → Funktionsname in lean_herdr.handlers. Bewusst NAMEN, nicht
+    #: Funktionsobjekte — siehe main().
     HANDLERS = {
-        "workspace-created": handlers.handle_workspace_created,
-        "pane-detected": handlers.handle_pane_detected,
-        "status-changed": handlers.handle_status_changed,
-        "inject": handlers.handle_inject,
+        "workspace-created": "handle_workspace_created",
+        "pane-detected": "handle_pane_detected",
+        "status-changed": "handle_status_changed",
+        "inject": "handle_inject",
+        "bootstrap": "handle_bootstrap",
     }
 
 
@@ -3271,7 +4239,15 @@ verifiziert; `command` läuft relativ zum Plugin-Verzeichnis:
             sys.stderr.write(f"[lean.herdr] unbekannter Subcommand: {args[:1]}\n")
             return 0
         try:
-            HANDLERS[args[0]](Config.from_env())
+            # Spaet und ueber den NAMEN aufloesen. Zwei Gruende, beide handfest:
+            # 1. lean_herdr.handlers entsteht erst in Task 15. Ein Import am
+            #    Modulkopf liesse schon diese Task an ihrem eigenen Testlauf
+            #    scheitern; so meldet ein fehlender Handler nur eine stderr-Zeile.
+            # 2. Ein zur Importzeit gebundenes Funktionsobjekt waere im Test nicht
+            #    mehr zu ersetzen: ein monkeypatch auf handlers.handle_pane_detected
+            #    ginge am gespeicherten Eintrag vorbei, und der Test pruefte nichts.
+            handlers = importlib.import_module("lean_herdr.handlers")
+            getattr(handlers, HANDLERS[args[0]])(Config.from_env())
         except Exception as exc:  # noqa: BLE001 — ein Handler bricht nie etwas
             sys.stderr.write(f"[lean.herdr] {args[0]} fehlgeschlagen: {exc}\n")
         return 0
@@ -3365,10 +4341,34 @@ Event-Tippfehler, die Herdr sonst verschweigt:
             assert sub in HANDLERS, f"{sub} hat keinen Handler"
 
 
-    def test_die_action_haengt_am_pane():
-        (action,) = manifest()["actions"]
-        assert action["id"] == "inject"
-        assert action["contexts"] == ["pane"]
+    def test_die_beiden_aktionen_haengen_am_richtigen_kontext():
+        nach_id = {a["id"]: a for a in manifest()["actions"]}
+        assert nach_id["inject"]["contexts"] == ["pane"]
+        assert nach_id["bootstrap"]["contexts"] == ["workspace"], (
+            "Der Bootstrap legt einen Pane IN diesem Workspace an — Pane-Kontext "
+            "waere der falsche Bezug."
+        )
+
+
+    def test_main_ueberlebt_ein_fehlendes_handlers_modul(monkeypatch, capsys):
+        """Task 13 muss ohne Task 15 durchlaufen: der Import passiert erst im Aufruf."""
+        import importlib
+
+        from lean_herdr.__main__ import main
+
+        def kein_modul(name):
+            raise ModuleNotFoundError(name)
+
+        monkeypatch.setattr(importlib, "import_module", kein_modul)
+        assert main(["inject"]) == 0
+        assert "[lean.herdr] inject fehlgeschlagen" in capsys.readouterr().err
+
+
+    def test_unbekannter_subcommand_ist_kein_absturz(capsys):
+        from lean_herdr.__main__ import main
+
+        assert main(["gibt-es-nicht"]) == 0
+        assert "unbekannter Subcommand" in capsys.readouterr().err
 
 
     @pytest.mark.integration
@@ -3383,7 +4383,7 @@ Event-Tippfehler, die Herdr sonst verschweigt:
         zeilen = [z for z in liste.stdout.splitlines() if "lean.herdr" in z or "warning:" in z]
         assert not any("warning:" in z for z in zeilen), "\n".join(zeilen)
 
-@call tdd(jedes_event_ist_bekannt_und_in_punkt_notation)
+@call tdd(-k jedes_event_ist_bekannt_und_in_punkt_notation)
 
 Run: `uv run pytest -q tests/test_manifest.py tests/test_config.py` — Expected:
 alle Tests grün; `test_plugin_link_erzeugt_keine_warnung` läuft nur mit `-m integration`.
@@ -3393,7 +4393,7 @@ alle Tests grün; `test_plugin_link_erzeugt_keine_warnung` läuft nur mit `-m in
 @call verify(herdr-plugin.toml)
 @call gate("herdr-plugin.toml lean_herdr tests")
 @call commit("herdr-plugin.toml lean_herdr tests", "feat(plugin): Manifest, Config und Subcommand-Dispatch")
-@call remember_decision("lean-herdr Plugin: es gibt KEIN startup-Event — der Wiederaufnahme-Pfad haengt an workspace.created und workspace.focused; Events stehen in Punkt-Notation, unbekannte werden nur gewarnt (H6), deshalb der Manifest-Lint")
+@call remember_decision("lean-herdr Plugin: es gibt KEIN startup-Event — der Wiederaufnahme-Pfad haengt an workspace.created und workspace.focused; Events stehen in Punkt-Notation, unbekannte werden nur gewarnt (H6), deshalb der Manifest-Lint. __main__.HANDLERS bildet Subcommand → FUNKTIONSNAME ab und importiert lean_herdr.handlers erst im Aufruf: sonst scheitert Task 13 an Task 15, und ein monkeypatch auf handlers.handle_* traefe den gespeicherten Eintrag nicht. Zwei Aktionen: inject (pane), bootstrap (workspace)")
 @phase-end
 
 @phase "task-14"
@@ -3403,16 +4403,35 @@ alle Tests grün; `test_plugin_link_erzeugt_keine_warnung` läuft nur mit `-m in
 
 **Files:** Create `lean_herdr/digest.py`, `tests/test_digest.py`.
 **Interfaces:** Produces
-`render_digest(resume, handoff) -> str | None`,
-`summary_token(resume, max_len=60) -> str | None`.
+`strip_frame(resume_text) -> str`,
+`render_digest(resume_text, handoff_text=None) -> str | None`,
+`summary_token(resume_text, max_len=60) -> str | None`.
 
-**`ctx_session action=resume` liefert den Digest fertig** (Projekt, Findings,
-Archive, Statistik); `ctx_handoff show` ergänzt die kuratierten Datei-Referenzen.
-Nichts davon wird nachgebaut. Reine Funktionen über bereits geholten Antworten —
-kein I/O, keine Doppel nötig.
+**`ctx_session action=resume` liefert den Digest fertig** — und zwar als
+**Klartext**, nicht als Feldersammlung. Gemessen gegen lean-ctx 3.10.1:
 
-**Gibt es weder Task noch Findings noch Ledger, wird kein Digest geschrieben und
-kein Token gesetzt.** Ein frisches Projekt ist der Normalfall, kein Fehler.
+    --- SESSION RESUME (post-compaction) ---
+    [COMPRESSION: standard] Dense output. Atomic fact lines, abbreviations, diff-only code.
+    Project: lean-herdr
+    Task: Modified: 1 file changed, 211 insertions(+), 20 deletions(-) in docs/lean-md/plans
+    Key findings: Read 2026-09-01-lean-herdr.lmd.md (4781L); …
+    Archives: d87f9bd455c4c365(ctx_read), c5f10c0559312d84(ctx_read), …
+    Stats: 104 calls, 1382898 tok saved
+    ---
+
+Das ist der Digest. **Er wird übernommen, nicht zerlegt.** Ein Nachbau aus
+ausgewählten Feldern — Task, Findings, Decisions — würde Projekt, Archive,
+Statistik und Ledger stillschweigend wegwerfen; was der Agent dann sähe, wäre
+ärmer als das, was lean-ctx ohnehin schon fertig hingelegt hat. Diese Task rahmt
+nur: Rahmenzeilen weg, Handoff-Referenzen dran.
+
+`ctx_handoff` ergänzt die kuratierten Datei-Referenzen — über `action=list` (der
+neueste Ledger steht oben) und dann `action=show` mit dessen `path`. Beides holt
+der Aufrufer; hier stehen nur reine Funktionen über den Texten, kein I/O.
+
+**Ist der Resume-Text nach dem Entrahmen leer und gibt es keinen Handoff, wird kein
+Digest geschrieben und kein Token gesetzt.** Ein frisches Projekt ist der
+Normalfall, kein Fehler.
 
 Der Token heißt **`ctx`**, nicht `task`: `herdr-plugin-renamer` belegt `$task`
 bereits mit seinem generierten Pane-Namen, und zwei Plugins um denselben Token
@@ -3420,171 +4439,172 @@ wären ein stiller Konflikt.
 
 `lean_herdr/digest.py` (neu):
 
-    """Kontext → Digest. Reine Funktionen, kein I/O.
+    """Kontext → Digest. Reine Funktionen ueber Text, kein I/O.
 
-    Der Digest kommt fertig aus ctx_session resume; hier wird nur ausgewaehlt,
-    gekuerzt und gerahmt.
+    Der Digest kommt FERTIG aus `ctx_session resume`. Hier wird er entrahmt und
+    um die Handoff-Referenzen ergaenzt — nicht aus Feldern nachgebaut.
     """
 
     from __future__ import annotations
 
-    from typing import Any
+    import re
 
-    MAX_FINDINGS = 5
-    MAX_DATEIEN = 8
+    MAX_HANDOFF_ZEILEN = 12
     TOKEN_MAX = 60
 
+    #: Die Rahmenzeilen von ctx_session resume: `--- SESSION RESUME … ---` und `---`.
+    RAHMEN = re.compile(r"^-{3,}.*$", re.M)
 
-    def _result(antwort: dict[str, Any]) -> dict[str, Any]:
-        """lean-ctx antwortet mal flach, mal unter `result`."""
-        inner = antwort.get("result")
-        return inner if isinstance(inner, dict) else antwort
+    #: Die Konfigurationszeile ist eine Anweisung an den Server, kein Kontext.
+    COMPRESSION_ZEILE = re.compile(r"^\[COMPRESSION:.*$", re.M)
 
-
-    def _text(wert: Any) -> str:
-        if isinstance(wert, str):
-            return wert.strip()
-        if isinstance(wert, dict):
-            for key in ("title", "summary", "text", "message", "description"):
-                if isinstance(wert.get(key), str):
-                    return wert[key].strip()
-        return ""
+    #: `Task: …` im Resume-Text — die einzige Zeile, die den Token speist.
+    TASK_ZEILE = re.compile(r"^Task:\s*(.+)$", re.M)
+    FINDINGS_ZEILE = re.compile(r"^Key findings:\s*(.+)$", re.M)
 
 
-    def _liste(quelle: dict[str, Any], *keys: str) -> list[Any]:
-        for key in keys:
-            wert = quelle.get(key)
-            if isinstance(wert, list):
-                return wert
-        return []
+    def strip_frame(resume_text: str) -> str:
+        """Rahmen- und Konfigurationszeilen weg, Inhalt behalten.
+
+        Alles andere bleibt WORTWOERTLICH stehen — auch Project, Archives, Stats
+        und Ledger-Zeilen, die ein Nachbau verlieren wuerde.
+        """
+        ohne = COMPRESSION_ZEILE.sub("", RAHMEN.sub("", resume_text or ""))
+        return "\n".join(z for z in ohne.splitlines() if z.strip()).strip()
 
 
-    def render_digest(resume: dict[str, Any], handoff: dict[str, Any] | None = None) -> str | None:
+    def render_digest(resume_text: str, handoff_text: str | None = None) -> str | None:
         """Markdown-Digest — oder None, wenn es nichts zu zeigen gibt."""
-        daten = _result(resume or {})
-        task = _text(daten.get("task"))
-        findings = [_text(f) for f in _liste(daten, "findings", "recent_findings")]
-        findings = [f for f in findings if f][:MAX_FINDINGS]
-        entscheidungen = [_text(d) for d in _liste(daten, "decisions")]
-        entscheidungen = [d for d in entscheidungen if d][:MAX_FINDINGS]
-        dateien = [_text(f) for f in _liste(_result(handoff or {}), "files", "references")]
-        dateien = [f for f in dateien if f][:MAX_DATEIEN]
-
-        if not (task or findings or entscheidungen or dateien):
+        kern = strip_frame(resume_text)
+        handoff = "\n".join(
+            z for z in (handoff_text or "").splitlines() if z.strip()
+        ).strip()
+        if not (kern or handoff):
             return None
 
         zeilen = ["# lean-ctx-Kontext", ""]
-        if task:
-            zeilen += [f"**Aufgabe:** {task}", ""]
-        if findings:
-            zeilen += ["## Findings", *(f"- {f}" for f in findings), ""]
-        if entscheidungen:
-            zeilen += ["## Entscheidungen", *(f"- {d}" for d in entscheidungen), ""]
-        if dateien:
-            zeilen += ["## Dateien", *(f"- {f}" for f in dateien), ""]
+        if kern:
+            zeilen += [kern, ""]
+        if handoff:
+            gekuerzt = handoff.splitlines()[:MAX_HANDOFF_ZEILEN]
+            zeilen += ["## Handoff", *gekuerzt, ""]
         return "\n".join(zeilen).rstrip() + "\n"
 
 
-    def summary_token(resume: dict[str, Any], max_len: int = TOKEN_MAX) -> str | None:
+    def summary_token(resume_text: str, max_len: int = TOKEN_MAX) -> str | None:
         """Einzeiler fuer den `ctx`-Metadaten-Token der Sidebar."""
-        daten = _result(resume or {})
-        task = _text(daten.get("task"))
-        if not task:
-            anzahl = len([f for f in _liste(daten, "findings", "recent_findings") if _text(f)])
-            if not anzahl:
+        text = resume_text or ""
+        treffer = TASK_ZEILE.search(text)
+        roh = treffer.group(1) if treffer else ""
+        if not roh.strip():
+            findings = FINDINGS_ZEILE.search(text)
+            if not findings:
                 return None
-            return f"{anzahl} Findings"
-        einzeilig = " ".join(task.split())
+            anzahl = len([t for t in findings.group(1).split(";") if t.strip()])
+            return f"{anzahl} Findings" if anzahl else None
+        einzeilig = " ".join(roh.split())
         return einzeilig if len(einzeilig) <= max_len else einzeilig[: max_len - 1] + "…"
 
 `tests/test_digest.py` (neu):
 
-    from lean_herdr.digest import render_digest, summary_token
+    from lean_herdr.digest import render_digest, strip_frame, summary_token
 
-    RESUME = {
-        "result": {
-            "task": "lean-herdr Plugin bauen",
-            "findings": [
-                {"title": "registry.json traegt die Nachrichten unter scratchpad"},
-                "project_root ist meist null",
-            ],
-            "decisions": [{"summary": "Token heisst ctx, nicht task"}],
-        }
-    }
-    HANDOFF = {"result": {"files": ["lean_herdr/digest.py", {"path": "x", "title": "tests/"}]}}
+    #: Verbatim aus einem echten `lean-ctx call ctx_session {"action":"resume"}`.
+    RESUME = (
+        "--- SESSION RESUME (post-compaction) ---\n"
+        "[COMPRESSION: standard] Dense output. Atomic fact lines.\n"
+        "Project: lean-herdr\n"
+        "Task: Plan ueberarbeiten\n"
+        "Key findings: registry.json traegt die Nachrichten unter scratchpad; "
+        "project_root ist meist null\n"
+        "Archives: d87f9bd455c4c365(ctx_read), c5f10c0559312d84(ctx_read)\n"
+        "Stats: 104 calls, 1382898 tok saved\n"
+        "---"
+    )
+    HANDOFF = " ctx_handoff show\n path: /x.json\n  - lean_herdr/digest.py\n  - tests/"
 
 
-    def test_digest_enthaelt_aufgabe_findings_und_dateien():
+    def test_der_fertige_digest_wird_uebernommen_nicht_nachgebaut():
+        """Kein Feld darf verlorengehen — auch Project, Archives und Stats nicht."""
         text = render_digest(RESUME, HANDOFF)
         assert text is not None
-        assert "**Aufgabe:** lean-herdr Plugin bauen" in text
-        assert "- registry.json traegt die Nachrichten unter scratchpad" in text
-        assert "- project_root ist meist null" in text
-        assert "- Token heisst ctx, nicht task" in text
+        for zeile in ("Project: lean-herdr", "Task: Plan ueberarbeiten",
+                      "Archives: d87f9bd455c4c365(ctx_read)",
+                      "Stats: 104 calls, 1382898 tok saved"):
+            assert zeile in text, f"verloren: {zeile}"
         assert "- lean_herdr/digest.py" in text
+
+
+    def test_nur_rahmen_und_konfigurationszeile_fallen_weg():
+        kern = strip_frame(RESUME)
+        assert "SESSION RESUME" not in kern
+        assert "[COMPRESSION:" not in kern
+        assert not kern.startswith("-") and not kern.endswith("-")
+        assert "Project: lean-herdr" in kern
 
 
     def test_ohne_inhalt_gibt_es_keinen_digest():
         """Frisches Projekt: kein Digest, kein Token — der Normalfall, kein Fehler."""
-        assert render_digest({}, {}) is None
-        assert render_digest({"result": {"task": "", "findings": []}}, None) is None
-        assert summary_token({}) is None
-
-
-    def test_flache_antwort_ohne_result_wird_auch_gelesen():
-        assert render_digest({"task": "direkt"}, None) is not None
+        assert render_digest("", None) is None
+        assert render_digest("--- SESSION RESUME ---\n---", None) is None
+        assert summary_token("") is None
 
 
     def test_token_ist_einzeilig_und_gekuerzt():
-        lang = {"result": {"task": "x" * 200}}
-        token = summary_token(lang)
+        token = summary_token("Task: " + "x" * 200)
         assert token is not None and len(token) <= 60 and "\n" not in token
         assert token.endswith("…")
 
 
     def test_token_faellt_auf_die_findings_zahl_zurueck():
-        assert summary_token({"result": {"findings": ["a", "b"]}}) == "2 Findings"
+        assert summary_token("Key findings: a; b") == "2 Findings"
+        assert summary_token("Project: x") is None
 
 
-    def test_findings_werden_gedeckelt():
-        viele = {"result": {"findings": [f"f{i}" for i in range(20)]}}
-        text = render_digest(viele, None)
-        assert text is not None and text.count("\n- ") <= 5
+    def test_handoff_wird_gedeckelt():
+        viele = "\n".join(f"  - datei{i}.py" for i in range(40))
+        text = render_digest("Task: t", viele)
+        assert text is not None and text.count("  - datei") <= 12
 
-@call tdd(ohne_inhalt_gibt_es_keinen_digest)
+@call tdd(-k der_fertige_digest_wird_uebernommen_nicht_nachgebaut)
 
 ### Verify & Close
 
 @call verify(lean_herdr/digest.py)
 @call gate("lean_herdr/digest.py tests/test_digest.py")
 @call commit("lean_herdr/digest.py tests/test_digest.py", "feat(digest): Digest aus ctx_session resume und ctx_handoff show")
-@call remember_decision("lean-herdr: render_digest() gibt None, wenn es weder Task noch Findings noch Dateien gibt — dann wird kein Digest geschrieben und kein Token gesetzt; der Token heisst ctx (herdr-plugin-renamer belegt $task)")
+@call remember_decision("lean-herdr: ctx_session resume liefert einen FERTIGEN Klartext-Digest; render_digest() entrahmt ihn nur (--- Zeilen und [COMPRESSION:]) und haengt die Handoff-Referenzen an — es baut ihn NICHT aus Feldern nach, sonst gingen Project, Archives, Stats und Ledger verloren. Kein Inhalt → None: kein Digest, kein Token. Der Token heisst ctx (herdr-plugin-renamer belegt $task)")
 @phase-end
 
 @phase "task-15"
-## Task 15: `handlers.py` — vier Handler, die nie etwas brechen
+## Task 15: `handlers.py` — fünf Handler, die nie etwas brechen
 
-@call recall_context("lean-herdr Config digest_path render_digest summary_token")
+@call recall_context("lean-herdr Config digest_path render_digest summary_token CtxAntwort")
 
 **Files:** Create `lean_herdr/handlers.py`, `tests/test_handlers.py`.
 **Interfaces:** Produces
 `handle_workspace_created(cfg) -> None`, `handle_pane_detected(cfg) -> None`,
 `handle_status_changed(cfg) -> None`, `handle_inject(cfg) -> None`,
+`handle_bootstrap(cfg) -> None`,
 `cwd_from_event(event, herdr, cfg) -> Path | None`.
 
-Der Datenfluss, den diese vier Handler bilden:
+Der Datenfluss, den diese Handler bilden:
 
     workspace.created / focused ─► workspace list → canonical_root(cwd)
                                    → ctx_session resume + ctx_handoff show
-                                   → workspace report-metadata --token ctx="<task>"
+                                   → workspace report-metadata <id> --source lean.herdr --token ctx="<task>"
 
     pane.agent_detected ─────────► pane get → canonical_root(cwd) → Digest
        (auch nach --resume)        → STATE_DIR/<pane_id>.md
-                                   → pane report-metadata --token ctx="<task>"
+                                   → pane report-metadata <id> --source lean.herdr --token ctx="<task>"
 
     pane.agent_status_changed ───► Token auffrischen
 
     Action inject ───────────────► STATE_DIR/<pane_id>.md → herdr agent prompt
+
+    Action bootstrap ────────────► pane list --workspace <id> → Ankerpane
+       (Workspace-Kontext)         → pane split --pane <anker> --env minimal
+                                   → agent start orch --kind opencode
 
 **Die Kanonisierung gilt auch hier — gerade hier.** Die Handler gehen über
 `leanctx.py`, also über dieselbe CLI mit demselben Pflichtflag, nicht über einen
@@ -3630,11 +4650,18 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
     from lean_herdr.config import Config
     from lean_herdr.digest import render_digest, summary_token
     from lean_herdr.herdr import Herdr
-    from lean_herdr.leanctx import LeanCtx
+    from lean_herdr.leanctx import LeanCtx, newest_handoff
 
     #: Der Token gehoert dem Plugin. `esc` gehoert dem Orchestrator und wird hier
     #: nie angefasst — auch nicht loeschend.
     TOKEN = "ctx"
+
+    #: Der Orchestrator-Pane des Bootstraps. minimal, weil er nur ctx_call braucht.
+    ORCHESTRATOR = {
+        "name": "orch",
+        "kind": "opencode",
+        "env": {"LEAN_CTX_TOOL_PROFILE": "minimal", "LEAN_CTX_ROLE": "orchestrator"},
+    }
 
 
     def _notiz(text: str) -> None:
@@ -3656,20 +4683,40 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
 
 
     def _kontext(cwd: Path, cfg: Config) -> tuple[str | None, str | None]:
-        """(Digest, Token-Text) fuer diese cwd. (None, None), wenn es nichts gibt."""
+        """(Digest, Token-Text) fuer diese cwd. (None, None), wenn es nichts gibt.
+
+        Die drei Nichts-Faelle werden UNTERSCHIEDEN, weil sie unterschiedlich zu
+        behandeln sind — dafuer gibt es CtxAntwort (Task 6):
+        * Fehler oder Timeout → Notiz auf stderr, damit `herdr plugin log list`
+          etwas zu zeigen hat. Etwas ist kaputt.
+        * gueltig, aber leer   → still. Ein frisches Projekt ist der Normalfall.
+        Ohne diese Unterscheidung waere jede Notiz entweder Rauschen oder fehlte.
+        """
         try:
             root = canonical_root(cwd)
         except BusError as exc:
             _notiz(f"kein Repo an {cwd}: {exc}")
             return None, None
         leanctx = LeanCtx(root, timeout=cfg.timeout)
-        if not leanctx.is_available():
-            _notiz("lean-ctx nicht gefunden — kein Digest")
-            return None, None
         resume = leanctx.session_resume()
-        if not resume:
+        if not resume.ok:
+            _notiz(f"ctx_session resume: {resume.error}")
             return None, None
-        return render_digest(resume, leanctx.handoff_show()), summary_token(resume)
+        if not resume.text:
+            return None, None  # frisches Projekt — kein Fehler, keine Notiz
+
+        # Handoff ist eine Zugabe: faellt er aus, bleibt der Digest gueltig.
+        handoff_text: str | None = None
+        liste = leanctx.handoff_list()
+        if liste.ok:
+            pfad = newest_handoff(liste.text)
+            if pfad:
+                gezeigt = leanctx.handoff_show(pfad)
+                handoff_text = gezeigt.text if gezeigt.ok else None
+        elif liste.error not in ("unavailable",):
+            _notiz(f"ctx_handoff list: {liste.error}")
+
+        return render_digest(resume.text, handoff_text), summary_token(resume.text)
 
 
     def _zeigen(cfg: Config, herdr: Herdr, scope: str, target: str, cwd: Path) -> None:
@@ -3745,6 +4792,50 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
             return
         herdr.agent_prompt(name, pfad.read_text(encoding="utf-8"), wait=False)
 
+
+    def handle_bootstrap(cfg: Config) -> None:
+        """Bewusste Geste: Orchestrator-Pane in DIESEM Workspace aufmachen.
+
+        Der Handler handelt nicht als Agent — er tippt nur, was Task 11 Schritt 1
+        von Hand tippt. Ein Ankerpane aus diesem Workspace sorgt dafuer, dass der
+        neue Pane hier landet und nicht im Workspace des Aufrufers.
+        """
+        herdr = Herdr(cfg.herdr_bin, timeout=cfg.timeout)
+        event = cfg.event or {}
+        workspace = str(
+            event.get("workspace_id")
+            or (event.get("workspace") or {}).get("id")
+            or cfg.workspace_id
+            or ""
+        )
+        if not workspace:
+            herdr.run("notification", "show", "--message", "lean-herdr: kein Workspace")
+            return
+        if any(a.get("name") == ORCHESTRATOR["name"] for a in herdr.agent_list()):
+            herdr.run(
+                "notification", "show", "--message", "lean-herdr: Orchestrator laeuft bereits"
+            )
+            return
+        cwd = cwd_from_event(event, herdr, cfg)
+        anker = next(
+            (str(p["pane_id"]) for p in herdr.pane_list(workspace) if p.get("pane_id")), None
+        )
+        if cwd is None or anker is None:
+            herdr.run(
+                "notification", "show", "--message", "lean-herdr: Workspace ohne Pane oder cwd"
+            )
+            return
+        pane = herdr.pane_split(cwd, pane=anker, env=ORCHESTRATOR["env"])
+        if not pane:
+            herdr.run("notification", "show", "--message", "lean-herdr: pane split gescheitert")
+            return
+        herdr.agent_start(
+            ORCHESTRATOR["name"],
+            kind=ORCHESTRATOR["kind"],
+            pane=pane,
+            agent_args=["--agent", "orchestrator"],
+        )
+
 `tests/test_handlers.py` (neu):
 
     import json
@@ -3756,7 +4847,16 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
     from lean_herdr.config import Config
     from tests.doubles import FakeProc, which_stub
 
-    RESUME = {"result": {"task": "lean-herdr bauen", "findings": ["scratchpad statt messages"]}}
+    #: `lean-ctx call` gibt Klartext aus (Task 6) — als str geht er wortwoertlich
+    #: durch FakeProc auf stdout.
+    RESUME = (
+        "--- SESSION RESUME (post-compaction) ---\n"
+        "Project: lean-herdr\n"
+        "Task: lean-herdr bauen\n"
+        "Key findings: scratchpad statt messages\n"
+        "---"
+    )
+    LEDGER = "Handoff Ledgers (1):\n  1. /handoffs/neu.json"
 
 
     @pytest.fixture
@@ -3765,7 +4865,10 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
         monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
         monkeypatch.setattr("lean_herdr.handlers.canonical_root", lambda cwd: Path("/repo"))
         h_proc, l_proc = FakeProc(), FakeProc()
-        l_proc.replies = {("call", "ctx_session"): RESUME}
+        l_proc.replies = {
+            ("call", "ctx_session"): RESUME,
+            ("call", "ctx_handoff"): LEDGER,
+        }
         monkeypatch.setattr("lean_herdr.handlers.Herdr", lambda *a, **kw: __import__(
             "lean_herdr.herdr", fromlist=["Herdr"]
         ).Herdr(runner=h_proc))
@@ -3829,20 +4932,47 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
             handlers.handle_pane_detected,
             handlers.handle_status_changed,
             handlers.handle_inject,
+            handlers.handle_bootstrap,
         ):
             handler(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps({"pane": {"cwd": "/repo"}})))
         assert l_proc.calls == [], "ohne lean-ctx darf kein Aufruf passieren"
         assert not any("--token" in c for c in h_proc.calls), "kein Token ohne Kontext"
 
 
-    def test_leerer_session_state_setzt_keinen_token(welt, tmp_path):
+    # -- Die drei Nichts-Faelle, jeder mit eigenem Verhalten ------------------
+
+    def test_leerer_session_state_ist_still(welt, tmp_path, capsys):
+        """Frisches Projekt: kein Token, kein Digest — und KEINE Notiz."""
         h_proc, l_proc, tmp_path = welt
-        l_proc.replies = {("call", "ctx_session"): {"result": {}}}
+        l_proc.replies = {("call", "ctx_session"): ""}
         handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
             {"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}
         )))
         assert not any("--token" in c for c in h_proc.calls)
         assert not (tmp_path / "state" / "w2:p2.md").exists()
+        assert capsys.readouterr().err == "", "leer ist kein Fehler"
+
+
+    def test_fehler_von_lean_ctx_hinterlaesst_eine_notiz(welt, tmp_path, capsys):
+        """Kaputt ist nicht leer — hier MUSS eine Zeile im Plugin-Log stehen."""
+        h_proc, l_proc, tmp_path = welt
+        l_proc.replies = {("call", "ctx_session"): "error: -32603: internal"}
+        handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+            {"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}
+        )))
+        assert not any("--token" in c for c in h_proc.calls)
+        assert "ctx_session resume" in capsys.readouterr().err
+
+
+    def test_timeout_hinterlaesst_eine_notiz(welt, tmp_path, capsys, monkeypatch):
+        import subprocess
+
+        _, l_proc, tmp_path = welt
+        l_proc.raises = subprocess.TimeoutExpired(cmd=["lean-ctx"], timeout=1)
+        handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+            {"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}
+        )))
+        assert "timeout" in capsys.readouterr().err
 
 
     def test_kein_handler_fasst_den_esc_token_an(welt, tmp_path):
@@ -3861,7 +4991,9 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
         handlers.handle_workspace_created(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
             {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
         )))
-        assert h_proc.called_with("workspace", "report-metadata", "--workspace", "w2")
+        assert h_proc.called_with(
+            "workspace", "report-metadata", "w2", "--source", "lean.herdr"
+        )
 
 
     def test_inject_schickt_den_digest_ohne_wait(welt, tmp_path):
@@ -3886,7 +5018,40 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
         )
 
 
+    def test_bootstrap_startet_den_orchestrator_im_eigenen_workspace(welt, tmp_path):
+        h_proc, _, tmp_path = welt
+        h_proc.replies = {
+            ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+            ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p9"}}},
+        }
+        handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+            {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+        )))
+        split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+        assert "--pane" in split and "w2:p1" in split, "der Pane gehoert in DIESEN Workspace"
+        assert "LEAN_CTX_TOOL_PROFILE=minimal" in split
+        start = next(c for c in h_proc.calls if c[1:3] == ["agent", "start"])
+        assert "orch" in start and "opencode" in start
+
+
+    def test_bootstrap_startet_keinen_zweiten_orchestrator(welt, tmp_path):
+        h_proc, _, tmp_path = welt
+        h_proc.replies = {
+            ("agent", "list"): {"result": {"agents": [{"name": "orch", "pane_id": "w2:p9"}]}}
+        }
+        handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+            {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+        )))
+        assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls)
+        assert h_proc.called_with("notification", "show")
+
+
     def test_main_faengt_jede_ausnahme_und_endet_mit_0(monkeypatch, capsys):
+        """Der monkeypatch greift NUR, weil __main__ den Handler am Namen aufloest.
+
+        Stuende in HANDLERS das Funktionsobjekt, zoege main() weiter die alte
+        Funktion — der Test liefe gruen, ohne irgendetwas zu pruefen.
+        """
         from lean_herdr.__main__ import main
 
         monkeypatch.setattr(
@@ -3903,17 +5068,19 @@ scheitert still, eine bewusste Geste scheitert sichtbar.**
         assert main(["gibt-es-nicht"]) == 0
         assert main([]) == 0
 
-@call tdd(die_cwd_geht_durch_canonical_root)
+@call tdd(-k die_cwd_geht_durch_canonical_root)
 
-@call tdd(ohne_lean_ctx_passiert_nichts_und_nichts_bricht)
+@call tdd(-k fehler_von_lean_ctx_hinterlaesst_eine_notiz)
+
+@call tdd(-k bootstrap_startet_den_orchestrator_im_eigenen_workspace)
 
 ### Verify & Close
 
 @call verify(lean_herdr/handlers.py)
 @call gate("lean_herdr/handlers.py tests/test_handlers.py")
 @call review_change()
-@call commit("lean_herdr/handlers.py tests/test_handlers.py", "feat(plugin): vier Handler, die lesen und zeigen statt zu handeln")
-@call remember_decision("lean-herdr Handler: jede cwd aus einem Herdr-Event laeuft durch canonical_root(), bevor sie --project-root wird (B12); kein Handler fasst den esc-Token an; inject meldet sich sichtbar, die Automatik scheitert still")
+@call commit("lean_herdr/handlers.py tests/test_handlers.py", "feat(plugin): fuenf Handler, die lesen und zeigen statt zu handeln")
+@call remember_decision("lean-herdr Handler: jede cwd aus einem Herdr-Event laeuft durch canonical_root(), bevor sie --project-root wird (B12); kein Handler fasst den esc-Token an; inject und bootstrap melden sich sichtbar, die Automatik scheitert still. _kontext() unterscheidet ueber CtxAntwort drei Faelle: Fehler/Timeout → Notiz auf stderr, gueltig-leer → schweigen, Inhalt → Digest. bootstrap teilt einen Ankerpane aus `pane list --workspace <id>`, damit der Orchestrator im richtigen Workspace landet")
 @phase-end
 
 @phase "task-16"
@@ -4032,6 +5199,35 @@ zeigt nicht hart auf ein Claude-Verzeichnis.
       });
     }
 
+    /** `lean-ctx hook observe` fuettern. Ergebnislos und immer folgenlos. */
+    function beobachten(nutzlast) {
+      return new Promise((resolve) => {
+        let kind;
+        try {
+          kind = spawn("lean-ctx", ["hook", "observe"], {
+            stdio: ["pipe", "ignore", "ignore"],
+          });
+        } catch (err) {
+          notiz(`lean-ctx nicht startbar (${err.message}) — nicht beobachtet`);
+          return resolve();
+        }
+        const frist = setTimeout(() => {
+          kind.kill("SIGKILL");
+          resolve();
+        }, TIMEOUT_MS);
+        kind.on("error", () => {
+          clearTimeout(frist);
+          resolve();
+        });
+        kind.on("close", () => {
+          clearTimeout(frist);
+          resolve();
+        });
+        kind.stdin.write(JSON.stringify(nutzlast));
+        kind.stdin.end();
+      });
+    }
+
     export const LeanCtxPolicy = async ({ project, directory }) => ({
       "tool.execute.before": async (input, output) => {
         const name = String(input.tool || "").toLowerCase();
@@ -4053,6 +5249,20 @@ zeigt nicht hart auf ein Claude-Verzeichnis.
             Object.assign(output.args, entscheidung.updatedInput);
           }
         }
+      },
+
+      "tool.execute.after": async (input, output) => {
+        // `lean-ctx hook observe` fuettert Cache und Ledger mit dem, was das Tool
+        // tatsaechlich getan hat — dieselbe Nutzlastform wie PostToolUse bei
+        // Claude. Es entscheidet nichts, gibt nichts aus und endet mit 0;
+        // gemessen gegen lean-ctx 3.10.1.
+        await beobachten({
+          tool_name: String(input.tool || "").toLowerCase(),
+          tool_input: output.args ?? {},
+          tool_response: output.output ?? output.result ?? {},
+          cwd: directory ?? project?.worktree ?? process.cwd(),
+          session_id: input.sessionID ?? null,
+        });
       },
 
       "permission.ask": async (_permission, output) => {
@@ -4100,23 +5310,86 @@ dieselbe Entscheidung wie bei Claude, plus der Ausfallpfad.
         assert 'output.status = "deny"' in text, "permission.ask fragt nicht nach"
 
 
-    @pytest.mark.integration
-    def test_echter_hook_verweigert_natives_grep():
-        """Dieselbe Entscheidung wie bei Claude — gegen die echten Skripte."""
-        skript = HOOKS / "bash-enforce-ctx-shell.py"
-        if not skript.is_file():
-            pytest.skip("Policy-Hooks nicht installiert")
-        proc = subprocess.run(
-            ["python3", str(skript)],
-            input=json.dumps({"tool_name": "bash", "tool_input": {"command": "grep -r foo ."}}),
-            capture_output=True,
-            text=True,
-            timeout=10,
+    def test_alle_drei_hookpunkte_sind_belegt():
+        text = ADAPTER.read_text(encoding="utf-8")
+        for punkt in ("tool.execute.before", "tool.execute.after", "permission.ask"):
+            assert f'"{punkt}"' in text, f"{punkt} fehlt im Adapter"
+        assert '"hook", "observe"' in text, "tool.execute.after muss lean-ctx fuettern"
+
+
+    def node_treiber(tmp_path: Path, rumpf: str) -> subprocess.CompletedProcess:
+        """Den Adapter wirklich laden und aufrufen — nicht nur seinen Text lesen."""
+        if shutil.which("node") is None:
+            pytest.skip("node nicht installiert")
+        treiber = tmp_path / "treiber.mjs"
+        treiber.write_text(rumpf, encoding="utf-8")
+        return subprocess.run(
+            ["node", str(treiber)], capture_output=True, text=True, timeout=30
         )
-        assert proc.returncode == 0, "ein Hook endet immer mit 0"
-        entscheidung = json.loads(proc.stdout or "{}").get("hookSpecificOutput", {})
-        assert entscheidung.get("permissionDecision") == "deny"
-        assert "ctx_" in entscheidung.get("permissionDecisionReason", "")
+
+
+    @pytest.mark.integration
+    def test_echter_hook_verweigert_natives_grep_durch_den_adapter(tmp_path):
+        """Dieselbe Entscheidung wie bei Claude — und ueber den JS-Adapter.
+
+        Das Python-Skript direkt aufzurufen prueft nur das Skript. Falsch
+        zugeordnete Tool-Namen, eine falsch uebersetzte Nutzlast oder ein
+        verschlucktes `deny` blieben dabei unentdeckt — genau die Fehler, die
+        NUR im Adapter wohnen koennen.
+        """
+        if not (HOOKS / "bash-enforce-ctx-shell.py").is_file():
+            pytest.skip("Policy-Hooks nicht installiert")
+        proc = node_treiber(
+            tmp_path,
+            f"""
+            const {{ LeanCtxPolicy }} = await import({json.dumps(str(ADAPTER))});
+            const hooks = await LeanCtxPolicy({{ directory: process.cwd() }});
+            const output = {{ args: {{ command: "grep -r foo ." }} }};
+            try {{
+              await hooks["tool.execute.before"]({{ tool: "bash" }}, output);
+              console.log("DURCHGELASSEN");
+            }} catch (err) {{
+              console.log("ABGELEHNT: " + err.message);
+            }}
+            """,
+        )
+        assert "ABGELEHNT:" in proc.stdout, f"stdout={proc.stdout} stderr={proc.stderr}"
+        assert "ctx_" in proc.stdout, "die Begruendung kommt aus dem Skript, nicht vom Adapter"
+
+
+    @pytest.mark.integration
+    def test_der_adapter_meldet_jeden_tool_aufruf_an_lean_ctx(tmp_path):
+        """tool.execute.after → `lean-ctx hook observe`, sonst sieht lean-ctx nichts."""
+        if shutil.which("lean-ctx") is None:
+            pytest.skip("lean-ctx nicht installiert")
+        # Ein Stub statt des echten Binaries: der Test soll die WEITERGABE messen,
+        # nicht den Zustand von lean-ctx veraendern.
+        stub_dir = tmp_path / "bin"
+        stub_dir.mkdir()
+        mitschrift = tmp_path / "gesehen.json"
+        (stub_dir / "lean-ctx").write_text(
+            "#!/bin/sh\ncat > " + json.dumps(str(mitschrift))[1:-1] + "\n",
+            encoding="utf-8",
+        )
+        (stub_dir / "lean-ctx").chmod(0o755)
+        proc = node_treiber(
+            tmp_path,
+            f"""
+            process.env.PATH = {json.dumps(str(stub_dir))} + ":" + process.env.PATH;
+            const {{ LeanCtxPolicy }} = await import({json.dumps(str(ADAPTER))});
+            const hooks = await LeanCtxPolicy({{ directory: process.cwd() }});
+            await hooks["tool.execute.after"](
+              {{ tool: "Read" }},
+              {{ args: {{ filePath: "README.md" }}, output: {{ content: "x" }} }},
+            );
+            console.log("beobachtet");
+            """,
+        )
+        assert "beobachtet" in proc.stdout, proc.stderr
+        gesehen = json.loads(mitschrift.read_text(encoding="utf-8"))
+        assert gesehen["tool_name"] == "read", "der Name wird kleingeschrieben durchgereicht"
+        assert gesehen["tool_input"] == {"filePath": "README.md"}
+        assert gesehen["tool_response"] == {"content": "x"}
 
 
     @pytest.mark.integration
@@ -4142,10 +5415,12 @@ dieselbe Entscheidung wie bei Claude, plus der Ausfallpfad.
         assert "durchgelaufen" in proc.stdout, proc.stderr
         assert "fehlt" in proc.stderr, "der Ausfall wird auf stderr vermerkt"
 
-@call tdd(der_adapter_wirft_nur_bei_deny)
+@call tdd(-k der_adapter_wirft_nur_bei_deny)
+
+@call tdd(-k alle_drei_hookpunkte_sind_belegt)
 
 Run: `uv run pytest -q -m integration tests/test_policy_adapter.py` — Expected:
-`2 passed` (oder skipped ohne `node`/Hooks).
+`3 passed` (oder skipped ohne `node`/Hooks/lean-ctx).
 
 Run: `opencode run --agent reviewer "Lies README.md mit dem read-Tool."` —
 Expected: der Tool-Aufruf wird mit der Begründung aus `read-search-discipline.py`
@@ -4156,5 +5431,5 @@ abgelehnt, und die Sitzung läuft weiter.
 @call verify(.opencode/plugins/lean-ctx-policy.js)
 @call gate(".opencode tests/test_policy_adapter.py")
 @call commit(".opencode tests/test_policy_adapter.py", "feat(policy): opencode-Adapter auf die vorhandenen lean-ctx-Hooks")
-@call remember_decision("lean-herdr: der opencode-Policy-Adapter uebersetzt nur das Protokoll (stdin tool_name/tool_input → stdout hookSpecificOutput.permissionDecision); fehlendes Skript, fehlendes python3 oder 5-s-Timeout lassen den Tool-Aufruf DURCH und schreiben nur nach stderr")
+@call remember_decision("lean-herdr: der opencode-Policy-Adapter uebersetzt nur das Protokoll (stdin tool_name/tool_input → stdout hookSpecificOutput.permissionDecision); fehlendes Skript, fehlendes python3 oder 5-s-Timeout lassen den Tool-Aufruf DURCH und schreiben nur nach stderr. Drei Hookpunkte: tool.execute.before (Policy), tool.execute.after (`lean-ctx hook observe`, folgenlos), permission.ask (deny statt haengen). Der Adaptertest faehrt durch den JS-Adapter, nicht am Python-Skript vorbei")
 @phase-end
