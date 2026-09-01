@@ -255,13 +255,80 @@ Arbeiter prueft `ctx_task list`, beginnt mit `update(state="working")`, endet mi
 - **Keine Migration alter Bus-Auftraege.** Es gibt keine — der Weg hat nie
   funktioniert.
 
-## 8. Offene Punkte
+## 8. Stand des Implementierungsplans
 
-- **Endebedingung (Punkt 4 der Ursprungsspec) ist weiterhin offen.** Im Durchlauf
-  erschien im Builder-Pane nach getaner Arbeit der Vorschlag
-  `❯ Bus nochmal pruefen, ob T1 inzwischen vom Orchestrator gekommen ist` — als
-  Vorschlag im Eingabefeld, Status blieb `done`, keine laufende Schleife. Das
-  Polling-Verbot in `roles/builder.md` hat den Gedanken nicht verhindert. Mit
-  `ctx_task` verschiebt sich die Lage (der Arbeiter hat einen definierten
-  Abschluss statt eines offenen Busses), aber der Beweis steht aus.
-- **Kostenmessung (Punkt 13)** bleibt offen bis zum naechsten Durchlauf.
+Diese Spec entstand **mitten im Lauf** des Plans
+`docs/lean-md/plans/2026-09-01-lean-herdr.lmd.md`. Wer den neuen Plan schreibt,
+muss wissen, was schon steht und was nicht.
+
+### Abgenommen (jeweils zwei Verdikte, Mutationsproben, `ruff` + `pytest` + `ty` gruen)
+
+| Task | Ergebnis | Commit |
+|---|---|---|
+| 1 | `canonical_root()`, Testtor gegen echtes `git worktree add` | `5844c76` |
+| 2 | `parse_registry()`, eingefrorene Registry-Probe | `2df0582` |
+| 3 | PID-Join ueber das `pid`-Feld | `3dcc8fc`, **Fix** `4d2a747` |
+| 4 | `find_error()`/`session_error()` — Erfolg am Inhalt (H1) | `6c23f3b`, `381d8fc` |
+| 5 | `class Herdr` — aller Herdr-Verkehr | `5e345ca` |
+| 6 | `leanctx.py` — CLI-Gateway mit erzwungenem `--project-root` | `398d920` |
+| 7 | die drei Rollentexte | `62013c5`, `42756f2`, `8106d60` |
+| 8 | `opencode.jsonc`, `.config/wt.toml`, README | `043c2ca` |
+| 9 | `dispatch.py`, `bin/herdr-dispatch` | `7bb6583`, `a53d7c2` |
+| 10 | `worktree.py`, `--worktree` | `daf56d9`, `afe1d4f` |
+| 13 | Plugin-Geruest: Manifest, `config.py`, `__main__.py` | `4e33316`, `ea04deb` |
+
+Querschnitt ausserhalb der Tasks: Python 3.14 (`50d68d0`), ty/ruff als
+Language-Server (`0361547`), `PGH005` per-file (`e2add54`).
+
+### Widerlegt
+
+**Task 11 (Stufe 3, Ein-Aufgaben-Durchlauf)** — der Anlass dieser Spec. Der
+Durchlauf lief bis zur Zuteilung und scheiterte dort an B-1 und B-2. Er hat
+dabei drei Dinge geleistet, die kein Test geleistet haette: den PID-Join-Fehler
+gefunden (Fix `4d2a747`, im echten Dispatch verifiziert), die
+Prompt-Injection-Abwehr im Feld bestaetigt (der Builder lehnte den anonymen
+Auftrag ab und begruendete es), und den Konstruktionsfehler des Auftragswegs
+offengelegt.
+
+### Blockiert oder offen
+
+- **Task 12 (Stufe 4, Worktree-Durchlauf mit Merge)** — setzt 10 und 11 voraus,
+  also blockiert, bis dieser Umbau steht. Enthaelt einen **ausstehenden
+  README-Patch**: der Hinweis auf `wt config approvals`. Ohne diese Freigabe
+  ueberspringt worktrunk Projekt-Hooks **stillschweigend** (`wt hook --help`:
+  *"Declining skips every project command for that operation … and continues
+  without them"*), das pre-merge-Testtor aus `.config/wt.toml` laeuft dann gar
+  nicht. Der Plan sieht den Patch in Task 12 vor (Plan-Quelle Zeilen 4035-4058).
+  **Bei der Abnahme von Task 12 pruefen, dass er tatsaechlich passiert ist** — ein
+  Tor, auf das man sich verlaesst und das lautlos uebersprungen wird, ist
+  gefaehrlicher als keines.
+- **Task 14 (`digest.py`)** — offen, haengt an nichts, kann jederzeit laufen.
+- **Task 15 (`handlers.py`)** — offen, setzt 13 und 14 voraus.
+- **Task 16 (opencode-Policy-Adapter)** — offen, haengt an keiner anderen Task.
+
+### Unbewiesene Annahmen der Ursprungsspec
+
+- **Endebedingung (offener Punkt 4).** Im Durchlauf erschien im Builder-Pane nach
+  getaner Arbeit der Vorschlag `❯ Bus nochmal pruefen, ob T1 inzwischen vom
+  Orchestrator gekommen ist` — als Vorschlag im Eingabefeld, Status blieb `done`,
+  keine laufende Schleife. Das Polling-Verbot in `roles/builder.md` hat den
+  Gedanken nicht verhindert. Mit `ctx_task` verschiebt sich die Lage (der Arbeiter
+  hat einen definierten Abschluss statt eines offenen Busses), aber der Beweis
+  steht aus.
+- **Kostenmessung (offener Punkt 13)** — was `minimal` gegenueber `standard`
+  wirklich spart, ist weiterhin hochgerechnet, nicht gemessen.
+- **`kind="claude"`-Pfad von `session_error()`** — nur der opencode-Pfad hat einen
+  positiven Integrationstest. Ob `ERROR_KEYS` zum realen Claude-Code-jsonl-Schema
+  passt, ist unbelegt. Folgenlos fuer H1 (ein falsch-negatives `find_error()`
+  verschlechtert die Fehlermeldung, verwandelt aber kein Scheitern in Erfolg),
+  aber offen.
+
+### Bewusst akzeptierte Abweichungen
+
+- `parse_registry()` hat kognitive Komplexitaet 17 ueber der Projektschwelle 15 —
+  vom Betreiber abgenommen, der Brief-Code bleibt Vergleichsgrundlage.
+- Der Plan-Code ist durchgehend **deutsch benannt**; der Betreiber uebersetzt am
+  Stueck nach dem Lauf, mit der gruenen Suite als Netz. Eigene Ergaenzungen
+  ausserhalb des Plans werden englisch benannt.
+- `@reformat` wird nicht ausgefuehrt: das Qualitaetstor ist `ruff check`, **nicht**
+  `ruff format --check` — sonst schriebe der Formatter den woertlichen Plan-Code um.
