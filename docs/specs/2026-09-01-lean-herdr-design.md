@@ -16,19 +16,27 @@ macht und über Serverneustarts trägt.
 > was trug, ist hier aufgegangen; was nicht trug, ist ersetzt. Die alte Datei
 > ist entfernt, ihre Fassung steht in der Git-Historie.
 
-> **v0.4.0 gegenüber v0.3.0.** Vier Messungen haben Annahmen der Vorfassung
-> widerlegt und zwei ihrer offenen Punkte erledigt:
+> **v0.4.0 gegenüber v0.3.0.** Messungen haben Annahmen der Vorfassung widerlegt
+> und drei ihrer offenen Punkte erledigt:
 >
 > | v0.3.0 sagt | gemessen | Folge |
 > |---|---|---|
 > | `minimal` hat kein Koordinationswerkzeug, ein Orchestrator-Profil muss in lean-ctx geschrieben werden | `minimal` = 6 Tools, **`ctx_call` ist dabei** | Offener Punkt 1 und B8 gestrichen |
-> | `power` = 78 Tools | `tools/list` liefert **63** | Zahl korrigiert |
-> | Profile: `minimal`/`lean`/`power` | dazu **`standard` = 18** | Kandidat für den Builder |
-> | `herdr-collect` liest den Bus | `ctx_agent read` verlangt Registrierung im selben Prozess | **B9** — Skripte lesen `registry.json` |
-> | `LEAN_CTX_TOOL_PROFILE` in `mcp.*.environment` | `pane split --env KEY=VAL` | Env pro Agent statt global |
+> | `power` = 78 Tools | `tools/list` liefert **63** | Zahl korrigiert (B10) |
+> | Profile: `minimal`/`lean`/`power` | dazu **`standard` = 18** | Profil für Builder und Reviewer |
+> | keine Zahl je Profil | `minimal` 2 711 tok, `standard` 4 920, `power` 11 559 | −8 848 tok in **jedem** Orchestrator-Schritt |
+> | `herdr-collect` liest den Bus | `ctx_agent read` verlangt Registrierung im selben Prozess | **B9** — der Leser liest `registry.json`, das Skript entfällt |
+> | `LEAN_CTX_TOOL_PROFILE` in `mcp.*.environment` | `pane split --env KEY=VAL` | Env pro Agent statt global (H9) |
 >
-> Neu hinzugekommen: die Worktree-Schicht (worktrunk trägt sie, Abschnitt
-> „Worktree-Schicht") und der opencode-Policy-Adapter.
+> Neu hinzugekommen: die Worktree-Schicht auf worktrunk — durchgemessen, samt
+> einer stillen Fehlbedienung von `wt merge`, die den Hauptzweig verändert (W1) —
+> und der opencode-Policy-Adapter.
+>
+> Nach unabhängiger Spec-Prüfung korrigiert: der Reviewer stand im falschen Baum
+> (er lebt jetzt im Worktree des Branches), der Wiederverwendungsschlüssel war
+> der Branch statt `(branch, rolle)`, die Kanonisierungsregel galt nicht für die
+> Plugin-Handler, `opencode.jsonc` fehlte in der Ablage, und Eskalation und
+> Digest teilten sich einen Metadaten-Token.
 
 ## Problem
 
@@ -241,9 +249,8 @@ Gesamtausgabe des Modells: **177 Token.** Der Rest ist Systemprompt und
 Tool-Schemas.
 
 - **Jeder Schritt kostet ~20 K Kontext**, unabhängig von der Aufgabengröße. Der
-  Hebel ist die Anzahl der Schritte, nicht deren Inhalt. Gemessen wurde unter
-  `power`; wie viel `minimal` (6 statt 63 Schemas) davon abträgt, ist **nicht**
-  gemessen — die 20 K bleiben bis dahin die Rechengrundlage.
+  Hebel ist die Anzahl der Schritte, nicht deren Inhalt — und das Profil, siehe
+  „Was das Profil am Schritt ändert".
 - **Warm ist ein Schritt $0.0047, kalt $0.017.** Der Cache greift ab Schritt 3
   (warum, ist nicht gemessen; `cache.write` ist durchgehend 0, was zu Geminis
   implizitem Caching passt).
@@ -312,6 +319,56 @@ Zwei weitere Korrekturen: `power` sind **63** Tools, nicht 78 — die CLI zeigt
 78 an, `tools/list` liefert 63, und gezählt wird die Liste. Und es gibt ein
 **`standard`**-Profil mit 18 Tools, das die Vorfassung nicht kennt; es ist der
 Kandidat für Builder und Reviewer, weil es `ctx_session` mitbringt.
+
+### Was das Profil am Schritt ändert
+
+Die Schemalast ist der einzige Teil des Schritts, der sich mit dem Profil ändert
+— und er ist exakt abrechenbar. Zwei unabhängige Messungen.
+
+`lean-ctx tools health --json`, deterministisch und lokal:
+
+| Profil | Tools | Schemas | Instructions | Rules | Fixkosten/Schritt |
+|---|---:|---:|---:|---:|---:|
+| `minimal` | 6 | 1 193 | 764 | 754 | **2 711** |
+| `standard` | 18 | 3 370 | 796 | 754 | **4 920** |
+| `lean` → `power` | 63 | 10 015 | 790 | 754 | 11 559 |
+| `power` | 63 | 10 015 | 790 | 754 | **11 559** |
+
+Gegenprobe an der serialisierten `tools/list`-Nutzlast — dem JSON, das der
+Client tatsächlich in jede Anfrage legt:
+
+```
+   profile  tools    chars  tok @4.0  tok @3.4
+   minimal      6     5811      1453      1709
+  standard     18    16188      4047      4761
+     power     63    48074     12018     14139
+```
+
+Beide Schätzer sind sich über das **Verhältnis** einig: `minimal` trägt 12 % der
+Schemalast von `power` (health 11.9 %, Draht 12.1 %), `standard` 34 %
+(33.6 % / 33.7 %). Der lean-ctx-Schätzer liegt durchgängig bei ~82 % von
+chars/4 — ein konsistenter Offset, keine Streuung.
+
+Aufgerechnet auf den gemessenen Turn (20 119 Token unter `power`): davon sind
+11 559 lean-ctx, die übrigen ~8 560 sind opencodes Basis, `AGENTS.md` und seine
+nativen Tools — die ändern sich nicht.
+
+```
+power     8 560 + 11 559 = 20 119   ← gemessen
+minimal   8 560 +  2 711 = 11 271   ← −8 848 Token, −44 %
+standard  8 560 +  4 920 = 13 480   ← −6 639 Token, −33 %
+```
+
+**Der Orchestrator-Schritt fällt von ~20.1 K auf ~11.3 K.**
+
+Beim **Geld** gilt das nicht im selben Maß, und das gehört ehrlich hierher: der
+Schnitt entfernt vor allem den zwischengespeicherten Präfix, und Cache-Reads
+sind der billigste Anteil (im gemessenen Turn 16 259 von 20 385 Token bei
+$0.0045). Bei warmen Schritten spart `minimal` also **weniger** als 44 %. Voll
+durch schlägt es bei den **kalten** Schritten — davon waren zwei von vier. Auf
+die kalte Rate (~$0.86/M) gerechnet käme derselbe Turn statt auf $0.0440 auf
+~$0.025. Das ist eine **Hochrechnung, keine Messung**; sie braucht Stufe 3 der
+Ausführbarkeit.
 
 ### `ctx_agent` ist nicht direkt exponiert
 
@@ -440,12 +497,24 @@ Drei Mechanismen, die die Vorfassung nicht nutzt:
 | Mechanismus | Wofür |
 |---|---|
 | `--env KEY=VALUE` an `pane split`, `tab create`, `workspace create` | Kontextform **pro Agent** — `LEAN_CTX_TOOL_PROFILE`, `LEAN_CTX_ROLE`. Der Agent erbt die Pane-Umgebung, sein MCP-Server auch. |
+| `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`, `HERDR_TAB_ID`, `HERDR_BIN_PATH`, `HERDR_SOCKET_PATH` | Herdr setzt sie in jedem Pane — ein Skript im Pane weiß ohne Zutun, wo es steht |
 | `[[actions]]` im Manifest (`contexts = ["workspace"]`) | benutzerausgelöste Einstiegspunkte, per Taste oder `herdr plugin action invoke <id> --plugin <p>` |
 | `[[panes]]` im Manifest | das Plugin **deklariert** Panes samt Platzierung und Kommando |
 | `herdr pane run <pane> "<cmd>"` | schickt ein Kommando in die interaktive Shell eines Panes — nicht dasselbe wie `agent prompt` |
 
 `herdr agent start` hat **kein** `--env`; die Umgebung kommt vom Pane, in dem
-der Agent gestartet wird.
+der Agent gestartet wird. Verifiziert über `/proc/<shell_pid>/environ` eines per
+`pane split --env` angelegten Panes:
+
+```
+HERDR_PANE_ID=w2:p2   HERDR_WORKSPACE_ID=w2   HERDR_TAB_ID=w2:t1
+HERDR_BIN_PATH=/home/tholo/.local/bin/herdr
+LEAN_CTX_ROLE=builder
+LEAN_CTX_TOOL_PROFILE=minimal
+```
+
+Die PID liefert `herdr pane process-info --pane <id>` →
+`.result.process_info.shell_pid`.
 
 ### Herdr: Worktree-Workspaces
 
@@ -461,8 +530,14 @@ herdr worktree list --cwd <pfad> --json
 ```
 
 **Fallstrick:** `worktree open --cwd` muss der **Repo-Root** sein. Aus einem
-Linked-Worktree-Workspace heraus aufgerufen, lehnt Herdr ab. Der Root wird über
-`worktree list --cwd $PWD --json` aufgelöst, nicht angenommen.
+Linked-Worktree-Workspace heraus aufgerufen, lehnt Herdr ab — gemessen:
+
+```json
+{"error": {"code": "linked_worktree_source",
+           "message": "New and open worktree actions start from the repo parent workspace."}}
+```
+
+Der Root wird über `worktree list --cwd $PWD --json` aufgelöst, nicht angenommen.
 
 Damit braucht das Plugin kein eigenes Register für die Zuordnung Worktree →
 Workspace — Herdr führt es.
@@ -487,8 +562,80 @@ Fehlschlag, `post-*` läuft im Hintergrund mit Logging. Template-Variablen
 umfassen `{{ branch }}`, `{{ worktree_path }}`, `{{ primary_worktree_path }}`,
 `{{ base }}`, `{{ target }}`.
 
-Nichts davon ist in dieser Umgebung installiert — `wt` fehlt, `herdr plugin list`
-zeigt nur `herdr-agent-metrics`. Beides gehört in die Laufzeit-Abhängigkeiten.
+#### Die Kette, gemessen
+
+Gegen worktrunk 0.75.0 und das Plugin `worktrunk` (herdr-worktrunk
+@9cde723) durchlaufen, nicht aus Dokumentation übernommen:
+
+```
+wt switch --create lh-probe --no-cd --format json --yes
+  → {"action":"created","branch":"lh-probe",
+     "path":"/home/tholo/Scripts/lean-herdr.lh-probe",
+     "created_branch":true,"base_branch":"main"}
+
+herdr worktree list --cwd $PWD --json
+  → .result.source.repo_root          /home/tholo/Scripts/lean-herdr
+  → .result.source.source_workspace_id  w1
+
+herdr worktree open --cwd <repo_root> --path <wt> --label lh-probe --json
+  → workspace w2 · open_workspace_id w2 · is_linked_worktree true
+```
+
+`--no-cd`, `--format json`, `-C <pfad>` und `--yes` (Approval überspringen) sind
+in 0.75.0 vorhanden.
+
+#### `wt merge` merged den **aktuellen** Worktree, nicht den benannten
+
+Der Hilfetext ist eindeutig — *„Merge current branch into the target branch"* —
+und die naheliegende Lesart ist trotzdem falsch. `wt merge <X>` bedeutet
+**merge nach X**, nicht *merge X*.
+
+Der Fehlaufruf ist still und schädlich. Aus dem Haupt-Checkout heraus gemessen:
+
+```
+$ wt merge feat/probe --yes          # gemeint war: feat/probe nach main
+  ✓ Fast-forwarded to feat/probe     # tatsächlich: main NACH feat/probe
+  ○ Worktree preserved (primary worktree)
+```
+
+`main` steht danach auf dem Feature-Branch, Exit 0, keine Warnung. **Der
+Orchestrator darf `wt merge` niemals mit dem Quellbranch als Argument
+aufrufen.** Er sitzt im Haupt-Checkout und muss den Worktree über `-C`
+adressieren:
+
+```
+$ wt -C <worktree_path> merge main --yes
+  ◎ Squashing 2 commits into a single commit (2 files, +2)...
+  ✓ Squashed @ d8a9e60
+  ◎ Merging 1 commit to main @ d8a9e60 (no rebase needed)
+  ✓ Merged to main (1 commit, 2 files, +2)
+  ◎ Removing feat/probe worktree & branch in background (…)
+  ▲ Cannot change directory — shell integration installed but not active
+```
+
+Danach: `main` trägt den Squash-Commit, `git worktree list` zeigt nur noch den
+Haupt-Checkout, `git branch -a` nur noch `main`.
+
+Drei Betriebsdetails aus demselben Durchlauf:
+
+| Beobachtung | Folge für den Entwurf |
+|---|---|
+| Worktree und Branch werden **im Hintergrund** entfernt | direkt nach dem Kommando existiert das Verzeichnis noch — wer darauf prüft, prüft zu früh |
+| `▲ Cannot change directory — shell integration installed but not active` | harmlos im nicht-interaktiven Aufruf, kein Fehlerzustand |
+| `wt merge` committet unversionierte Änderungen selbst (abschaltbar mit `--no-commit`) | der Builder muss nicht sauber hinterlassen; die Reihenfolge tut es |
+| Reihenfolge laut Hilfetext: Rebase → **pre-merge**-Hooks → Merge → **pre-remove**-Hooks → Entfernen; `pre-*`-Fehlschlag bricht ab | `.config/wt.toml` `pre-merge` ist das natürliche Testtor vor dem Merge |
+
+#### `wt list --format=json` hat zwei Schemata
+
+```
+▲ JSON output is schema 1; a future release switches the default to schema 2
+↳ To keep this format set [list] json-schema = 1; to adopt the new schema, set json-schema = 2
+```
+
+Wer `wt list` parst, muss das Schema **festnageln** — sonst wechselt die
+Ausgabeform unter dem Skript. Der Entwurf braucht `wt list` allerdings nicht:
+`wt switch --format json` liefert den Pfad direkt, und die Zuordnung
+Pfad → Workspace kommt von `herdr worktree list`.
 
 ### opencode-Plugin-Hooks entsprechen Claudes Hooks
 
@@ -521,11 +668,15 @@ Regel wird angefasst.
 
 ### Drei Rollen
 
-| Rolle | Agent | Modell | Profil | Warum |
-|---|---|---|---|---|
-| `orchestrator` | opencode | schnell/billig (Flash-Klasse) | `minimal` (6) | viele kleine Entscheidungen, ~$0.005/warmer Schritt; liest nie Projektdateien |
-| `builder` | claude | stark (Sonnet-Klasse) | `standard` (18) | die eigentliche Arbeit; braucht `ctx_session` für Findings |
-| `reviewer` | opencode | OpenAI-Klasse | `standard` (18) | **anderes Modell = andere Blindstellen** — das ist der Wert, nicht die Ersparnis |
+| Rolle | Agent | Modell | Profil | lean-ctx-Fixkosten/Schritt | Warum |
+|---|---|---|---|---:|---|
+| `orchestrator` | opencode | schnell/billig (Flash-Klasse) | `minimal` (6) | 2 711 | viele kleine Entscheidungen; liest nie Projektdateien, braucht nur `ctx_call` und `ctx_shell` |
+| `builder` | claude | stark (Sonnet-Klasse) | `standard` (18) | 4 920 | die eigentliche Arbeit; braucht `ctx_session` für Findings |
+| `reviewer` | opencode | OpenAI-Klasse | `standard` (18) | 4 920 | **anderes Modell = andere Blindstellen** — das ist der Wert, nicht die Ersparnis |
+
+Zum Vergleich: `power` kostet 11 559 Token je Schritt. Der Orchestrator spart
+gegenüber der Voreinstellung **8 848 Token in jedem seiner Schritte** — siehe
+„Was das Profil am Schritt ändert".
 
 Das Profil wird am Pane gesetzt, nicht in einer Konfigurationsdatei:
 
@@ -554,25 +705,63 @@ herdr-worktrunk   bildet ihn ab:      herdr worktree open --cwd <repo_root> --pa
 lean-herdr        besitzt die Agenten: dispatch · Rollen · Plugin-Anzeige
 ```
 
-**Worktree = Branch.** Der Builder wird darin gestartet und bleibt — `/clear`
-zwischen Aufgaben, Identität und PID-Join stabil (die gemessene Bestvariante,
-siehe „Lebensdauer eines Arbeiters"). Ein Agent bekommt seine cwd beim
-Pane-Start und kann nicht umziehen; ein Worktree je Rolle scheidet damit aus,
-weil `wt switch` dem laufenden Agenten den Baum unter den Füßen wegzöge.
+**Worktree = Branch, und alle Arbeiter eines Branches leben darin.** Nur der
+Orchestrator bleibt im Haupt-Checkout — er liest ohnehin keine Projektdateien.
+Builder **und Reviewer** bekommen je einen Pane im Worktree des Branches.
+
+Das ist keine Symmetrie um der Symmetrie willen: ein Agent bekommt seine cwd
+beim Pane-Start und kann nicht umziehen. Ein Reviewer im Haupt-Checkout würde
+den Hauptzweig prüfen, nicht die Arbeit — eine Review-Schleife, die strukturell
+nichts sieht. Aus demselben Grund scheidet ein Worktree je Rolle aus:
+`wt switch` zöge dem laufenden Agenten den Baum unter den Füßen weg.
 
 ```
-w1 lean-herdr (main)          w2 feat/auth
-  p1 Orchestrator               p1 Builder  (lebt, solange der Branch lebt)
-  p3 Reviewer                       /clear je Aufgabe
-     │
-     └────────────── ein Bus ───────────────┘
-
-wt merge feat/auth  →  Workspace w2 schließt  →  Arbeiter endet
+w1 lean-herdr (main)            w2 feat/auth
+  p1 Orchestrator                 p1 Builder   (claude,   standard)
+                                  p2 Reviewer  (opencode, standard)
+     │                                 beide: /clear je Aufgabe,
+     │                                 Identität und PID-Join stabil
+     └──────────── ein Bus ────────────┘
 ```
+
+Der Reviewer ist damit ebenfalls branchgebunden. Das ist richtig: er entsteht
+mit dem Branch und endet mit ihm, und sein Wert — ein anderes Modell mit anderen
+Blindstellen — hängt nicht an seiner Lebensdauer.
+
+**Abbau, in dieser Reihenfolge.** Die Umkehrung ist ein Fehler, den man erst im
+Betrieb merkt: `wt merge` entfernt den Checkout, und ein Agent, dessen cwd
+gerade verschwindet, hinterlässt einen Pane in undefiniertem Zustand.
+
+```
+1. Orchestrator prüft: category=result, nicht reject
+2. Pfad und Workspace auflösen — SOLANGE es den Worktree noch gibt:
+     herdr worktree list --cwd <repo_root> --json
+       → .result.worktrees[] | select(.branch=="feat/auth")
+           | {path, open_workspace_id}
+3. herdr workspace close <w2>       Arbeiter sterben mit ihren Panes;
+                                    das Verzeichnis bleibt bestehen
+4. wt -C <path> merge main --yes    squasht, merged, entfernt Worktree+Branch
+```
+
+Zwei Dinge, die diese Reihenfolge erzwingen und die man sonst erst im Betrieb
+merkt:
+
+**Der Workspace muss vor Schritt 4 aufgelöst sein.** Herdr vergisst die
+Zuordnung Worktree → Workspace zusammen mit dem Worktree; danach ist `w2` nicht
+mehr auffindbar und der Pane bleibt als Leiche stehen.
+
+**`-C <path>` ist nicht optional, sondern die Sicherung.** `wt merge` merged den
+**aktuellen** Worktree in den benannten Zielbranch. Der Orchestrator steht im
+Haupt-Checkout — ohne `-C` würde er `main` in den Feature-Branch fast-forwarden
+und Erfolg melden (gemessen, siehe „`wt merge` merged den aktuellen Worktree").
 
 Wer merged: der **Orchestrator**, nach einem `result` (nicht `reject`) des
 Reviewers. `wt merge` ist lokal und über das Reflog rücknehmbar. Was er nicht
 tut: pushen — das bleibt eine menschliche Geste.
+
+Das Testtor sitzt in `.config/wt.toml` unter `pre-merge`: worktrunk führt die
+Hooks nach dem Rebase und **vor** dem Merge aus, ein Fehlschlag bricht ab. Damit
+gibt es eine Prüfung, die nicht von einem Modellurteil abhängt.
 
 `.config/wt.toml` liegt im Repo, aber im ersten Wurf leer bis auf einen
 optionalen `pre-merge`-Eintrag (Tests vor dem Merge). Ein `post-start`-Hook zum
@@ -592,6 +781,15 @@ Nie `$PWD`, nie der Worktree-Pfad. `--project-root` ist Pflicht; vergisst man di
 Kanonisierung, erzeugt man genau den zweiten Bus, den es sonst nicht gibt. Das
 ist der einzige Weg, wie der Split entstehen kann, und er entsteht ausschließlich
 im eigenen Code — deshalb sichert ihn ein eigener Test ab.
+
+**Das gilt auch für die Plugin-Handler.** Sie gehen über `leanctx.py`, also über
+dieselbe CLI mit demselben Pflichtflag — nicht über einen MCP-Server. Die
+Kanonisierung, die lean-ctx einem stdio-Server geschenkt hat, gibt es hier
+nicht. Jede `cwd`, die ein Handler aus einem Herdr-Event zieht, läuft zuerst
+durch `canonical_root()`, bevor sie zu `--project-root` wird. Ein Handler, der
+die rohe Workspace-cwd durchreicht, legt für jeden Worktree ein eigenes
+lean-ctx-Projekt an (B12) — und zeigt dann einen leeren Digest an, statt zu
+brechen. Der stillste denkbare Fehler.
 
 ### Kanaltrennung
 
@@ -620,14 +818,15 @@ Die Trennlinie ist nicht Geschmack, sie folgt aus der Kostenmessung.
 
 | Träger | Ort | Inhalt | Warum dort |
 |---|---|---|---|
-| **Skript** | `bin/herdr-dispatch`, `bin/herdr-collect` | deterministische Mehrschritt-Sequenzen | kollabiert N Schritte auf 1 — der Haupthebel |
+| **Skript** | `bin/herdr-dispatch` | deterministische Mehrschritt-Sequenzen | kollabiert N Schritte auf 1 — der Haupthebel |
+| **Bibliothek** | `lean_herdr/bus.py` | `canonical_root()`, `parse_registry()` | eine Wahrheit für Skript und Plugin-Handler |
 | **Skill** | `orchestrating-agents` | Urteil: welcher Arbeiter, welches Modell, Eskalation. Plus die harten Regeln | muss im Kontext stehen, damit das Modell folgt |
 | **Rollendatei** | `<projekt>/.lean-ctx/roles/orchestrator.toml` | Kontextform und Budgetanzeige | keine Durchsetzung, siehe oben |
-| **Profil** | `--env LEAN_CTX_TOOL_PROFILE` am Pane | Schema-Last je Schritt | senkt die 20 K; pro Agent, nicht global |
+| **Profil** | `--env LEAN_CTX_TOOL_PROFILE` am Pane | Schema-Last je Schritt | gemessen: 2 711 (`minimal`) statt 11 559 (`power`); pro Agent, nicht global |
 | **Wächter** | opencode `agent.<name>.permission` | „orchestriert, codet nicht" | **hier** greift Durchsetzung, nicht in der lean-ctx-Rolle |
 | **Kostendeckel** | opencode `agent.<name>.steps` | begrenzt die gemessene Kosteneinheit | `max_cost_usd` zählt kein Geld |
 | **Baumverwalter** | worktrunk, `.config/wt.toml` | Erzeugung, Merge, Cleanup eines Branches | fertig und dafür gebaut; `wt merge` wäre sonst ein Projekt für sich |
-| **Policy-Adapter** | `opencode/lean-ctx-policy.js` | übersetzt opencode-Hooks auf die Python-Hooks | eine Policy, zwei Adapter — ein zweites Regelwerk driftet |
+| **Policy-Adapter** | `.opencode/plugins/lean-ctx-policy.js` | übersetzt opencode-Hooks auf die Python-Hooks | eine Policy, zwei Adapter — ein zweites Regelwerk driftet |
 | **Spec** | dieses Dokument | die Befunde, aus denen die Regeln folgen | damit niemand die Regeln später „vereinfacht" |
 
 Ein Skill, der dem Modell die Mechanik erklärt („splitte, starte, poste, warte,
@@ -642,22 +841,46 @@ nachvollziehbar bleiben müssen:
 
 ```
 roles/
-  orchestrator.md     → opencode  agent.orchestrator.prompt = "{file:…}"
-  builder.md          → claude    --append-system-prompt-file
-  reviewer.md         → opencode  agent.reviewer.prompt = "{file:…}"
+  orchestrator.md      → opencode  agent.orchestrator.prompt = "{file:…}"
+  builder.md           → claude    --append-system-prompt-file
+  reviewer.md          → opencode  agent.reviewer.prompt = "{file:…}"
+opencode.jsonc         → Projektkonfiguration von opencode (siehe unten)
+.opencode/plugins/
+  lean-ctx-policy.js   → Adapter auf die Python-Policy-Hooks
 .lean-ctx/roles/
-  orchestrator.toml   → lean-ctx-Rolle (Kontextform, via LEAN_CTX_ROLE)
+  orchestrator.toml    → lean-ctx-Rolle (Kontextform, via LEAN_CTX_ROLE)
 .config/
-  wt.toml             → worktrunk-Projekthooks (erster Wurf: nur pre-merge)
+  wt.toml              → worktrunk-Projekthooks (erster Wurf: nur pre-merge)
 bin/
-  herdr-dispatch      → eine Zuteilung, ein Aufruf
-  herdr-collect       → Ergebnisse eines task_id einsammeln
-opencode/
-  lean-ctx-policy.js  → Adapter auf die Python-Policy-Hooks
+  herdr-dispatch       → eine Zuteilung, ein Aufruf
+lean_herdr/
+  bus.py               → canonical_root(), parse_registry() — geteilt
+  …                      Plugin-Module, siehe „Die Plugin-Komponente"
 ```
 
-Worktrees erben `roles/`, `.lean-ctx/roles/` und `.config/wt.toml` automatisch,
-weil es versionierte Dateien sind — ein Seeding-Schritt je Worktree entfällt.
+Worktrees erben all das automatisch, weil es versionierte Dateien sind — ein
+Seeding-Schritt je Worktree entfällt.
+
+**`opencode.jsonc` gehört ins Repo, nicht nach `~/.config`.** opencode sucht
+`opencode.json`/`opencode.jsonc` ab der cwd aufwärts bis zum Git-Verzeichnis und
+**merged** Projekt- über Benutzerkonfiguration; Projekt-Plugins liegen unter
+`.opencode/plugins/`. Die Datei trägt vier Dinge, die der Entwurf braucht:
+
+| Schlüssel | Warum unverzichtbar |
+|---|---|
+| `mcp.lean-ctx` | `lean-ctx wrap` kennt opencode nicht — die MCP-Registrierung ist hier Handarbeit |
+| `agent.<name>.prompt = "{file:roles/<name>.md}"` | zwei der drei Rollentexte kommen so zum Agenten; ein relativer Pfad funktioniert nur projektlokal |
+| `agent.<name>.permission` | laut „Wissensträger" der **einzige** Ort mit echter Durchsetzung |
+| `agent.<name>.steps` | der einzige Kandidat für einen Kostendeckel |
+
+Der Bootstrap-Aufruf `agent start orch --kind opencode -- --agent orchestrator`
+setzt diese Datei voraus — ohne sie gibt es den Agenten `orchestrator` nicht.
+
+**Importweg.** `bin/herdr-dispatch` ist eine Python-Datei ohne PEP-723-Kopf; sie
+setzt `sys.path` relativ zu `__file__` auf die Repo-Wurzel und importiert
+`lean_herdr.bus`. Kein Installationsschritt, kein `uv run --script`, und
+`canonical_root()`/`parse_registry()` existieren genau einmal — geteilt zwischen
+Skript und Plugin-Handlern.
 
 ### Skriptverträge
 
@@ -689,8 +912,13 @@ sonst: wt switch -c <branch> --no-cd --format=json   → .path
        herdr worktree open --cwd <repo_root> --path <path> --label <branch> --json
 ```
 
-Ist ein Arbeiter zu diesem Branch bereits am Leben, wird er wiederverwendet —
-der Worktree ist an den Branch gebunden, nicht an die Aufgabe.
+**Der Wiederverwendungsschlüssel ist `(branch, rolle)`, nicht der Branch allein.**
+Ein Worktree trägt mehrere Arbeiter — Builder und Reviewer —, und ein
+Reviewer-Dispatch auf denselben Branch dürfte niemals den laufenden Builder
+treffen. Gesucht wird also der Pane, dessen Workspace zum Branch gehört **und**
+dessen Agentenname die Rolle trägt (`herdr agent list` → Name je Pane). Nur wenn
+beides passt, wird wiederverwendet; sonst entsteht ein neuer Pane im selben
+Worktree.
 
 `--profile` überschreibt nur; die Voreinstellung folgt der Rolle aus der Tabelle
 unter „Drei Rollen" (`orchestrator` → `minimal`, sonst `standard`). `--kind` und
@@ -711,18 +939,19 @@ Ausgabe auf stdout, eine JSON-Zeile:
 Exit 0 in beiden Fällen — der Orchestrator liest `ok`, nicht den Exit-Code, damit
 ein Fehlschlag nicht seinen Shell-Aufruf abbricht.
 
-```
-herdr-collect --task-id <id> [--since <ts>]
-```
+**`herdr-collect` gehört nicht in den ersten Wurf — entschieden, nicht offen.**
+Es hätte genau einen Zweck: Antworten mehrerer Arbeiter zu **einer** `task_id`
+einsammeln. Fan-out ist im ersten Wurf ausdrücklich ausgeschlossen („Zweiter
+Builder im ersten Wurf: YAGNI"), `dispatch` liefert sein Ergebnis selbst, und für
+den Orchestrator kostet ein Skriptaufruf genauso viel wie ein `ctx_call` — einen
+Schritt. Es gäbe also nichts zu sparen.
 
-Gibt alle Antworten zu einer `task_id` als JSON-Zeilen aus. Es liest **nicht**
-den Bus — das kann ein One-Shot-Prozess nicht (B9) —, sondern
-`~/.local/share/lean-ctx/agents/registry.json`, gefiltert auf den kanonischen
-`project_root`. Den Parser teilt es sich mit `herdr-dispatch`.
-
-Ob es als eigenes Skript bestehen bleibt, entscheidet sich am Fan-out: für eine
-einzelne Zuteilung liefert `dispatch` das Ergebnis schon selbst, und für den
-Orchestrator kostet beides denselben einen Schritt.
+Was bleibt, ist der **Leser**, und der liegt ohnehin in `lean_herdr/bus.py`:
+`parse_registry()` liest `~/.local/share/lean-ctx/agents/registry.json`,
+gefiltert auf den kanonischen `project_root` und eine `task_id`. Den Bus lesen
+kann ein One-Shot-Prozess nicht (B9); die Datei ist der einzige Weg. Kommt der
+zweite Builder, ist `bin/herdr-collect` ein Dünnschliff um diese Funktion —
+zwanzig Zeilen, kein Entwurf.
 
 ### Bootstrap
 
@@ -789,10 +1018,12 @@ lean-herdr/
 
 ```
 Herdr-Neustart ──[startup]──► workspace list --json
-                              je Workspace: cwd → ctx_session resume + ctx_handoff show
+                              je Workspace: canonical_root(cwd)
+                                → ctx_session resume + ctx_handoff show
                               → workspace report-metadata --token ctx="<task>"
 
-pane.agent_detected ────────► pane get → cwd → Digest → STATE_DIR/<pane_id>.md
+pane.agent_detected ────────► pane get → canonical_root(cwd) → Digest
+                              → STATE_DIR/<pane_id>.md
    (auch nach --resume)       → pane report-metadata --token ctx="<task>"
 
 pane.agent_status_changed ──► Token auffrischen
@@ -855,10 +1086,11 @@ allow → output.args ggf. mutiert
 | `permission.ask` | setzt `status = "deny"` statt nachzufragen |
 | `tool.execute.after` | `lean-ctx hook observe` |
 
-**Ablage:** `opencode/lean-ctx-policy.js` im Repo, eingetragen unter
-`~/.config/opencode/plugins/`. Der Pfad zu den Hooks kommt aus
-`LEAN_HERDR_HOOKS_DIR` mit Voreinstellung `~/.claude/hooks` — das Plugin zeigt
-nicht hart auf ein Claude-Verzeichnis.
+**Ablage:** `.opencode/plugins/lean-ctx-policy.js` im Repo. Projekt-Plugins
+liegen unter `.opencode/plugins/` und werden von opencode selbst geladen — kein
+Installationsschritt, keine Kopie nach `~/.config`. Der Pfad zu den Hooks kommt
+aus `LEAN_HERDR_HOOKS_DIR` mit Voreinstellung `~/.claude/hooks`; das Plugin
+zeigt nicht hart auf ein Claude-Verzeichnis.
 
 **Der Adapter bricht nie eine Sitzung.** Fehlt ein Skript, ist `python3` nicht da
 oder antwortet der Hook nicht in 5 s, läuft der Tool-Aufruf durch und der Adapter
@@ -951,6 +1183,9 @@ rückwirkend.
 | `worktree open` aus einem Linked-Worktree-Workspace | verboten — `--cwd` ist immer `.result.source.repo_root`, nie `$PWD` |
 | Policy-Hook wirft in opencode | Tool-Fehler mit Grund, der Turn läuft weiter — nie Sitzungsabbruch |
 | Policy-Hook selbst kaputt (kein `python3`, Timeout) | Tool-Aufruf läuft durch, Notiz auf stderr — eine kaputte Härtung ist nicht schlimmer als keine |
+| `wt merge` ohne `-C <worktree>` | **verboten** — fährt `main` auf den Feature-Branch und meldet Erfolg. `herdr-dispatch` setzt `-C` immer, der Orchestrator ruft `wt merge` nie von Hand |
+| Worktree nach `wt merge` noch vorhanden | erwartet — die Entfernung läuft im Hintergrund; wer sofort auf das Verzeichnis prüft, prüft zu früh |
+| `pre-merge`-Hook schlägt fehl | `wt merge` bricht ab, Worktree und Branch bleiben — der Orchestrator eskaliert, statt zu wiederholen |
 
 ### Plugin-Handler: brechen nie etwas
 
@@ -1005,7 +1240,7 @@ ehrlich, statt still zu schlucken.
 | Kanal | Zuverlässigkeit | Rolle |
 |---|---|---|
 | **Orchestrator hält an** | immer | **primär** — nichts geht weiter, das ist unübersehbar |
-| `pane report-metadata --token` | immer (lautlos bestätigt) | Sidebar zeigt, *welcher* Workspace jemanden braucht |
+| `workspace report-metadata --token esc=…` | immer (lautlos bestätigt) | Sidebar zeigt, *welcher* Workspace jemanden braucht |
 | `notification show` | **nur wenn aktiviert** | Extra; `shown` prüfen, nie darauf verlassen |
 
 Der Orchestrator schreibt bei Eskalation in sein Terminal und macht dann nichts
@@ -1020,6 +1255,20 @@ ESKALATION <task_id>: <grund>
 
 Ein angehaltener Orchestrator ist das stärkste Signal, das dieser Aufbau kennt:
 es kann nicht übersehen werden, weil nichts mehr passiert.
+
+**Der Eskalationstoken heißt `esc` und sitzt am Workspace, nicht am Pane.** Das
+Plugin frischt `ctx` am **Pane** auf `pane.agent_status_changed` auf; schriebe
+der Orchestrator seine Eskalation in denselben Kanal, löschte die nächste
+Zustandsänderung sie wieder. Zwei Schreiber auf einem Token sind genau der
+stille Konflikt, den diese Spec bei `$task` schon einmal vermieden hat.
+
+| Token | Bereich | Schreiber |
+|---|---|---|
+| `ctx` | Pane und Workspace | ausschließlich das Plugin |
+| `esc` | nur Workspace | ausschließlich der Orchestrator |
+
+Das Plugin fasst `esc` nie an — auch nicht, um ihn zu löschen. Aufgehoben wird
+eine Eskalation vom Orchestrator, wenn er weiterarbeitet.
 
 ### Gesamtabbruch
 
@@ -1055,7 +1304,7 @@ gelöst dargestellt zu werden.
 4. **Profil-Test** — `tools/list` an einem stdio-Server unter
    `LEAN_CTX_TOOL_PROFILE=minimal` enthält `ctx_call`. Fängt es, wenn lean-ctx
    `minimal` beschneidet und der Orchestrator stumm verstummt.
-5. **Adapter-Test** — `opencode/lean-ctx-policy.js` gegen die echten
+5. **Adapter-Test** — `.opencode/plugins/lean-ctx-policy.js` gegen die echten
    Python-Hooks mit gefälschter `tool_input`. Erwartung: dieselbe Entscheidung
    wie bei Claude. Plus der Ausfallpfad: fehlendes Skript → Tool läuft durch.
 6. **Ein-Aufgaben-Durchlauf** — manuell, wie im Spike: Orchestrator startet
@@ -1087,6 +1336,14 @@ herdr plugin install devashish2203/herdr-worktrunk
 herdr plugin list             # auf `warning:` prüfen
 ```
 
+**Stand 2026-09-01: erledigt.** `wt 0.75.0`, Plugin `worktrunk`
+(@9cde723) installiert, `plugin list` warnungsfrei, `wt` in der
+lean-ctx-Allowlist. Die Kette `wt switch` → `worktree open` → `pane split --env`
+→ `wt -C … merge` ist durchgemessen (siehe „Die Kette, gemessen").
+
+Was bleibt: `opencode.jsonc` im Repo anlegen — ohne sie gibt es die Agenten
+`orchestrator` und `reviewer` nicht.
+
 **Stufe 1 — die Rollentexte.** `roles/orchestrator.md`, `builder.md`,
 `reviewer.md`. Das ist der eigentliche Kern und existiert nicht. Diese Spec
 beschreibt, was darin stehen muss — Orchestrator-ID für das Vertrauensmodell,
@@ -1111,6 +1368,21 @@ offenen Punkt 2 (parallele Arbeiter, PID-Join nebenläufig) und Punkt 11
 Voraussetzung: das Plugin zeigt nur an, der Adapter härtet nur. Ein Durchlauf
 funktioniert ohne beide.
 
+### Zwei Pläne, nicht einer
+
+Die Stufen zerfallen entlang einer Naht, die schon im Umfang liegt: Stufen 0–4
+sind der Kern, Stufe 5 ist erklärtermaßen Komfort. Sie teilen keinen Code, keine
+Sprache und keinen Testpfad.
+
+| | Inhalt | Sprache | Beweis, dass es trägt |
+|---|---|---|---|
+| **Plan A** | Stufen 0–4: `roles/*.md`, `opencode.jsonc`, `lean_herdr/bus.py`, `bin/herdr-dispatch`, `.config/wt.toml` | Prosa + Python | ein Durchlauf ohne und einer mit `--worktree` |
+| **Plan B** | Stufe 5: Herdr-Plugin (7 Module, Manifest, `pyproject.toml`) und `.opencode/plugins/lean-ctx-policy.js` | Python + JavaScript | Handler-Tests gegen Doppel, Adapter-Test gegen die echten Hooks |
+
+Plan B zerfällt selbst noch einmal — Anzeige-Plugin und Policy-Adapter teilen
+außer dem Repo nichts. Ob das ein Plan mit zwei Abschnitten wird oder zwei
+Pläne, entscheidet sich beim Schreiben; erzwungen ist es nicht.
+
 Was auch danach ungemessen bleibt, steht unter „Offene Punkte" — vor allem: es
 gibt weiterhin **keinen echten Kostendeckel**.
 
@@ -1133,8 +1405,8 @@ gibt weiterhin **keinen echten Kostendeckel**.
    Herdr-Plugin `devashish2203/herdr-worktrunk` (das seinerseits `fzf` und `jq`
    braucht) sowie `lean-ctx allow herdr` **und** `lean-ctx allow wt`. Ohne die
    `allow`-Einträge kann ein Agent unter lean-ctx-Gating weder Herdr noch
-   worktrunk steuern; Herdr wiederum installiert keine Toolchains. Nichts davon
-   ist in der Messumgebung installiert.
+   worktrunk steuern; Herdr wiederum installiert keine Toolchains. In der
+   Messumgebung inzwischen vorhanden — das README fehlt noch.
 7. ~~**`$task`-Token-Kollision**~~ — entschieden: lean-herdr nimmt `$ctx`,
    `herdr-plugin-renamer` behält `$task`.
 8. ~~**lean-ctx Projekt-Root**~~ — erledigt: `lean-herdr` steht in
@@ -1144,11 +1416,19 @@ gibt weiterhin **keinen echten Kostendeckel**.
 10. **`registry.json` als Vertrag** — die Feldform ist an einer Probe
     verifiziert, aber es ist ein internes Format ohne Zusage. Der eingefrorene
     Parser-Test macht einen Bruch sichtbar; verhindern kann er ihn nicht.
-11. **worktrunk ungemessen** — `wt merge`, die Hooks und das Zusammenspiel mit
-    `herdr worktree open` sind aus Quelltext und Dokumentation gelesen, nicht
-    ausgeführt. Erst Stufe 4 der Ausführbarkeit beweist sie.
-12. **`standard` als Builder-Profil ungemessen** — 18 Tools sind gezählt, aber
-    nicht daraufhin geprüft, ob dem Builder etwas fehlt.
+11. ~~**worktrunk ungemessen**~~ — erledigt 2026-09-01 gegen worktrunk 0.75.0:
+    `wt switch --create --no-cd --format json`, `herdr worktree open`,
+    `pane split --env` und `wt -C <pfad> merge <ziel> --yes` sind durchgelaufen,
+    der Fehlaufruf von `wt merge` ist reproduziert und dokumentiert (W1).
+    **Offen bleibt** allein das Zusammenspiel unter einem laufenden Agenten —
+    ob ein Builder den Abbau überlebt und ob `pre-merge`-Hooks unter Last
+    greifen (Stufe 4).
+12. **`standard` als Builder-Profil ungemessen** — 18 Tools und 4 920 Token sind
+    gezählt, aber nicht daraufhin geprüft, ob dem Builder inhaltlich etwas fehlt.
+13. **Geldersparnis durch `minimal` ist hochgerechnet** — der Kontextgewinn ist
+    gemessen (−8 848 Token je Schritt), die Kostenwirkung nicht. Weil der Schnitt
+    vorwiegend zwischengespeicherte Token entfernt, fällt sie bei warmen
+    Schritten kleiner aus als die 44 %. Stufe 3 der Ausführbarkeit klärt es.
 
 ## Befund für lean-ctx
 
@@ -1182,6 +1462,16 @@ Nicht Teil dieses Projekts, aber blockierend oder irreführend:
 | H7 | `plugin link` funktioniert ohne laufenden Server, `plugin unlink` nicht |
 | H8 | `herdr worktree open --cwd` lehnt einen Linked-Worktree-Workspace als Elternteil ab. Der Repo-Root muss erst über `worktree list --cwd $PWD --json` → `.result.source.repo_root` aufgelöst werden — aus dem Fehlertext nicht ableitbar |
 | H9 | `herdr agent start` hat kein `--env`; die Umgebung kommt ausschließlich vom Pane, in dem der Agent gestartet wird (`pane split`/`tab create`/`workspace create --env`). Nicht offensichtlich, weil `agent start` sonst alles durchreicht |
+
+## Befund für worktrunk
+
+Gegen worktrunk 0.75.0 gemessen.
+
+| # | Befund |
+|---|---|
+| W1 | `wt merge <X>` merged den **aktuellen** Worktree **nach** X. Aus dem Haupt-Checkout mit dem Quellbranch als Argument aufgerufen, fährt es `main` auf den Feature-Branch (`✓ Fast-forwarded to feat/probe`), meldet Exit 0 und warnt nicht. Die naheliegende Fehlbedienung ist still und verändert den Hauptzweig |
+| W2 | `wt list --format=json` gibt Schema 1 aus und kündigt Schema 2 als künftige Voreinstellung an. Wer parst, muss `[list] json-schema` festnageln |
+| W3 | Worktree und Branch werden nach `wt merge` **im Hintergrund** entfernt; unmittelbar nach dem Kommando existiert das Verzeichnis noch. Ein Skript, das darauf prüft, sieht den alten Zustand |
 
 ## Anhang: Befund zu den lean-ctx-READMEs
 
