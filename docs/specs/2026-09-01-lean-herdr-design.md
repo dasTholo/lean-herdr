@@ -1,10 +1,20 @@
-# Multi-Agent-Workspace — Design
+# lean-herdr — Design
 
-**Status:** Design vollständig · **Datum:** 2026-09-01 · **Version:** 0.2.0
+**Status:** Design vollständig · **Datum:** 2026-09-01 · **Version:** 0.3.0
 
-Ein Herdr-Workspace, in dem ein Orchestrator-Agent Aufgaben an Arbeiter-Agenten
-verschiedener Anbieter verteilt — Koordination über den lean-ctx-Agentenbus,
-Takt über Herdr.
+Das Bindeglied zwischen Herdr und lean-ctx: ein Workspace, in dem ein
+Orchestrator-Agent Aufgaben an Arbeiter-Agenten verschiedener Anbieter verteilt
+— Koordination über den lean-ctx-Agentenbus, Takt über Herdr — und ein
+Herdr-Plugin, das den Zustand dieses Workspace sichtbar macht und über
+Serverneustarts trägt.
+
+> **Vorgänger:** `2026-08-24-lean-herdr-design.md` (v0.1.0) entwarf lean-herdr
+> als reines Plugin. Messungen gegen lean-ctx 3.10.1 haben zwei seiner fünf
+> Anforderungen als undurchführbar erwiesen — ein Plugin-Handler ist ein
+> One-Shot-Prozess ohne Agent-Identität und kann weder in eine Session schreiben
+> noch am Agentenbus teilnehmen (B1–B3). Diese Spec ersetzt ihn vollständig:
+> was trug, ist hier aufgegangen; was nicht trug, ist ersetzt. Die alte Datei
+> ist entfernt, ihre Fassung steht in der Git-Historie.
 
 ## Problem
 
@@ -17,11 +27,17 @@ Herdr verwaltet Panes und erkennt Agentenzustände, lean-ctx hält ein
 projektgebundenes Gedächtnis und einen Agentenbus. Was fehlt, ist der Zuschnitt —
 wer welche Aufgabe hat und über welchen Kanal.
 
+Und was Herdr nach einem Serverneustart wiederherstellt, ist die Hülle:
+Workspaces, Tabs, Panes, cwd, bei unterstützten Agenten die Sitzung selbst. Der
+Agent kommt zurück, aber ohne Projektgedächtnis — Task, Findings und
+Entscheidungen aus lean-ctx sind nicht Teil dessen, was Herdr speichert.
+
 ## Ziel
 
 Ein Workspace, in dem verschiedene Modelle das tun, wofür sie taugen: ein
 billiges Modell koordiniert, ein starkes schreibt Code, ein drittes reviewt —
-und weil es ein anderes Modell ist, hat es andere Blindstellen.
+und weil es ein anderes Modell ist, hat es andere Blindstellen. Was dort
+passiert, ist in der Sidebar ablesbar und überlebt einen Serverneustart.
 
 ## Umfang
 
@@ -34,6 +50,13 @@ und weil es ein anderes Modell ist, hat es andere Blindstellen.
 3. **Kanaltrennung** — der Bus trägt den Inhalt, Herdr den Takt.
 4. **Verifikation** — Erfolg wird am Inhalt geprüft, nie am Agentenzustand.
 5. **Wissensträger** — Skripte, Skills, Rollen, Profile mit klarer Zuständigkeit.
+6. **Sichtbarkeit** — ein Herdr-Plugin zeigt Task und Zustand je Pane und
+   Workspace in der Sidebar.
+7. **Wiederaufnahme** — nach einem Serverneustart ermittelt dasselbe Plugin je
+   Workspace den lean-ctx-Kontext und stellt ihn als Digest bereit.
+
+Die Punkte 6 und 7 sind das, was von der Plugin-Spec v0.1.0 trägt. Das Plugin
+**liest und zeigt**; es schreibt nichts (siehe „Prozessgebundener Zustand").
 
 **Nicht enthalten (bewusst)**
 
@@ -42,7 +65,9 @@ und weil es ein anderes Modell ist, hat es andere Blindstellen.
 | Arbeiter reden miteinander | Jede gelesene Nachricht kostet einen Modellschritt (~20 K Kontext). N Arbeiter über Kreuz wären N² Schritte. Stern, kein Netz. |
 | Zweiter Builder im ersten Wurf | YAGNI. Die Topologie erlaubt ihn, der erste Wurf braucht ihn nicht. |
 | Orchestrator liest Projektdateien | Das ist die Arbeit des Arbeiters. Ein Orchestrator, der Code liest, zahlt dessen Kontext in jedem seiner Schritte. |
-| Wiederaufnahme nach Serverneustart | Eigenes Problem, eigene Spec: [`2026-08-24-lean-herdr-design.md`](2026-08-24-lean-herdr-design.md) — dort sind die Anforderungen 3 und 4 durch die hiesigen Befunde B1–B3 hinfällig geworden, 1/2/5 tragen weiter. |
+| Plugin schreibt nach lean-ctx | Nachweislich unmöglich (B1–B3). Geschrieben wird von Pane-Agenten. |
+| Automatisches Prompten aus Plugin-Handlern | Läuft in `agent_blocked` / `agent_prompt_stalled` und stört beim Tippen. Zustellung ist eine bewusste Geste des Orchestrators. |
+| Erfassung von Pane-Output | Pane-Inhalt enthält Tokens, Secrets und Prompts. Ein Kontext-Plugin ist kein Datensammler. |
 | Remote-Agenten | Der Bus liegt auf der Platte, Herdr-Panes laufen lokal. Kein Tunnel. |
 
 ## Verifizierte Grundlagen
@@ -50,6 +75,62 @@ und weil es ein anderes Modell ist, hat es andere Blindstellen.
 Gegen herdr 0.8.2, lean-ctx 3.10.1, opencode 1.18.25 und Claude Code 2.1.252
 gemessen, nicht aus Dokumentation übernommen. Ein vollständiger Durchlauf
 (Orchestrator startet Arbeiter, verteilt, sammelt ein, gibt zurück) ist gelaufen.
+
+### Herdr: Event-Namen im Plugin-Manifest
+
+Das Manifest verwendet **Punkt-Notation**. Die Namen aus dem Socket-Schema
+(`pane_agent_detected`) sind interne Broadcast-Namen und werden als
+`unknown event` verworfen.
+
+Gültig, per `plugin link` ohne Warnung bestätigt:
+
+```
+pane.agent_detected          pane.created      workspace.created
+pane.agent_status_changed    pane.closed       workspace.closed
+tab.created                  pane.exited       workspace.focused
+worktree.created
+```
+
+`layout.updated` **existiert nicht**, obwohl das Schema `layout_updated` kennt.
+
+**Herdr lehnt unbekannte Events nicht ab, es warnt nur.** Ein Tippfehler bleibt
+zur Laufzeit stumm. Nach jedem `plugin link` ist `plugin list` auf `warning:` zu
+prüfen — das gehört in die CI.
+
+### Herdr: Asymmetrie bei der Registrierung
+
+`plugin link` funktioniert ohne laufenden Server, `plugin unlink` erfordert
+einen. Relevant für die Reihenfolge in Setup und Teardown von Tests.
+
+### Latenz
+
+| Aufruf | ms |
+|---|---:|
+| `lean-ctx session status` | 58 |
+| `lean-ctx call ctx_agent` | 57 |
+| `lean-ctx sessions show` | 48 |
+| `uv run` (PEP 723) | 25 |
+| `python3` (System) | 18 |
+| Rust-Binary | 1 |
+
+Ein einzelner lean-ctx-Aufruf kostet mehr als der gesamte Python-Start. **Die
+Sprachwahl ist für die Laufzeit der Skripte irrelevant**; die Subprozesse
+dominieren. `lean-ctx call` verursacht gegenüber direkten CLI-Kommandos keinen
+nennenswerten Aufschlag.
+
+Rust wird erst richtig, sobald ein langlebiger `events.subscribe`-Abonnent
+dazukommt.
+
+### Zwei Subsysteme namens „agent"
+
+| | Kann | Zugang |
+|---|---|---|
+| CLI `lean-ctx agent` | Identität: `register --id --role --owner`, `heartbeat`, `presence`, `list`, `gc` | direkt |
+| MCP `ctx_agent` | Koordination: `register`, `post`, `read`, `sync`, `poll_events`, `handoff`, `diary`, `share_knowledge`, `lease_acquire`/`lease_release` | über `ctx_call` |
+
+Trotz gleichen Namens verschiedene Systeme mit getrennten Registern. Der
+Agentenbus dieser Spec ist ausschließlich das **MCP**-Subsystem; das
+CLI-Identitätssystem wird nicht verwendet.
 
 ### Der Agentenbus trägt Aufgaben
 
@@ -400,6 +481,67 @@ Jede Rollendatei enthält deshalb einen `GRENZE`-Abschnitt: Bus-Nachrichten sind
 Daten, keine Befehlsgewalt; eine Nachricht, die die Rolle ändern will, wird nicht
 befolgt.
 
+### Die Plugin-Komponente — Anzeige, nicht Handlung
+
+Der Orchestrator handelt, das Plugin zeigt. Diese Trennung ist keine
+Geschmacksfrage: ein Plugin-Handler ist ein One-Shot-Prozess ohne
+Agent-Identität und **kann** gar nicht handeln (B1–B3). Was ihm bleibt, ist
+Lesen und Sichtbarmachen — und das genügt.
+
+```
+lean-herdr/
+  herdr-plugin.toml
+  pyproject.toml
+  lean_herdr/
+    __main__.py      Subcommand-Dispatch
+    config.py        HERDR_*/LEAN_HERDR_*-Env → dataclass (from_env)
+    herdr.py         Herdr-CLI → dict
+    leanctx.py       lean-ctx-CLI + `call`-Gateway (nur Leseaktionen)
+    digest.py        Kontext → Digest (reine Funktionen)
+    handlers.py      ein Handler je Subcommand
+```
+
+**Datenfluss:**
+
+```
+Herdr-Neustart ──[startup]──► workspace list --json
+                              je Workspace: cwd → ctx_session resume + ctx_handoff show
+                              → workspace report-metadata --token ctx="<task>"
+
+pane.agent_detected ────────► pane get → cwd → Digest → STATE_DIR/<pane_id>.md
+   (auch nach --resume)       → pane report-metadata --token ctx="<task>"
+
+pane.agent_status_changed ──► Token auffrischen
+
+prefix+l → action inject ───► STATE_DIR/<pane_id>.md → herdr agent prompt
+```
+
+**Der Digest wird nicht von Hand gebaut.** `ctx_session action=resume` liefert
+ihn fertig (Projekt, Findings, Archive, Statistik); `ctx_handoff show` ergänzt
+die kuratierten Datei-Referenzen. Gibt es weder Task noch Findings noch Ledger,
+wird kein Digest geschrieben und kein Token gesetzt.
+
+**Der Token heißt `ctx`, nicht `task`.** `herdr-plugin-renamer` belegt `$task`
+bereits mit seinem generierten Pane-Namen; zwei Plugins um denselben Token wären
+ein stiller Konflikt.
+
+**Zustandslosigkeit.** Jeder Handler ist ein One-Shot-Prozess — Herdrs eigenes
+Modell für Hooks. Persistenter Zustand existiert nur im Digest unter
+`HERDR_PLUGIN_STATE_DIR` und in lean-ctx selbst. Das Plugin führt kein eigenes
+Register; die Zuordnung Pane → Agent läuft über den PID-Join.
+
+**Sprachwahl:** Python mit `uv`, weil die Latenzmessung sagt, dass sie
+irrelevant ist — ein einzelner lean-ctx-Aufruf kostet mehr als der gesamte
+Python-Start. `uv run --script` mit PEP-723-Kopf scheidet aus: es isoliert jedes
+Skript, die Handler könnten keine gemeinsame Bibliothek importieren. `uv` ist
+damit eine **Laufzeit**-Abhängigkeit und gehört ins README, denn Herdr
+installiert keine Toolchains.
+
+**Null externe Dependencies.** `json`, `subprocess`, `os`, `pathlib` decken
+alles ab. Das `lean-ctx-sdk` wird nicht verwendet: sein CLI-Teil ist selbst ein
+`subprocess`-Wrapper ohne `call`, und sein HTTP-Teil bräuchte einen laufenden
+`lean-ctx serve`.
+
 ## Lebensdauer eines Arbeiters
 
 **Arbeiter bleiben am Leben. `/clear` zwischen Phasen, `/compact` zwischen Tasks
@@ -482,6 +624,25 @@ rückwirkend.
 | Orchestrator hängt | `--timeout` an jedem `prompt`/`wait`; ohne Timeout wartet Herdr unbegrenzt |
 | Pane ohne gerenderten Inhalt | `agent read` liefert nur die Statuszeile → Export nutzen |
 
+### Plugin-Handler: brechen nie etwas
+
+Für die Anzeige-Komponente gilt eine eigene, strengere Regel: **ein Handler
+bricht nie etwas.**
+
+| Fall | Verhalten |
+|---|---|
+| lean-ctx fehlt oder antwortet nicht | exit 0, kein Token, Notiz auf stderr |
+| Kein Session-State für die cwd | still, kein Token — Normalfall bei frischen Projekten |
+| lean-ctx hängt | `subprocess` mit 5 s Timeout |
+| Unerwartete Exception | oberster `try/except` → stderr, exit 0 |
+| Kein Digest bei `inject` | `herdr notification show` |
+
+Der Unterschied in der letzten Zeile ist Absicht: **Automatik scheitert still,
+eine bewusste Geste scheitert sichtbar.** stderr landet in
+`herdr plugin log list --plugin lean.herdr`. Dass `notification show` still sein
+kann (H5), ist hier vertretbar — es ist eine Bequemlichkeit, kein
+Eskalationskanal.
+
 ### Fehlschlag einer Zuteilung
 
 `herdr-dispatch` unterscheidet zwei Fälle:
@@ -549,14 +710,27 @@ gelöst dargestellt zu werden.
 ## Tests
 
 1. **Logik ohne I/O** — PID-Join-Auflösung, Bus-Nachrichten-Parsing,
-   Export-Fehlererkennung. Reine Funktionen.
-2. **Skripte gegen Doppel** — `herdr-dispatch` gegen aufzeichnende Fakes für
-   `herdr` und `lean-ctx`. Pflichtfall: Arbeiter antwortet nicht → Skript meldet
-   Fehler statt Erfolg.
-3. **Ein-Aufgaben-Durchlauf** — manuell, wie im Spike: Orchestrator startet
-   Arbeiter, verteilt, sammelt ein. Nicht in CI, weil er Modellkosten verursacht.
+   Export-Fehlererkennung, Digest-Rendering, Event-JSON-Parsing. Reine
+   Funktionen, keine Doppel. Der Großteil.
+2. **Skripte und Handler gegen Doppel** — `herdr-dispatch` und jeder
+   Plugin-Handler gegen aufzeichnende Fakes für `herdr` und `lean-ctx`, mit
+   gefälschten `HERDR_*`-Variablen und `HERDR_PLUGIN_EVENT_JSON`.
+   Pflichtfälle: Arbeiter antwortet nicht → Skript meldet Fehler statt Erfolg;
+   `FakeLeanCtx(available=False)` → **jeder** Handler exit 0 ohne Aufruf.
+3. **Manifest-Lint** — `plugin link` gefolgt von `plugin list`, Abbruch bei
+   `warning:`. Fängt Event-Tippfehler, die Herdr sonst verschweigt. Gehört in
+   die CI, weil kein anderer Mechanismus sie sichtbar macht.
+4. **Ein-Aufgaben-Durchlauf** — manuell, wie im Spike: Orchestrator startet
+   Arbeiter, verteilt, sammelt ein. Nicht in CI, weil er Modellkosten
+   verursacht.
 
-Nicht getestet: Herdr selbst, lean-ctx selbst, die Modelle.
+`config.py` und die Testdoppel werden aus
+`lean-ctx/integrations/hermes-lean-ctx/` adaptiert (Apache-2.0, gleiches Repo):
+die Env-Parsing-Helfer und `from_env()`, sowie `FakeGateway` als aufzeichnendes
+Testdoppel. Aus `transport.py` wird die *Form* übernommen — eine Klasse kapselt
+allen Außenverkehr, `is_available()` cacht — nicht der Inhalt.
+
+Nicht getestet: Herdr selbst, lean-ctx selbst, die Modelle, `claude --resume`.
 
 ## Offene Punkte
 
@@ -565,15 +739,22 @@ Nicht getestet: Herdr selbst, lean-ctx selbst, die Modelle.
 2. **Parallele Arbeiter** — der PID-Join ist nur seriell erprobt. Zwei
    gleichzeitig gestartete Arbeiter sind ungetestet, ebenso `/clear` an einem
    Arbeiter, während ein anderer arbeitet.
-3. **`$task`-Token-Kollision** — `herdr-plugin-renamer` belegt ihn bereits.
-   Ein eigener Name (`$ctx`) statt Streit um denselben Token.
-4. **Kostendeckel** — `agent.<name>.steps` in opencode ist der einzige
+3. **Kostendeckel** — `agent.<name>.steps` in opencode ist der einzige
    Kandidat, aber nicht gemessen. Bis dahin gibt es keine Geldgrenze.
-5. **Greift die Endebedingung?** Das Polling-Verbot in der Rollendatei ist
+4. **Greift die Endebedingung?** Das Polling-Verbot in der Rollendatei ist
    formuliert, aber nicht dagegen gemessen — der beobachtete Fall trat vor
    ihrer Einführung auf.
-6. **`/compact` zwischen Tasks** — als Zwischenstufe vorgesehen, nur `/clear`
+5. **`/compact` zwischen Tasks** — als Zwischenstufe vorgesehen, nur `/clear`
    ist gemessen.
+6. **Laufzeit-Abhängigkeiten im README** — `uv` und `lean-ctx allow herdr`.
+   Ohne den `allow`-Eintrag kann ein Agent unter lean-ctx-Gating Herdr nicht
+   steuern; Herdr wiederum installiert keine Toolchains.
+7. ~~**`$task`-Token-Kollision**~~ — entschieden: lean-herdr nimmt `$ctx`,
+   `herdr-plugin-renamer` behält `$task`.
+8. ~~**lean-ctx Projekt-Root**~~ — erledigt: `lean-herdr` steht in
+   `allow_paths`, die `ctx_*`-Tools erreichen das Projekt.
+9. ~~**Probe-Plugins**~~ — erledigt 2026-09-01: `probe.dot`, `probe.underscore`
+   und `probe.all` per `plugin unlink` entfernt, `plugin list` warnungsfrei.
 
 ## Befund für lean-ctx
 
@@ -599,3 +780,17 @@ Nicht Teil dieses Projekts, aber blockierend oder irreführend:
 | H3 | Herdr selbst liefert **keine** Token-Telemetrie. Die Werte `context`/`limit`/`usage` in `agent list` sind gewöhnliche Metadaten-Tokens, gesetzt vom Drittanbieter-Plugin `herdr-agent-metrics` — nur für Claude, nicht für opencode, und aktualisiert auf Herdr-Events (die ein `/clear` nicht auslöst) |
 | H4 | `herdr agent prompt --wait` scheitert mit exit 1 bei Befehlen, die keinen Lifecycle-Wechsel auslösen (`/clear`). Ohne `--wait` senden |
 | H5 | `notification show` liefert `{"reason":"disabled","shown":false}`, wenn Benachrichtigungen aus sind — ehrlich, aber als alleiniger Eskalationskanal untauglich |
+| H6 | Unbekannte Manifest-Events werden nur **gewarnt**, nicht abgelehnt — ein Tippfehler bleibt zur Laufzeit stumm (daher der Manifest-Lint in der CI) |
+| H7 | `plugin link` funktioniert ohne laufenden Server, `plugin unlink` nicht |
+
+## Anhang: Befund zu den lean-ctx-READMEs
+
+Nicht Teil dieses Projekts. Die beiden READMEs nennen unterschiedliche Pakete
+für gleichnamige Klassen mit verschiedenen Signaturen:
+
+| Quelle | Installation | Import | Signatur |
+|---|---|---|---|
+| `packages/python-lean-ctx/README.md` | `lean-ctx-sdk` | `lean_ctx` | `LeanCtxClient(binary, project_root)` |
+| `integrations/hermes-lean-ctx/README.md` | `lean-ctx-client` | `leanctx` | `LeanCtxClient(base_url, bearer_token, …)` |
+
+Wer der hermes-README folgt, installiert womöglich das falsche Paket.
