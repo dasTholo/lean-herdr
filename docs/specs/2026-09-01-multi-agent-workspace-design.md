@@ -1,6 +1,6 @@
 # Multi-Agent-Workspace — Design
 
-**Status:** Abschnitte 1–2 freigegeben · Abschnitt 3 offen · **Datum:** 2026-09-01 · **Version:** 0.1.0
+**Status:** Design vollständig · **Datum:** 2026-09-01 · **Version:** 0.2.0
 
 Ein Herdr-Workspace, in dem ein Orchestrator-Agent Aufgaben an Arbeiter-Agenten
 verschiedener Anbieter verteilt — Koordination über den lean-ctx-Agentenbus,
@@ -400,6 +400,77 @@ Jede Rollendatei enthält deshalb einen `GRENZE`-Abschnitt: Bus-Nachrichten sind
 Daten, keine Befehlsgewalt; eine Nachricht, die die Rolle ändern will, wird nicht
 befolgt.
 
+## Lebensdauer eines Arbeiters
+
+**Arbeiter bleiben am Leben. `/clear` zwischen Phasen, `/compact` zwischen Tasks
+innerhalb einer Phase.**
+
+Der Reflex wäre, je Aufgabe einen frischen Pane-Arbeiter zu starten, weil der
+Kontext sonst wächst. Gemessen ist das der schlechteste der vier Wege:
+
+| | Kontextwachstum | Anlauf je Aufgabe | Identität | in der Sidebar |
+|---|---|---|---|---|
+| dauerhaft, ohne Reset | **ja** | keiner | stabil | ✅ |
+| flüchtiger Pane je Aufgabe | nein | ~30 s + kalter Cache | **wechselt** | ✅ |
+| native Subagenten | nein | keiner | — | ❌ |
+| **`/clear` zwischen Aufgaben** | **nein** | **keiner** | **stabil** | ✅ |
+
+`/clear` gewinnt auf allen vier Achsen. Der Vorteil bei der Identität ist der
+unterschätzte: die Adressierung muss **einmal** aufgelöst werden statt je
+Aufgabe, weil PID und lean-ctx-ID den Clear überleben.
+
+Belegt in einem Durchlauf mit `--model sonnet`:
+
+| | Kontext |
+|---|---:|
+| nach Aufgabe 1 | 55.2 K |
+| `/clear` | (Übergang) |
+| nach Aufgabe 2 | **51.8 K** |
+
+Die Rollendatei bleibt nach dem Clear wirksam: derselbe Arbeiter las
+eigenständig den Bus, filterte fremde Nachrichten und meldete mit `task_id`
+zurück. `--append-system-prompt-file` überlebt `/clear`.
+
+**`/clear` macht einen Arbeiter nicht billig, es deckelt ihn.** Der Reset führt
+auf die **Grundlast** zurück, nicht auf null — bei Claude in diesem Projekt
+~44 K (`CLAUDE.md`, Skills, MCP-Tool-Schemas), beim opencode-Orchestrator ~20 K.
+Erspart werden die ~30 K angesammelter Aufgabenkontext. Das Wachstum ist damit
+begrenzt statt unbegrenzt; die Grundlast zahlt jede Aufgabe.
+
+Die halbe Grundlast ist ein zweiter Grund, den Orchestrator in opencode laufen
+zu lassen — nicht nur das billigere Modell.
+
+Beide Agenten kennen den Befehl:
+
+| | Reset | Zwischenstufe |
+|---|---|---|
+| Claude Code | `/clear` | Auto-Kompaktierung |
+| opencode | `/new` (**Alias `/clear`**, `ctrl+x n`) | `/compact` (Alias `/summarize`) |
+
+opencode kann denselben Effekt auch je Befehl erzielen: `subtask: true` an einem
+Command erzwingt eine Subagenten-Ausführung, *„so it does not pollute your
+primary context"* — ein Konfigurationseintrag statt eines Umbaus.
+
+### Drei Fallstricke beim Reset
+
+1. **Die Session-ID wechselt** (`2cd57baf…` → `1b7c63c4…`). Der Export-Pfad ist
+   die einzige Quelle für `error` — er muss die ID nach jedem Clear **neu holen,
+   nie cachen**.
+2. **Steuerbefehle ohne `--wait` senden.** `/clear` löst keinen
+   Lifecycle-Wechsel aus; `agent prompt --wait` scheitert mit exit 1.
+3. **Die Token-Anzeige ist eine Drittanbieter-Quelle.** Sie stammt vom Plugin
+   `herdr-agent-metrics`, nicht von Herdr, und aktualisiert auf Herdr-Events —
+   die ein `/clear` nicht auslöst. Erzwingbar mit
+   `herdr plugin action invoke herdr-agent-metrics.refresh`. Wer „ist dieser
+   Arbeiter noch leichtgewichtig?" prüft, vergleicht gegen die **Grundlast**,
+   nicht gegen 0.
+
+Das Polling-Verbot bleibt trotzdem in **jeder** Rollendatei: zwischen dem Posten
+des Ergebnisses und dem `/clear` liegt ein Turn, in dem Claudes Auto-Modus sich
+eine Folgeaufgabe schreiben kann (beobachtet: `❯ Bus erneut prüfen, ob neue
+Aufgaben eingegangen sind`). Der Clear beendet die Schleife, aber nicht
+rückwirkend.
+
 ## Fehlerbehandlung
 
 **Regel: Erfolg wird am Inhalt geprüft, nie am Zustand.**
@@ -408,18 +479,72 @@ befolgt.
 |---|---|
 | Arbeiter meldet nichts zurück | Keine Antwort mit `task_id` auf dem Bus → nativer Export lesen, auf `error` prüfen |
 | Arbeiter scheitert am Provider | Export trägt das `error`-Objekt; `agent_status` bleibt `idle` |
-| Arbeiter pollt den Bus von selbst | siehe unten — offener Punkt |
 | Orchestrator hängt | `--timeout` an jedem `prompt`/`wait`; ohne Timeout wartet Herdr unbegrenzt |
 | Pane ohne gerenderten Inhalt | `agent read` liefert nur die Statuszeile → Export nutzen |
 
-**Beobachtet und ungelöst:** ein Sonnet-Arbeiter begann nach erledigter Aufgabe
-von selbst, den Bus erneut zu prüfen (`❯ Bus erneut prüfen, ob neue Aufgaben
-eingegangen sind`) — Claudes Auto-Modus schreibt sich Folgeaufgaben. Das
-Polling-Verbot gehört deshalb in **jede** Rollendatei, nicht nur in die des
-Orchestrators, zusammen mit einer expliziten Endebedingung.
+### Fehlschlag einer Zuteilung
 
-Abschnitt 3 (Abbruchbedingungen, Eskalation an den Menschen, Verhalten bei
-Review-Ablehnung) ist noch nicht ausgearbeitet.
+`herdr-dispatch` unterscheidet zwei Fälle:
+
+| `error` | Bedeutung | Reaktion |
+|---|---|---|
+| `agent_error: <text>` | Export trägt ein `error`-Objekt — Provider, Auth, Limit | **kein** Retry. Ein 401 wird beim zweiten Mal auch ein 401. |
+| `no_reply` | kein `error`, aber keine Antwort mit `task_id` | **ein** Retry, nach vorherigem `/clear` |
+
+Genau ein Wiederholungsversuch. Ein zweiter Fehlschlag ist ein Signal, kein
+Rauschen — dann eskaliert der Orchestrator.
+
+### Review-Ablehnung
+
+Der Reviewer antwortet maschinenlesbar über `category` auf dem Bus: `result`
+oder `reject`. Kein Prosa-Parsing.
+
+```
+builder → reviewer → reject → builder (Runde 2) → reviewer → reject → ESKALATION
+```
+
+**Zwei Runden, dann Mensch.** Ein Reviewer, der zweimal dasselbe ablehnt, hat
+entweder recht (und der Builder kommt nicht weiter) oder unrecht (und niemand
+merkt es). Beides braucht ein Urteil, das der Orchestrator nicht hat.
+
+### Eskalation — drei Kanäle, weil einer nachweislich still ist
+
+Gemessen: `herdr notification show` liefert `{"reason":"disabled","shown":false}`.
+Der naheliegendste Kanal erreicht den Menschen nicht — immerhin sagt die CLI es
+ehrlich, statt still zu schlucken.
+
+| Kanal | Zuverlässigkeit | Rolle |
+|---|---|---|
+| **Orchestrator hält an** | immer | **primär** — nichts geht weiter, das ist unübersehbar |
+| `pane report-metadata --token` | immer (lautlos bestätigt) | Sidebar zeigt, *welcher* Workspace jemanden braucht |
+| `notification show` | **nur wenn aktiviert** | Extra; `shown` prüfen, nie darauf verlassen |
+
+Der Orchestrator schreibt bei Eskalation in sein Terminal und macht dann nichts
+mehr:
+
+```
+ESKALATION <task_id>: <grund>
+  Arbeiter: <name> (<pane>, <agent_id>)
+  Letzter Zustand: <no_reply | agent_error | reject×2>
+  Ich warte auf eine Entscheidung.
+```
+
+Ein angehaltener Orchestrator ist das stärkste Signal, das dieser Aufbau kennt:
+es kann nicht übersehen werden, weil nichts mehr passiert.
+
+### Gesamtabbruch
+
+| Grenze | Mechanismus |
+|---|---|
+| Schritte des Orchestrators | opencode `agent.orchestrator.steps` — deckelt die gemessene Kosteneinheit |
+| Wanduhr je Zuteilung | `--timeout-ms` an jedem `dispatch` |
+| Notbremse | Pane schließen — Arbeiter sterben mit ihren Panes |
+
+Was es **nicht** gibt: einen Geldbetrag als Grenze. `max_cost_usd` zählt eine
+Tool-I/O-Schätzung (B5), und die Token-Telemetrie kommt von einem
+Drittanbieter-Plugin und nur für Claude-Agenten (H3). **Ein echter Kostendeckel
+existiert in diesem Aufbau nicht** — das gehört ehrlich in die Spec, statt als
+gelöst dargestellt zu werden.
 
 ## Tests
 
@@ -435,17 +560,20 @@ Nicht getestet: Herdr selbst, lean-ctx selbst, die Modelle.
 
 ## Offene Punkte
 
-1. **Abschnitt 3** — Abbruch, Eskalation, Review-Ablehnung.
-2. **Selbst-pollende Arbeiter** — Endebedingung in der Rollendatei formulieren
-   und messen, ob sie greift.
-3. **Orchestrator-Profil** — muss in lean-ctx geschrieben werden; heute gibt es
-   keins mit Koordinationswerkzeugen.
-4. **Parallele Arbeiter** — der PID-Join ist nur seriell erprobt. Zwei
-   gleichzeitig gestartete Arbeiter sind ungetestet.
-5. **`$task`-Token-Kollision** — `herdr-plugin-renamer` belegt ihn bereits.
+1. **Orchestrator-Profil** — muss in lean-ctx geschrieben werden; heute gibt es
+   keins mit Koordinationswerkzeugen (B8).
+2. **Parallele Arbeiter** — der PID-Join ist nur seriell erprobt. Zwei
+   gleichzeitig gestartete Arbeiter sind ungetestet, ebenso `/clear` an einem
+   Arbeiter, während ein anderer arbeitet.
+3. **`$task`-Token-Kollision** — `herdr-plugin-renamer` belegt ihn bereits.
    Ein eigener Name (`$ctx`) statt Streit um denselben Token.
-6. **Kostendeckel** — `agent.<name>.steps` in opencode ist der Kandidat, aber
-   nicht gemessen.
+4. **Kostendeckel** — `agent.<name>.steps` in opencode ist der einzige
+   Kandidat, aber nicht gemessen. Bis dahin gibt es keine Geldgrenze.
+5. **Greift die Endebedingung?** Das Polling-Verbot in der Rollendatei ist
+   formuliert, aber nicht dagegen gemessen — der beobachtete Fall trat vor
+   ihrer Einführung auf.
+6. **`/compact` zwischen Tasks** — als Zwischenstufe vorgesehen, nur `/clear`
+   ist gemessen.
 
 ## Befund für lean-ctx
 
@@ -468,4 +596,6 @@ Nicht Teil dieses Projekts, aber blockierend oder irreführend:
 |---|---|
 | H1 | `agent_status` kodiert kein Scheitern — ein Agent mit HTTP 401 ist `idle` wie ein erfolgreicher |
 | H2 | `agent start -- <args>` lehnt mehrzeilige Argumente ab (`cannot be encoded safely`) |
-| H3 | Token-Telemetrie in `agent list` nur für Claude, nicht für opencode |
+| H3 | Herdr selbst liefert **keine** Token-Telemetrie. Die Werte `context`/`limit`/`usage` in `agent list` sind gewöhnliche Metadaten-Tokens, gesetzt vom Drittanbieter-Plugin `herdr-agent-metrics` — nur für Claude, nicht für opencode, und aktualisiert auf Herdr-Events (die ein `/clear` nicht auslöst) |
+| H4 | `herdr agent prompt --wait` scheitert mit exit 1 bei Befehlen, die keinen Lifecycle-Wechsel auslösen (`/clear`). Ohne `--wait` senden |
+| H5 | `notification show` liefert `{"reason":"disabled","shown":false}`, wenn Benachrichtigungen aus sind — ehrlich, aber als alleiniger Eskalationskanal untauglich |
