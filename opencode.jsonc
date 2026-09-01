@@ -1,0 +1,57 @@
+{
+  // Projektkonfiguration fuer opencode.
+  "$schema": "https://opencode.ai/config.json",
+
+  // lean-ctx wrap kennt opencode nicht — die MCP-Registrierung ist Handarbeit.
+  // Das Kommando OHNE Unterkommando ist der stdio-Server; `serve` waere HTTP.
+  "mcp": {
+    "lean-ctx": {
+      "type": "local",
+      "command": ["lean-ctx"],
+      "enabled": true
+    }
+  },
+
+  "agent": {
+    "orchestrator": {
+      "description": "Verteilt Aufgaben an Arbeiter-Agenten. Schreibt selbst keinen Code.",
+      "mode": "primary",
+      "prompt": "{file:./roles/orchestrator.md}",
+      // Der einzige Kandidat fuer einen Kostendeckel: max_cost_usd in der
+      // lean-ctx-Rolle zaehlt kein Geld, sondern eine Tool-I/O-Schaetzung (B5).
+      "steps": 60,
+      // Hier — und nur hier — greift Durchsetzung. Die lean-ctx-Rolle ist ein
+      // Kontextformer, kein Waechter: [tools] allowed/denied wird nicht
+      // durchgesetzt (B4).
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+        "bash": {
+          "*": "deny",
+          "bin/herdr-dispatch *": "allow",
+          "herdr *": "allow",
+          "wt *": "allow",
+          "git status*": "allow",
+          "git log*": "allow"
+        }
+      }
+    },
+    "reviewer": {
+      "description": "Prueft die Arbeit des Builders. Antwortet mit category result oder reject.",
+      "mode": "primary",
+      "prompt": "{file:./roles/reviewer.md}",
+      "steps": 40,
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+        "bash": {
+          "*": "deny",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "git status*": "allow"
+        }
+      }
+    }
+  }
+}
