@@ -313,6 +313,70 @@ Ein Skill, der dem Modell die Mechanik erklärt („splitte, starte, poste, wart
 prüfe"), erzeugt fünf Schritte ≈ $0.10 je Aufgabe. Dasselbe als ein Skriptaufruf
 ist ein Schritt ≈ $0.005.
 
+### Ablage
+
+Rollentexte sind versionierte Projektdateien, kein flüchtiger Zustand. Sie
+gehören ins Repo, weil sie das Verhalten der Agenten festlegen und
+nachvollziehbar bleiben müssen:
+
+```
+roles/
+  orchestrator.md     → opencode  agent.orchestrator.prompt = "{file:…}"
+  builder.md          → claude    --append-system-prompt-file
+  reviewer.md         → opencode  agent.reviewer.prompt = "{file:…}"
+.lean-ctx/roles/
+  orchestrator.toml   → lean-ctx-Rolle (Kontextform, via LEAN_CTX_ROLE)
+bin/
+  herdr-dispatch      → eine Zuteilung, ein Aufruf
+  herdr-collect       → Ergebnisse eines task_id einsammeln
+```
+
+### Skriptverträge
+
+Beide Skripte sind reine Mechanik — sie fragen kein Modell und treffen keine
+Zuordnungsentscheidung.
+
+```
+herdr-dispatch <rolle> --kind <kind> --model <m> --role-file <pfad>
+               --task-id <id> --task <text> [--timeout-ms N]
+```
+
+Legt einen Pane an, startet den Agenten mit Rollendatei, löst dessen
+lean-ctx-ID über den PID-Join auf, legt die Aufgabe gerichtet auf den Bus,
+klingelt blockierend, prüft auf eine Antwort mit `task_id` und — falls keine
+kommt — den nativen Session-Export auf `error`.
+
+Ausgabe auf stdout, eine JSON-Zeile:
+
+```json
+{"ok": true,  "task_id": "T1", "pane": "w1:p6",
+ "agent_id": "mcp-2212801-…", "result": "<text>"}
+{"ok": false, "task_id": "T1", "pane": "w1:p6",
+ "agent_id": "mcp-2212801-…", "error": "no_reply" | "agent_error: <text>"}
+```
+
+Exit 0 in beiden Fällen — der Orchestrator liest `ok`, nicht den Exit-Code, damit
+ein Fehlschlag nicht seinen Shell-Aufruf abbricht.
+
+```
+herdr-collect --task-id <id> [--since <ts>]
+```
+
+Liest den Bus und gibt alle Antworten zu einer `task_id` als JSON-Zeilen aus.
+
+### Bootstrap
+
+Der Orchestrator startet sich nicht selbst. Der Mensch legt ihn an — einmal je
+Workspace:
+
+```sh
+herdr pane split --current --direction right --cwd "$PWD" --no-focus
+herdr agent start orch --kind opencode --pane <id> -- --agent orchestrator
+```
+
+Ab da läuft die Zuteilung ohne ihn. Ein Skript für diesen einen Schritt ist
+YAGNI, solange es ein Aufruf bleibt.
+
 ### Vertrauensmodell
 
 Ein Arbeiter-Agent wertet eine nackte Orchestrator-Anweisung als mögliche
