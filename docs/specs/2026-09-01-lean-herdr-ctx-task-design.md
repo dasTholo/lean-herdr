@@ -91,8 +91,10 @@ Saeule des Entwurfs.
 **Warum es keinen Projektfilter gibt:** `Task` hat kein `project_root`-Feld
 (`core/a2a/task.rs:100`), anders als `ScratchpadEntry`. Der TaskStore ist global
 ueber alle Projekte. Die Isolierung traegt trotzdem, weil die Zuordnung ueber die
-prozessgebundene `agent_id` laeuft. `read_tasks()` filtert deshalb auf die
-`agent_id`, **nicht** auf einen Projektpfad — bewusst abweichend von `bus.py`.
+prozessgebundene `agent_id` laeuft: der Warte-Modus schlaegt die Aufgabe ueber
+ihre **eindeutige `task_id`** nach, die der Orchestrator in Schritt 2 erhalten hat.
+Ein Projektfilter wie in `bus.py` ist damit weder moeglich noch noetig — er waere
+ein Filter ohne Feld und ohne Zweck.
 
 ## 4. Komponenten
 
@@ -108,9 +110,10 @@ CLI, aus demselben Grund wie B9 beim Bus.
   eine leere Liste (sonst saehe ein zerstoerter Store aus wie "nichts zu tun").
   Eine **fehlende** Datei ist dagegen kein Fehler, sondern eine leere Liste — vor
   der ersten Aufgabe existiert sie schlicht nicht.
-- `find_task(tasks, task_id) -> Task | None` — der Weg des Warte-Modus
-- `tasks_for(tasks, agent_id) -> list[Task]` — der Projektfilter-Ersatz: exakter
-  Vergleich auf `to_agent`, siehe Abschnitt 3
+- `find_task(tasks, task_id) -> Task | None` — der einzige Zugriffsweg des
+  Warte-Modus. Eine Filterung nach `agent_id` gibt es bewusst **nicht**: sie
+  haette in diesem Plan keinen Aufrufer (YAGNI). Braucht das Plugin der Stufe 5
+  spaeter eine Agentensicht, kommt sie dort dazu.
 - `is_terminal(state) -> bool` — terminal sind `completed`, `failed`, `canceled`
 - `task_store_path() -> Path` — `$LEAN_CTX_DATA_DIR` vor XDG-Datenverzeichnis,
   dann `agents/tasks.json`
@@ -133,6 +136,17 @@ Projekt exakt wie heute — die Konfiguration ist eine Moeglichkeit, keine Pflic
 
 Bewusst getrennt von `config.py`: die liest `HERDR_*`-Umgebung fuer
 Plugin-Handler, anderer Zweck, andere Lebensdauer.
+
+**Zum Scope, ausdruecklich:** Eine Spec-Review hat zu Recht angemerkt, dass
+`direction`, `ratio`, `focus` und `name_template` nichts mit dem Wechsel auf
+`ctx_task` zu tun haben und diesen Entwurf fuer sich genommen sprengen. Das ist
+richtig — sie stehen hier auf **ausdrueckliche Anforderung des Betreibers**
+("wir muessen aber konfigurierbar bleiben: wieviel Panes, wo im Layout, wie sie
+heissen"), und sie treffen dieselbe Datei und dieselben Aufrufstellen, die der
+Auftragsweg-Umbau ohnehin anfasst. Wer den Plan schreibt, darf sie deshalb in
+**eigene Tasks** legen, die unabhaengig von den `ctx_task`-Tasks abnehmbar sind —
+nicht in dieselben. Faellt der Umbau aus, bleibt die Konfiguration nutzbar; faellt
+die Konfiguration aus, bleibt der Umbau vollstaendig.
 
 ### Geaendert: `lean_herdr/dispatch.py`
 
