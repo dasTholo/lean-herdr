@@ -737,7 +737,25 @@ sonst auf den jüngsten Registereintrag zurück, dessen `pid` zur selben
 Prozessgruppe gehört — geprüft über `/proc/<pid>/stat` (Feld 5, pgrp), mit einem
 harmlosen `None` auf Systemen ohne `/proc`.
 
-`lean_herdr/join.py` (neu):
+**Im echten Betrieb gemessen (2026-09-01, opencode- und claude-Panes):** weder
+der direkte noch der Prozessgruppen-Treffer greifen tatsächlich. `opencode`
+bzw. `claude` öffnen beim Start eine **eigene** Prozessgruppe, die der
+lean-ctx-MCP-Server erbt:
+
+    zsh (shell_pid, pgrp=shell_pid) -> opencode/claude (eigene pgrp) -> lean-ctx (erbt sie)
+
+`pgrp(lean-ctx) != pgrp(shell_pid)` — der Fallback vergleicht daneben, und
+`resolve_agent_id()` liefert `None`. Das ist nicht vermeidbar: Herdrs
+`agent start` verlangt laut eigener Doku eine bereits offene, interaktive
+Shell-Pane und legt den Agenten *in* diese Shell; die Verschachtelung ist
+Architektur, kein Bedienfehler. Deshalb eine **dritte Stufe**: ein
+Vorfahren-Walk über `PPID` (`process_ancestors()`), der prüft, ob `shell_pid`
+in der Elternkette des Registry-`pid` liegt. Gemessen genau ein Treffer,
+Vorfahrenkette `[185502, 185157, 12532]` — `shell_pid` 185157 liegt darin.
+Die Auswahlreihenfolge bleibt strikt: direkter Treffer vor Prozessgruppe vor
+Vorfahren-Walk; jede Stufe greift nur, wenn die vorherige leer ausgeht.
+
+`lean_herdr/join.py` (neu, mit der dritten Stufe):
 
     """PID-Join: Herdr-Name → Pane → shell_pid → lean-ctx-agent_id.
 
@@ -780,11 +798,11 @@ harmlosen `None` auf Systemen ohne `/proc`.
         return None
 
 
-    def process_group(pid: int, proc_root: str | Path = "/proc") -> int | None:
-        """Prozessgruppe einer PID aus /proc/<pid>/stat (Feld 5).
+    def _stat_felder(pid: int, proc_root: str | Path) -> list[str] | None:
+        """Die Felder ab `state` aus /proc/<pid>/stat, oder None bei jedem Fehler.
 
-        Gibt None zurueck, wenn /proc fehlt oder der Prozess weg ist — der
-        Aufrufer behandelt das als 'kein Treffer', nie als Fehler.
+        Gemeinsame Grundlage fuer process_group() und process_ancestors() — beide
+        lesen dieselbe Zeile, nur unterschiedliche Felder daraus.
         """
         stat_path = Path(proc_root) / str(pid) / "stat"
         try:
@@ -795,13 +813,79 @@ harmlosen `None` auf Systemen ohne `/proc`.
         close = raw.rfind(")")
         if close == -1:
             return None
-        fields = raw[close + 2 :].split()
-        if len(fields) < 3:
+        return raw[close + 2 :].split()
+
+
+    def process_group(pid: int, proc_root: str | Path = "/proc") -> int | None:
+        """Prozessgruppe einer PID aus /proc/<pid>/stat (Feld 5).
+
+        Gibt None zurueck, wenn /proc fehlt oder der Prozess weg ist — der
+        Aufrufer behandelt das als 'kein Treffer', nie als Fehler.
+        """
+        fields = _stat_felder(pid, proc_root)
+        if fields is None or len(fields) < 3:
             return None
         try:
             return int(fields[2])
         except ValueError:
             return None
+
+
+    def _parent_pid(pid: int, proc_root: str | Path) -> int | None:
+        """PPID einer PID aus /proc/<pid>/stat (Feld 4).
+
+        Dieselbe Robustheit wie process_group(): fehlendes /proc, ein
+        verschwundener Prozess oder eine kaputte stat-Datei ergeben None statt
+        einer Exception.
+        """
+        fields = _stat_felder(pid, proc_root)
+        if fields is None or len(fields) < 2:
+            return None
+        try:
+            return int(fields[1])
+        except ValueError:
+            return None
+
+
+    def process_ancestors(
+        pid: int, proc_root: str | Path = "/proc", max_schritte: int = 32
+    ) -> list[int]:
+        """Vorfahrenkette von pid ueber PPID, naechster Vorfahre zuerst.
+
+        Grund: Herdrs `agent start` legt den Agenten in eine bestehende
+        interaktive Shell, aber opencode und claude oeffnen dabei eine **eigene**
+        Prozessgruppe, die der lean-ctx-MCP-Server erbt — gemessen:
+        zsh (shell_pid) -> opencode/claude (eigene pgrp) -> lean-ctx (erbt sie).
+        Weder der direkte pid-Treffer noch der Prozessgruppen-Fallback in
+        resolve_agent_id() greifen dann, obwohl shell_pid ein Vorfahre des
+        lean-ctx-Prozesses bleibt — deshalb dieser Walk als dritte Stufe.
+
+        Wie process_group(): fehlendes /proc, ein verschwundener Prozess oder
+        eine kaputte stat-Datei ergeben eine leere Liste, nie eine Exception.
+        Begrenzt auf `max_schritte`, damit ein Zyklus in einem kaputten /proc
+        nicht zur Endlosschleife wird; zusaetzlich stoppt die Kette bei PID <= 1
+        und bei einer PID, die schon einmal aufgetaucht ist.
+        """
+        kette: list[int] = []
+        gesehen = {pid}
+        aktuell = pid
+        for _ in range(max_schritte):
+            ppid = _parent_pid(aktuell, proc_root)
+            if ppid is None or ppid <= 1 or ppid in gesehen:
+                break
+            kette.append(ppid)
+            gesehen.add(ppid)
+            aktuell = ppid
+        return kette
+
+
+    def _juengster_agent_id(kandidaten: list[dict[str, Any]]) -> str | None:
+        """Von mehreren Kandidaten den mit dem juengsten started_at waehlen."""
+        if not kandidaten:
+            return None
+        juengster = max(kandidaten, key=lambda a: str(a.get("started_at", "")))
+        agent_id = juengster.get("agent_id")
+        return str(agent_id) if agent_id else None
 
 
     def resolve_agent_id(
@@ -822,27 +906,38 @@ harmlosen `None` auf Systemen ohne `/proc`.
         exact = agent_id_for_pid(agents, pid)
         if exact is not None:
             return exact
+
         pgrp = process_group(pid, proc_root)
-        if pgrp is None:
-            return None
-        kandidaten = [
+        if pgrp is not None:
+            kandidaten = [
+                a
+                for a in agents
+                if isinstance(a.get("pid"), int) and process_group(a["pid"], proc_root) == pgrp
+            ]
+            gefunden = _juengster_agent_id(kandidaten)
+            if gefunden is not None:
+                return gefunden
+
+        # Stufe 3: Vorfahren-Walk. Im echten Betrieb gemessen (siehe
+        # process_ancestors()): opencode/claude oeffnen eine eigene
+        # Prozessgruppe, lean-ctx erbt sie — weder der direkte noch der
+        # Prozessgruppen-Treffer greifen dann, obwohl shell_pid ein Vorfahre
+        # des Registry-Prozesses bleibt.
+        vorfahren_kandidaten = [
             a
             for a in agents
-            if isinstance(a.get("pid"), int) and process_group(a["pid"], proc_root) == pgrp
+            if isinstance(a.get("pid"), int) and pid in process_ancestors(a["pid"], proc_root)
         ]
-        if not kandidaten:
-            return None
-        juengster = max(kandidaten, key=lambda a: str(a.get("started_at", "")))
-        agent_id = juengster.get("agent_id")
-        return str(agent_id) if agent_id else None
+        return _juengster_agent_id(vorfahren_kandidaten)
 
-`tests/test_join.py` (neu):
+`tests/test_join.py` (neu, mit den Vorfahren-Walk-Tests):
 
     from pathlib import Path
 
     from lean_herdr.join import (
         agent_id_for_pid,
         pane_for_agent,
+        process_ancestors,
         process_group,
         resolve_agent_id,
         shell_pid_from_process_info,
@@ -910,14 +1005,105 @@ harmlosen `None` auf Systemen ohne `/proc`.
     def test_process_group_ohne_proc_ist_none(tmp_path: Path):
         assert process_group(1, tmp_path) is None
 
+
+    def _schreibe_stat(tmp_path: Path, pid: int, ppid: int, pgrp: int) -> None:
+        """Testhilfe: minimale /proc/<pid>/stat-Zeile mit Kommandoname in Klammern."""
+        d = tmp_path / str(pid)
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "stat").write_text(f"{pid} (x) S {ppid} {pgrp} {pgrp} 0 -1 0\n")
+
+
+    def test_process_ancestors_ohne_proc_ist_leer(tmp_path: Path):
+        assert process_ancestors(1, tmp_path) == []
+
+
+    def test_process_ancestors_bei_zyklus_haengt_nicht(tmp_path: Path):
+        """Zwei Prozesse, die sich in /proc gegenseitig als Elternteil fuehren,
+        duerfen process_ancestors() nicht in eine Endlosschleife schicken."""
+        _schreibe_stat(tmp_path, 700, 701, 700)
+        _schreibe_stat(tmp_path, 701, 700, 701)
+        assert process_ancestors(700, tmp_path) == [701]
+
+
+    def test_resolve_agent_id_ueber_die_vorfahrenkette(tmp_path: Path):
+        """Der gemessene Fall: opencode/claude oeffnen eine eigene Prozessgruppe,
+        lean-ctx erbt sie — weder der pid- noch der Prozessgruppen-Treffer
+        greifen, nur der Vorfahren-Walk findet den Registereintrag."""
+        _schreibe_stat(tmp_path, 185157, 12532, 185157)  # zsh, die Pane-Shell
+        _schreibe_stat(tmp_path, 185502, 185157, 185502)  # opencode, eigene pgrp
+        _schreibe_stat(tmp_path, 185631, 185502, 185502)  # lean-ctx, erbt sie
+
+        agents = [
+            {"agent_id": "mcp-185631-abc", "pid": 185631, "started_at": "2026-09-01T08:00:00Z"}
+        ]
+        got = resolve_agent_id(
+            [{"name": "builder", "pane_id": "w2:p1"}],
+            {"result": {"process_info": {"shell_pid": 185157}}},
+            agents,
+            name="builder",
+            proc_root=tmp_path,
+        )
+        assert got == "mcp-185631-abc"
+
+
+    def test_resolve_agent_id_direkter_treffer_hat_vorrang_vor_vorfahren(tmp_path: Path):
+        """Gibt es einen direkten pid-Treffer, gewinnt der weiterhin — auch wenn
+        ein anderer Registereintrag nur ueber die Vorfahrenkette passen wuerde."""
+        _schreibe_stat(tmp_path, 900, 1, 900)  # shell
+        _schreibe_stat(tmp_path, 901, 900, 901)  # agent, eigene pgrp
+        _schreibe_stat(tmp_path, 902, 901, 901)  # lean-ctx, erbt sie
+
+        agents = [
+            {"agent_id": "mcp-900-exakt", "pid": 900, "started_at": "2026-09-01T09:00:00Z"},
+            {"agent_id": "mcp-902-vorfahre", "pid": 902, "started_at": "2026-09-01T09:05:00Z"},
+        ]
+        got = resolve_agent_id(
+            [{"name": "builder", "pane_id": "w2:p1"}],
+            {"result": {"process_info": {"shell_pid": 900}}},
+            agents,
+            name="builder",
+            proc_root=tmp_path,
+        )
+        assert got == "mcp-900-exakt"
+
+
+    def test_resolve_agent_id_kein_treffer_bleibt_none(tmp_path: Path):
+        _schreibe_stat(tmp_path, 910, 1, 910)  # shell ohne jeden Bezug zur Registry
+
+        agents = [{"agent_id": "mcp-999-fremd", "pid": 999, "started_at": "2026-09-01T09:10:00Z"}]
+        got = resolve_agent_id(
+            [{"name": "builder", "pane_id": "w2:p1"}],
+            {"result": {"process_info": {"shell_pid": 910}}},
+            agents,
+            name="builder",
+            proc_root=tmp_path,
+        )
+        assert got is None
+
+
+    def test_resolve_agent_id_verschwundener_prozess_wirft_nicht(tmp_path: Path):
+        """proc_root existiert gar nicht — resolve_agent_id() liefert None statt
+        einer Exception, auch ueber die neue Vorfahren-Stufe hinweg."""
+        agents = [{"agent_id": "mcp-999-fremd", "pid": 999, "started_at": "2026-09-01T09:10:00Z"}]
+        got = resolve_agent_id(
+            [{"name": "builder", "pane_id": "w2:p1"}],
+            {"result": {"process_info": {"shell_pid": 12345}}},
+            agents,
+            name="builder",
+            proc_root=tmp_path / "nicht-vorhanden",
+        )
+        assert got is None
+
 @call tdd(-k resolve_agent_id_faellt_auf_die_prozessgruppe_zurueck)
+
+@call tdd(-k resolve_agent_id_ueber_die_vorfahrenkette)
 
 ### Verify & Close
 
 @call verify(lean_herdr/join.py)
 @call gate(lean_herdr/join.py tests/test_join.py)
 @call commit("lean_herdr/join.py tests/test_join.py", "feat(join): PID-Join ueber das pid-Feld, mit Prozessgruppen-Fallback")
-@call remember_decision("lean-herdr: der PID-Join geht ueber agents[].pid; shell_pid ist die Pane-Shell, der lean-ctx-Prozess kann ein Kind sein — Fallback ueber die Prozessgruppe aus /proc/<pid>/stat Feld 5")
+@call remember_decision("lean-herdr: der PID-Join geht ueber agents[].pid; shell_pid ist die Pane-Shell, der lean-ctx-Prozess kann ein Kind sein — Fallback ueber die Prozessgruppe aus /proc/<pid>/stat Feld 5. Im echten Betrieb gemessen (2026-09-01): opencode/claude oeffnen beim Start eine eigene Prozessgruppe, die lean-ctx erbt (zsh -> opencode/claude eigene pgrp -> lean-ctx erbt sie) — pid- UND pgrp-Treffer schlagen dadurch bei jeder Agentenart fehl. Deshalb dritte Stufe: process_ancestors() geht die PPID-Kette hoch (Feld 4, begrenzt auf 32 Schritte gegen Zyklen) und prueft, ob shell_pid darin liegt. Vorrang bleibt: pid vor pgrp vor Vorfahren")
 @phase-end
 
 @phase "task-4"
