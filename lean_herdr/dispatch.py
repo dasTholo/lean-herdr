@@ -29,6 +29,12 @@ from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import Herdr
 from lean_herdr.join import resolve_agent_id
 from lean_herdr.leanctx import LeanCtx
+from lean_herdr.worktree import (
+    WorktreeOpenFailed,
+    WorktrunkMissing,
+    anchor_pane,
+    ensure_worktree,
+)
 
 #: Voreinstellung je Rolle — gemessene Fixkosten je Schritt:
 #: minimal 2 711, standard 4 920, power 11 559 Token.
@@ -154,6 +160,22 @@ def dispatch(
     """Eine ganze Zuteilung. Wirft nie; das Ergebnis traegt `ok`."""
     name = agent_name(req.role, req.worktree)
     ziel_cwd = cwd if cwd is not None else root
+    # None heisst: im eigenen Workspace teilen (--current). Nur der
+    # Worktree-Fall setzt einen Anker.
+    ziel_pane: str | None = None
+    if req.worktree:
+        try:
+            ziel = ensure_worktree(req.worktree, herdr=herdr, cwd=root)
+        except WorktrunkMissing:
+            return _ergebnis(False, req, None, None, error="worktrunk_missing")
+        except WorktreeOpenFailed as exc:
+            # Nicht weiterlaufen: ein Pane im richtigen Verzeichnis, den der
+            # Abbau nicht kennt, ist schlimmer als ein sauberer Abbruch.
+            return _ergebnis(False, req, None, None, error=f"worktree_open_failed: {exc}")
+        ziel_cwd = ziel.path
+        ziel_pane = anchor_pane(herdr, ziel.workspace_id)
+        if ziel_pane is None:
+            return _ergebnis(False, req, None, None, error="no_anchor_pane")
 
     vorhanden = next((a for a in herdr.agent_list() if a.get("name") == name), None)
     if vorhanden:
@@ -164,6 +186,7 @@ def dispatch(
     else:
         pane = herdr.pane_split(
             ziel_cwd,
+            pane=ziel_pane,
             env={
                 "LEAN_CTX_TOOL_PROFILE": profile_for(req.role, req.profile),
                 "LEAN_CTX_ROLE": req.role,
