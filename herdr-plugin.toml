@@ -1,0 +1,43 @@
+id = "lean.herdr"
+name = "lean-herdr context"
+version = "0.1.0"
+min_herdr_version = "0.8.0"
+description = "Zeigt den lean-ctx-Kontext je Pane und Workspace und traegt ihn ueber Serverneustarts."
+platforms = ["linux", "macos"]
+
+# Es gibt kein startup-Event: nach einem Serverneustart legt Herdr die
+# Workspaces neu an, und genau das ist der Wiederaufnahme-Moment.
+[[events]]
+on = "workspace.created"
+command = ["python3", "-m", "lean_herdr", "workspace-created"]
+
+[[events]]
+on = "workspace.focused"
+command = ["python3", "-m", "lean_herdr", "workspace-created"]
+
+# Auch nach `claude --resume`.
+[[events]]
+on = "pane.agent_detected"
+command = ["python3", "-m", "lean_herdr", "pane-detected"]
+
+[[events]]
+on = "pane.agent_status_changed"
+command = ["python3", "-m", "lean_herdr", "status-changed"]
+
+# Zustellung ist eine bewusste Geste, nie Automatik: automatisches Prompten
+# aus einem Handler liefe waehrend agent_blocked und stoerte beim Tippen.
+[[actions]]
+id = "inject"
+title = "lean-ctx-Digest in den Agenten dieses Panes schicken"
+contexts = ["pane"]
+command = ["python3", "-m", "lean_herdr", "inject"]
+
+# Der Ein-Tastendruck-Bootstrap: Pane mit minimal-Profil aufmachen und den
+# opencode-Orchestrator darin starten. Workspace-Kontext, weil der neue Pane
+# in DIESEN Workspace gehoert.
+[[actions]]
+id = "bootstrap"
+title = "Orchestrator in diesem Workspace starten"
+description = "Legt einen Pane mit LEAN_CTX_TOOL_PROFILE=minimal an und startet den opencode-Orchestrator darin."
+contexts = ["workspace"]
+command = ["python3", "-m", "lean_herdr", "bootstrap"]
