@@ -258,3 +258,51 @@ def test_dispatch_reports_pane_split_failed_when_herdr_gives_no_pane(
     assert '"error": "pane_split_failed"' in json_line
     assert '"ok": false' in json_line
     assert not any(c[1:3] == ["agent", "start"] for c in h_proc.calls)
+
+
+# -- Gap 5: dispatch() must turn WorktreeOpenFailed into a named error ------
+
+
+def test_dispatch_reports_worktree_open_failed_and_splits_no_pane(world):
+    """dispatch() must catch WorktreeOpenFailed and name the refusal reason.
+
+    A review mutated both the caught exception type (WorktreeOpenFailed ->
+    LookupError) and the message prefix, and all 133 tests stayed green --
+    the contract was entirely unverified.
+
+    The case is forced by a worktree that exists but carries no
+    open_workspace_id: ensure_worktree() then has to call _open_workspace(),
+    and `herdr worktree open` refuses with linked_worktree_source (H8 -- the
+    call must run at the repo root, not inside a linked worktree).
+
+    The final assertion carries the reason the production code gives for
+    aborting here: a pane in the right directory that teardown does not know
+    about is worse than a clean abort.
+    """
+    h_proc, l_proc, registry_path = world
+    h_proc.replies = {
+        ("worktree", "list"): {
+            "result": {
+                "source": {"repo_root": str(ROOT)},
+                "worktrees": [{"branch": "feat/auth", "path": "/repo.feat-auth"}],
+            }
+        },
+        ("worktree", "open"): {"error": {"code": "linked_worktree_source"}},
+    }
+    registry_path.write_text(json.dumps(make_registry(make_reply())), encoding="utf-8")
+
+    result = dispatch(
+        make_request(worktree="feat/auth"),
+        herdr=Herdr(runner=h_proc),
+        leanctx=LeanCtx(ROOT, runner=l_proc),
+        root=ROOT,
+        registry_path=registry_path,
+        waiter=lambda *a, **kw: AGENT_ID,
+    )
+
+    assert result["ok"] is False
+    assert result["error"].startswith("worktree_open_failed:"), result["error"]
+    assert "linked_worktree_source" in result["error"], result["error"]
+    assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls), (
+        "no pane may be split once the worktree could not be opened"
+    )
