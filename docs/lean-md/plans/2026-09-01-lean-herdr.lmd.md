@@ -105,7 +105,7 @@ benutzt.
     name = "lean-herdr"
     version = "0.1.0"
     description = "Orchestrator-Workspace zwischen Herdr und lean-ctx"
-    requires-python = ">=3.11"
+    requires-python = ">=3.14"
     dependencies = []
 
     [dependency-groups]
@@ -120,7 +120,7 @@ benutzt.
 
     [tool.ruff]
     line-length = 100
-    target-version = "py311"
+    target-version = "py314"
 
     [tool.pytest.ini_options]
     testpaths = ["tests"]
