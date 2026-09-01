@@ -1,6 +1,44 @@
 # lean-herdr — Design
 
-**Status:** approved · **Datum:** 2026-08-24 · **Version:** 0.1.0
+**Status:** ⚠️ **teilweise überholt** (2026-09-01) · **Datum:** 2026-08-24 · **Version:** 0.1.0
+
+> ## Überholt — bitte zuerst lesen
+>
+> Messungen gegen lean-ctx **3.10.1** haben zwei der fünf Anforderungen dieser
+> Spec als **undurchführbar** erwiesen. Belege und Ersatz:
+> [`2026-09-01-multi-agent-workspace-design.md`](2026-09-01-multi-agent-workspace-design.md).
+>
+> **Die Wurzel:** lean-ctx bindet Sitzungs- und Agentenzustand an eine
+> **Prozess-Identität**, nicht an die cwd. Ein Plugin-Handler ist ein
+> One-Shot-Prozess ohne Agent-Identität — er kann **weder in eine Session
+> schreiben noch am Agentenbus teilnehmen**. Beides betrifft die Architektur
+> dieser Spec im Kern, nicht ihre Details.
+>
+> | Anforderung | Status |
+> |---|---|
+> | 1 · Restore (Digest je Workspace) | ✅ trägt — Lesen über `lean-ctx call --project-root` ist verifiziert |
+> | 2 · Sichtbarkeit (Task-Token in der Sidebar) | ⚠️ trägt, aber `$task` ist bereits von `herdr-plugin-renamer` belegt → eigenen Namen wählen (`$ctx`) |
+> | 3 · Rückschreiben (`session finding`) | ❌ **unmöglich** — `call` meldet Erfolg und persistiert nichts (B1); die CLI trifft ohne Agent-Identität eine fremde Session (B2) |
+> | 4 · Agent-Präsenz (`ctx_agent` je Pane) | ❌ **unmöglich** — `register` ignoriert übergebene IDs, die Registrierung endet mit dem Prozess (B3) |
+> | 5 · Gateway (`lean-ctx call`) | ✅ trägt |
+>
+> **Weitere überholte Stellen in diesem Dokument:**
+> - *„`ctx_session` antwortet über `call` mit `tool_calls not available`"* — in
+>   3.10.1 behoben. Lesen funktioniert; nur Schreiben ist der No-Op.
+> - *„cwd als Join-Key"* — die cwd ist kein Schlüssel. Der belastbare Join läuft
+>   über die **PID**: `herdr pane process-info` → lean-ctx-Prozess-PID →
+>   `ctx_agent list`-Eintrag mit derselben `pid`.
+> - *„MCP `ctx_agent`: `post`, `read`, `claim`, `brief`, `lease`"* — `claim`,
+>   `brief` und `lease` existieren nicht. Real: `register, list, post, read,
+>   status, info, handoff, sync, poll_events, diary, recall_diary, diaries,
+>   share_knowledge, receive_knowledge, lease_acquire, lease_release`.
+> - Der Digest muss nicht von Hand gebaut werden — `ctx_session action=resume`
+>   liefert ihn bereits fertig.
+>
+> **Was weiterhin gilt und nirgends sonst steht:** die verifizierten
+> Herdr-Event-Namen, die Registrierungs-Asymmetrie von `plugin link`/`unlink`,
+> die Latenzmessungen und die Manifest-Lint-Regel. Deshalb bleibt dieses
+> Dokument erhalten, statt gelöscht zu werden.
 
 Ein Herdr-Plugin, das lean-ctx-Kontext über Herdr-Serverneustarts hinweg trägt,
 den aktiven Task in der Herdr-Sidebar sichtbar macht und Agenten-Ereignisse
@@ -268,11 +306,11 @@ Nicht getestet: Herdr selbst, lean-ctx selbst, `claude --resume`.
    `allow_paths` eingetragen, die ctx_*-Tools erreichen das Projekt.
 2. **`lean-ctx allow herdr`** — ohne diesen Eintrag kann ein Agent unter
    lean-ctx-Gating Herdr nicht steuern. Gehört ins README. Ebenso `uv`.
-3. **Probe-Plugins** — `probe.dot`, `probe.underscore`, `probe.all` sind aus der
-   Event-Verifikation registriert (disabled) und brauchen einen laufenden Server
-   zum Entfernen.
-4. **`--owner` für `lean-ctx agent register`** — Pflichtfeld, gehört in die
-   Konfiguration, nicht in den Code.
+3. ~~**Probe-Plugins**~~ — erledigt 2026-09-01: `probe.dot`, `probe.underscore`
+   und `probe.all` sind per `plugin unlink` entfernt, `plugin list` ist
+   warnungsfrei.
+4. ~~**`--owner` für `lean-ctx agent register`**~~ — hinfällig: Anforderung 4
+   (Agent-Präsenz je Pane) ist nicht durchführbar, siehe Kopf des Dokuments.
 
 ## Anhang: Befund für lean-ctx
 

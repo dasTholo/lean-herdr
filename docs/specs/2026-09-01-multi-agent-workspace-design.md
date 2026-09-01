@@ -42,7 +42,7 @@ und weil es ein anderes Modell ist, hat es andere Blindstellen.
 | Arbeiter reden miteinander | Jede gelesene Nachricht kostet einen Modellschritt (~20 K Kontext). N Arbeiter über Kreuz wären N² Schritte. Stern, kein Netz. |
 | Zweiter Builder im ersten Wurf | YAGNI. Die Topologie erlaubt ihn, der erste Wurf braucht ihn nicht. |
 | Orchestrator liest Projektdateien | Das ist die Arbeit des Arbeiters. Ein Orchestrator, der Code liest, zahlt dessen Kontext in jedem seiner Schritte. |
-| Wiederaufnahme nach Serverneustart | Eigenes Problem, eigene Spec (`2026-08-24-lean-herdr-design.md`). |
+| Wiederaufnahme nach Serverneustart | Eigenes Problem, eigene Spec: [`2026-08-24-lean-herdr-design.md`](2026-08-24-lean-herdr-design.md) — dort sind die Anforderungen 3 und 4 durch die hiesigen Befunde B1–B3 hinfällig geworden, 1/2/5 tragen weiter. |
 | Remote-Agenten | Der Bus liegt auf der Platte, Herdr-Panes laufen lokal. Kein Tunnel. |
 
 ## Verifizierte Grundlagen
