@@ -53,10 +53,9 @@ def make_registry() -> dict:
 @pytest.fixture
 def world(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
-    monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
-    h_proc, l_proc = FakeProc(), FakeProc()
+    h_proc = FakeProc()
     h_proc.replies = {("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}}}
-    return h_proc, l_proc, tmp_path / "registry.json"
+    return h_proc, tmp_path / "registry.json"
 
 
 # -- Gap 1: dispatch()'s cwd parameter -------------------------------------
@@ -70,7 +69,7 @@ def test_dispatch_forwards_explicit_cwd_to_pane_split_not_root(world):
     test_dispatch.py stays green under that mutation because none of them
     ever pass a `cwd` that differs from `root`.
     """
-    h_proc, _, registry_path = world
+    h_proc, registry_path = world
     other_cwd = Path("/worktrees/feat-auth")
     registry_path.write_text(json.dumps(make_registry()), encoding="utf-8")
 
@@ -250,7 +249,7 @@ def test_dispatch_reports_worktree_open_failed_and_splits_no_pane(world):
     aborting here: a pane in the right directory that teardown does not know
     about is worse than a clean abort.
     """
-    h_proc, _, registry_path = world
+    h_proc, registry_path = world
     h_proc.replies = {
         ("worktree", "list"): {
             "result": {

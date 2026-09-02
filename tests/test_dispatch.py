@@ -42,10 +42,9 @@ def registry() -> dict:
 @pytest.fixture
 def world(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
-    monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
-    h_proc, l_proc = FakeProc(), FakeProc()
+    h_proc = FakeProc()
     h_proc.replies = {("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}}}
-    return h_proc, l_proc, tmp_path / "registry.json"
+    return h_proc, tmp_path / "registry.json"
 
 
 def run_dispatch(
@@ -57,7 +56,7 @@ def run_dispatch(
     waiter=None,
     **kwargs,
 ):
-    h_proc, _, path = world
+    h_proc, path = world
     path.write_text(json.dumps(reg), encoding="utf-8")
     return dispatch(
         request or req(),
@@ -118,7 +117,7 @@ def test_the_role_prompt_travels_as_a_file_never_as_text():
 
 def test_build_mode_returns_pane_and_agent_id_and_creates_nothing(world):
     """The build mode is finished the moment the agent_id is resolved."""
-    h_proc, _, _ = world
+    h_proc, _ = world
     result = run_dispatch(world, reg=registry())
     assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
     assert h_proc.called_with("agent", "start"), "the worker is running"
@@ -128,7 +127,7 @@ def test_build_mode_returns_pane_and_agent_id_and_creates_nothing(world):
 
 
 def test_the_profile_is_set_on_the_pane_not_on_the_agent(world):
-    h_proc, _, _ = world
+    h_proc, _ = world
     run_dispatch(world, reg=registry())
     assert h_proc.called_with("--env", "LEAN_CTX_TOOL_PROFILE=standard")
     assert h_proc.called_with("--env", "LEAN_CTX_ROLE=builder")
@@ -141,13 +140,13 @@ def test_dispatch_with_no_settings_still_gives_the_orchestrator_its_minimal_prof
 ):
     """Same argv as before Task 7: `settings=None` must not fall back to
     `standard` for a role that has its own built-in default."""
-    h_proc, _, _ = world
+    h_proc, _ = world
     run_dispatch(world, reg=registry(), request=req(role="orchestrator"))
     assert h_proc.called_with("--env", "LEAN_CTX_TOOL_PROFILE=minimal")
 
 
 def test_layout_from_the_config_reaches_herdr(world):
-    h_proc, _, _ = world
+    h_proc, _ = world
     run_dispatch(
         world, reg=registry(), settings=RoleSettings(direction="down", ratio=0.3)
     )
@@ -183,7 +182,7 @@ def test_focus_true_drops_the_no_focus_flag(world):
     re-hardcoding it -- or dropping `focus=cfg.focus` -- would be invisible
     without both halves of this test.
     """
-    h_proc, _, _ = world
+    h_proc, _ = world
     run_dispatch(world, reg=registry(), settings=RoleSettings(focus=True))
     focused = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
     h_proc.calls.clear()
@@ -200,7 +199,7 @@ def test_without_a_config_file_the_split_is_the_one_from_before(world, tmp_path)
     The expected argv is the one this project sent before the config existed;
     a `--ratio` or a `--focus` sneaking in would show up here.
     """
-    h_proc, _, _ = world
+    h_proc, _ = world
     missing = tmp_path / SETTINGS_PATH
     assert not missing.exists()
     cfg = settings_for("builder", read_settings(missing))
@@ -215,7 +214,7 @@ def test_without_a_config_file_the_split_is_the_one_from_before(world, tmp_path)
 
 
 def test_an_existing_agent_is_reused_and_cleared(world):
-    h_proc, _, _ = world
+    h_proc, _ = world
     h_proc.replies = {
         ("agent", "list"): {"result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}},
     }
@@ -384,7 +383,7 @@ def test_a_usage_error_still_wins_over_a_broken_config(monkeypatch, tmp_path, ca
 
 
 def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch):
-    h_proc, _, _ = world
+    h_proc, _ = world
     h_proc.replies = {
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
@@ -407,7 +406,7 @@ def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch)
 
 def test_a_worktree_dispatch_splits_a_pane_of_that_workspace(world):
     """Otherwise the worker would sit in the orchestrator workspace and survive teardown."""
-    h_proc, _, _ = world
+    h_proc, _ = world
     h_proc.replies = {
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
@@ -428,7 +427,7 @@ def test_a_worktree_dispatch_splits_a_pane_of_that_workspace(world):
 
 
 def test_a_worktree_without_an_anchor_pane_aborts(world):
-    h_proc, _, _ = world
+    h_proc, _ = world
     h_proc.replies = {
         ("pane", "list"): {"result": {"panes": []}},
         ("worktree", "list"): {
@@ -447,7 +446,7 @@ def test_a_worktree_without_an_anchor_pane_aborts(world):
 
 def test_a_missing_worktrunk_reports_worktrunk_missing(world, monkeypatch):
     monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: None)
-    h_proc, _, _ = world
+    h_proc, _ = world
     h_proc.replies = {
         ("worktree", "list"): {"result": {"source": {"repo_root": "/repo"}, "worktrees": []}},
     }
