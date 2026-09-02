@@ -1,7 +1,7 @@
-"""Nativer Session-Export → Fehlerobjekt.
+"""Native session export → error object.
 
-Der einzige verlaessliche Ort fuer 'ist der Turn gescheitert?'. Herdrs
-agent_status kodiert kein Scheitern (H1).
+The only reliable place for 'did the turn fail?'. Herdr's
+agent_status doesn't encode failure (H1).
 """
 
 from __future__ import annotations
@@ -12,31 +12,31 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-#: Schluessel, unter denen die Agenten ihr Fehlerobjekt ablegen.
+#: Keys under which the agents store their error object.
 ERROR_KEYS = ("error", "lastError", "last_error")
 
-#: opencode legt seine Sitzungen in genau einer SQLite-Datei ab.
+#: opencode stores its sessions in exactly one SQLite file.
 OPENCODE_DB = Path.home() / ".local" / "share" / "opencode" / "opencode.db"
 
 
 def _format(err: dict[str, Any]) -> str:
     name = err.get("name") or err.get("type") or "error"
-    roh = err.get("data")
-    data: dict[str, Any] = roh if isinstance(roh, dict) else {}
+    raw = err.get("data")
+    data: dict[str, Any] = raw if isinstance(raw, dict) else {}
     message = data.get("message") or err.get("message") or ""
     status = data.get("statusCode") or data.get("status_code") or err.get("statusCode")
-    teile = [str(name)]
+    parts = [str(name)]
     if message:
-        teile.append(str(message))
-    text = ": ".join(teile)
+        parts.append(str(message))
+    text = ": ".join(parts)
     return f"{text} ({status})" if status else text
 
 
 def find_error(export: Any) -> str | None:
-    """Erstes Fehlerobjekt irgendwo im Export, als Klartext.
+    """First error object anywhere in the export, as plain text.
 
-    Rekursiv, weil die Verschachtelung je Agent und Version verschieden ist.
-    Ein leeres oder null-wertiges error-Feld gilt als 'kein Fehler'.
+    Recursive, because the nesting differs by agent and version.
+    An empty or null-valued error field counts as 'no error'.
     """
     if isinstance(export, dict):
         for key in ERROR_KEYS:
@@ -59,9 +59,9 @@ def find_error(export: Any) -> str | None:
 
 
 def session_id_from_agent_list(agent_list: Iterable[dict[str, Any]], name: str) -> str | None:
-    """agent_session.value aus `herdr agent list`.
+    """agent_session.value from `herdr agent list`.
 
-    Nie cachen: die Session-ID wechselt bei jedem /clear.
+    Never cache: the session ID changes on every /clear.
     """
     for entry in agent_list:
         if entry.get("name") != name:
@@ -75,50 +75,50 @@ def session_id_from_agent_list(agent_list: Iterable[dict[str, Any]], name: str) 
     return None
 
 
-# -- Die zwei Ablagen --------------------------------------------------
+# -- The two stores --------------------------------------------------
 
 
 def claude_session_path(session_id: str, project_root: str | Path) -> Path:
-    """~/.claude/projects/<slug>/<session_id>.jsonl — slug = Pfad mit / → -."""
+    """~/.claude/projects/<slug>/<session_id>.jsonl — slug = path with / → -."""
     slug = str(Path(project_root).resolve()).replace("/", "-")
     return Path.home() / ".claude" / "projects" / slug / f"{session_id}.jsonl"
 
 
 def read_jsonl(path: str | Path) -> list[dict[str, Any]]:
-    """JSONL-Zeilen lesen. Fehlt die Datei oder ist eine Zeile kaputt: ueberspringen."""
+    """Read JSONL lines. If the file is missing or a line is broken: skip it."""
     try:
-        roh = Path(path).read_text(encoding="utf-8", errors="replace")
+        raw = Path(path).read_text(encoding="utf-8", errors="replace")
     except OSError:
         return []
-    zeilen: list[dict[str, Any]] = []
-    for zeile in roh.splitlines():
-        zeile = zeile.strip()
-        if not zeile:
+    lines: list[dict[str, Any]] = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
             continue
         try:
-            daten = json.loads(zeile)
+            data = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(daten, dict):
-            zeilen.append(daten)
-    return zeilen
+        if isinstance(data, dict):
+            lines.append(data)
+    return lines
 
 
 def opencode_messages(session_id: str, db_path: str | Path | None = None) -> list[dict[str, Any]]:
-    """message.data dieser Sitzung aus opencodes SQLite-Ablage.
+    """message.data of this session from opencode's SQLite store.
 
-    Nur lesend und `immutable=1`: opencode schreibt in dieselbe Datei, waehrend
-    wir lesen — ohne diese Flags riskiert man `database is locked`.
+    Read-only and `immutable=1`: opencode writes to the same file while
+    we read — without these flags you'd risk `database is locked`.
     """
-    pfad = Path(db_path) if db_path is not None else OPENCODE_DB
-    if not pfad.is_file():
+    path = Path(db_path) if db_path is not None else OPENCODE_DB
+    if not path.is_file():
         return []
     try:
-        con = sqlite3.connect(f"file:{pfad}?mode=ro&immutable=1", uri=True, timeout=2.0)
+        con = sqlite3.connect(f"file:{path}?mode=ro&immutable=1", uri=True, timeout=2.0)
     except sqlite3.Error:
         return []
     try:
-        zeilen = con.execute(
+        rows = con.execute(
             "SELECT data FROM message WHERE session_id = ? ORDER BY time_created",
             (session_id,),
         ).fetchall()
@@ -126,15 +126,15 @@ def opencode_messages(session_id: str, db_path: str | Path | None = None) -> lis
         return []
     finally:
         con.close()
-    nachrichten: list[dict[str, Any]] = []
-    for (roh,) in zeilen:
+    messages: list[dict[str, Any]] = []
+    for (raw,) in rows:
         try:
-            daten = json.loads(roh)
+            data = json.loads(raw)
         except json.JSONDecodeError, TypeError:
             continue
-        if isinstance(daten, dict):
-            nachrichten.append(daten)
-    return nachrichten
+        if isinstance(data, dict):
+            messages.append(data)
+    return messages
 
 
 def session_error(
@@ -144,11 +144,11 @@ def session_error(
     *,
     db_path: str | Path | None = None,
 ) -> str | None:
-    """Der Fehler dieser Sitzung, egal welcher Agent sie gefuehrt hat.
+    """The error of this session, no matter which agent ran it.
 
-    None heisst: kein Fehler gefunden — auch dann, wenn die Ablage fehlt.
-    Der Aufrufer unterscheidet das nicht, weil beides dieselbe Folge hat:
-    es gibt keinen Beleg fuer ein Scheitern, also bleibt es bei `no_reply`.
+    None means: no error found — even when the store is missing.
+    The caller doesn't distinguish between the two, because both have the
+    same consequence: there's no evidence of failure, so it stays `no_reply`.
     """
     if not session_id:
         return None
