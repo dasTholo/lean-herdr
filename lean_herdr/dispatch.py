@@ -56,6 +56,10 @@ AGENT_READY_INTERVAL_S = 0.5
 #: The wait mode asks the file, not the CLI: no process start per round.
 POLL_INTERVAL_S = 1.0
 
+#: How long `--await` waits without the flag. One value for the parser AND
+#: for AwaitRequest -- two copies would drift apart unnoticed.
+DEFAULT_TIMEOUT_MS = 300_000
+
 #: Exactly one ring per wait call. The payload lives in the task store.
 #: Worded neutrally, because the same text also wakes a task resumed after a
 #: question -- then it is not new. And it points at `get`, not `list`: only
@@ -256,7 +260,7 @@ class AwaitRequest:
     kind: str
     task_id: str
     worktree: str | None = None
-    timeout_ms: int = 300_000
+    timeout_ms: int = DEFAULT_TIMEOUT_MS
 
 
 def verdict(message: str | None) -> str | None:
@@ -442,25 +446,58 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--profile", default=None, help="overrides the role's default profile"
     )
-    p.add_argument("--timeout-ms", type=int, default=300_000, help="only with --await")
+    # `default=None`, not the number: only that tells a `--timeout-ms` given
+    # in build mode from one left out. main() fills the value in.
+    p.add_argument(
+        "--timeout-ms",
+        type=int,
+        default=None,
+        help=f"only with --await (default {DEFAULT_TIMEOUT_MS})",
+    )
     return p
 
 
+def _given(*pairs: tuple[str, Any]) -> str:
+    """The flags of that list that were actually given, as one phrase."""
+    return " and ".join(flag for flag, value in pairs if value is not None)
+
+
 def missing_flags(args: argparse.Namespace) -> str | None:
-    """Mode-dependent required flags -- deliberately NOT via argparse.
+    """Mode-dependent flag validation -- deliberately NOT via argparse.
 
     `required=True` ends the process with exit 2 and one line on stderr.
     The orchestrator reads `ok` on stdout; a typo would look to it like no
     output at all.
+
+    The same holds for the flags of the OTHER mode: argparse accepts every
+    one of them in both, and the mode that does not read them drops them
+    without a word -- `--timeout-ms` in build mode, though its own help says
+    "only with --await", and `--model`/`--role-file`/`--profile` under
+    `--await`. A non-positive `--timeout-ms` bought exactly one ring and an
+    immediate `no_reply`.
     """
     if args.waiting:
-        return None if args.task_id else "--await needs --task-id"
+        if not args.task_id:
+            return "--await needs --task-id"
+        stray = _given(
+            ("--model", args.model),
+            ("--role-file", args.role_file),
+            ("--profile", args.profile),
+        )
+        if stray:
+            return f"--await does not take {stray}"
+        if args.timeout_ms is not None and args.timeout_ms <= 0:
+            return f"--timeout-ms must be positive, not {args.timeout_ms}"
+        return None
     missing = [
         flag
         for flag, value in (("--model", args.model), ("--role-file", args.role_file))
         if not value
     ]
-    return f"build mode needs {' and '.join(missing)}" if missing else None
+    if missing:
+        return f"build mode needs {' and '.join(missing)}"
+    stray = _given(("--timeout-ms", args.timeout_ms))
+    return f"build mode does not take {stray}" if stray else None
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -493,7 +530,7 @@ def main(argv: list[str] | None = None) -> int:
                         kind=args.kind,
                         task_id=args.task_id,
                         worktree=args.worktree,
-                        timeout_ms=args.timeout_ms,
+                        timeout_ms=args.timeout_ms or DEFAULT_TIMEOUT_MS,
                     ),
                     herdr=Herdr(),
                     root=root,

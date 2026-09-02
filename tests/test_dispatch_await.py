@@ -3,7 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from lean_herdr.dispatch import AwaitRequest, await_task, main, verdict
+from lean_herdr.dispatch import (
+    DEFAULT_TIMEOUT_MS,
+    AwaitRequest,
+    await_task,
+    main,
+    verdict,
+)
 from lean_herdr.herdr import Herdr
 from tests.doubles import FakeProc, which_stub
 
@@ -273,6 +279,75 @@ def test_build_mode_without_model_is_a_usage_error(capsys):
     assert code == 0
     result = json.loads(capsys.readouterr().out.strip())
     assert result["error"].startswith("usage_error: build mode needs --model")
+
+
+AWAIT = ["builder", "--kind", "claude", "--await", "--task-id", TASK_ID]
+BUILD = ["builder", "--kind", "claude", "--model", "sonnet",
+         "--role-file", "roles/builder.md"]
+
+
+@pytest.mark.parametrize(
+    "argv, offender",
+    [
+        pytest.param([*AWAIT, "--model", "sonnet"], "--model", id="model in await"),
+        pytest.param(
+            [*AWAIT, "--role-file", "roles/builder.md"], "--role-file",
+            id="role-file in await",
+        ),
+        pytest.param([*AWAIT, "--profile", "minimal"], "--profile", id="profile in await"),
+        pytest.param(
+            [*BUILD, "--timeout-ms", "1000"], "--timeout-ms", id="timeout-ms in build"
+        ),
+        pytest.param([*AWAIT, "--timeout-ms", "0"], "--timeout-ms", id="timeout-ms zero"),
+        pytest.param(
+            [*AWAIT, "--timeout-ms", "-5"], "--timeout-ms", id="timeout-ms negative"
+        ),
+    ],
+)
+def test_a_flag_of_the_other_mode_is_a_usage_error(argv, offender, capsys, monkeypatch):
+    """argparse takes every flag in every mode -- and the wrong-mode ones then
+    vanish without a word.
+
+    `--timeout-ms` says "only with --await" in its own help and was accepted
+    in build mode; `--model`, `--role-file` and `--profile` were accepted
+    under `--await`. `--timeout-ms 0` bought exactly one ring and an immediate
+    `no_reply`. The subprocess guard is part of the contract: a usage error is
+    decided before anything reaches git, Herdr or a pane.
+    """
+
+    def _forbidden(*args, **kwargs):
+        pytest.fail(f"a usage error must never reach a real subprocess: {args!r}")
+
+    monkeypatch.setattr("subprocess.run", _forbidden)
+    monkeypatch.setattr("subprocess.Popen", _forbidden)
+
+    code = main(argv)
+
+    assert code == 0
+    result = json.loads(capsys.readouterr().out.strip())
+    assert result["ok"] is False
+    assert result["error"].startswith("usage_error: "), result["error"]
+    assert offender in result["error"], result["error"]
+
+
+def test_await_without_timeout_ms_still_gets_the_default(monkeypatch, capsys):
+    """`--timeout-ms` defaults to None in the parser so that a build-mode use
+    can be told from an omission -- main() must fill the real value back in,
+    or every wait would run with `timeout_ms=None`.
+    """
+    seen: list[AwaitRequest] = []
+
+    def spy(request, **_kwargs):
+        seen.append(request)
+        return {"ok": True}
+
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: ROOT)
+    monkeypatch.setattr("lean_herdr.dispatch.await_task", spy)
+
+    main(["builder", "--kind", "claude", "--await", "--task-id", TASK_ID])
+    capsys.readouterr()
+
+    assert seen[0].timeout_ms == DEFAULT_TIMEOUT_MS
 
 
 @pytest.mark.parametrize(
