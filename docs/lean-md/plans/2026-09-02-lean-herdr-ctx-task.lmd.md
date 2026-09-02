@@ -109,20 +109,23 @@ Gemessene Grundlagen dieses Plans (Quelle `~/Scripts/lean-ctx`, 3.10.1):
   Task 3 — abnehmbar ist er erst, wenn `--await` existiert.
 - **`bus.py` bleibt unveraendert.** Der Bus behaelt alles ohne Auftragsbezug
   (Findings, Broadcasts, Plugin-Digest der Stufe 5).
-- **Sprache: Code, Commits UND ausgelieferte Artefakte sind ENGLISCH.** Das gilt
-  fuer Bezeichner, Kommentare, Docstrings, Testnamen, Commit-Nachrichten, die
-  Texte von `remember_decision` sowie — seit der Entscheidung des Betreibers vom
-  2026-09-02, die die fruehere Fassung dieses Absatzes ersetzt — die Rollentexte
-  in `roles/` und den README. Task 4 stellt diese vier Dateien vollstaendig auf
-  Englisch um und zieht `tests/test_role_prohibitions.py` und
-  `tests/test_roles.py` mit, die sie woertlich zitieren; `AGENTS.md` haelt die
-  Regel als dritte Sprachzeile fest. Deutsch bleibt allein die Prosa dieses
-  Plans. Bestehende deutsche Bezeichner in `bus.py`, `herdr.py`, `leanctx.py`,
-  `export.py`, `join.py` und `worktree.py` werden hier NICHT umbenannt — das
-  bleibt der Sammeluebersetzung des Betreibers vorbehalten. Ausnahme:
-  `lean_herdr/dispatch.py` und `tests/test_dispatch.py` werden in Task 2
-  durchgehend uebersetzt, weil dieser Plan sie ohnehin an Kopf und Fuss neu
-  schreibt.
+- **Sprache: alles ausserhalb `docs/` ist ENGLISCH.** Das gilt fuer Bezeichner,
+  Kommentare, Docstrings, Testnamen, Commit-Nachrichten, die Texte von
+  `remember_decision`, die Rollentexte in `roles/` und den README. Deutsch
+  bleibt allein `docs/` — also die Prosa dieses Plans und die Specs.
+  Massgeblich ist `AGENTS.md`; die Entscheidung des Betreibers vom 2026-09-02
+  ersetzt die fruehere Fassung dieses Absatzes, die `roles/` und den README noch
+  deutsch liess. **Keine Uebersetzungs-Feldzuege:** bestehendes Deutsch
+  ausserhalb `docs/` bleibt liegen und wird englisch, wenn ein Task die Datei
+  oder den Abschnitt ohnehin neu schreibt — dann aber vollstaendig, nie halb.
+  Genau auf diesem Grund uebersetzt Task 2 `lean_herdr/dispatch.py` und
+  `tests/test_dispatch.py` und Task 4 die vier Artefaktdateien samt
+  `tests/test_role_prohibitions.py` und `tests/test_roles.py`, die sie woertlich
+  zitieren. `bus.py`, `herdr.py`, `leanctx.py`, `export.py`, `join.py` und
+  `worktree.py` behalten ihre deutschen Bezeichner, bis ein Task sie neu
+  schreibt — ein Review meldet sie NICHT als Befund. Protokoll-Token wie
+  `VERDIKT:` sind keine Prosa: sie folgen dem Code (`dispatch.VERDICT_RE`) und
+  werden nicht uebersetzt.
 - **`@reformat` wird nicht ausgefuehrt** (uebernommene Abweichung des
   Vorgaengerplans, Spec §8): das Qualitaetstor ist `ruff check`, **nicht**
   `ruff format --check` — sonst schriebe der Formatter den woertlichen Plan-Code
@@ -894,7 +897,7 @@ entfernten Importen.
 @call review_change()
 @call gate(lean_herdr/dispatch.py lean_herdr/leanctx.py tests/test_dispatch.py tests/test_dispatch_uncovered_paths.py)
 @call commit("lean_herdr/ tests/", "refactor(dispatch): build mode without a bus-borne work order")
-@call remember_decision("lean-herdr: bin/herdr-dispatch creates no task and posts nothing. A CLI process has no lean-ctx identity (cli/call_cmd.rs:160 leaves ToolContext.agent_id at None), so it posts as anonymous and cannot run ctx_task create. The orchestrator creates the task itself; leanctx.post() has had no caller since this change. From here on new code, comments, docstrings, test names and commit messages are English; lean_herdr/dispatch.py and tests/test_dispatch.py were translated wholesale in this task, the remaining German-named modules await the operator's sweep. Role prompts in roles/ and the README stay German.")
+@call remember_decision("lean-herdr: bin/herdr-dispatch creates no task and posts nothing. A CLI process has no lean-ctx identity (cli/call_cmd.rs:160 leaves ToolContext.agent_id at None), so it posts as anonymous and cannot run ctx_task create. The orchestrator creates the task itself; leanctx.post() has had no caller since this change. Everything outside docs/ is English -- code, comments, docstrings, test names, commit messages, roles/*.md and README.md (AGENTS.md holds the rule). There are no translation sweeps: existing German outside docs/ stays put until something rewrites that file or section anyway, and is then rewritten in full. lean_herdr/dispatch.py and tests/test_dispatch.py were translated wholesale in this task on exactly that ground; bus.py, herdr.py, leanctx.py, export.py, join.py and worktree.py keep their German identifiers until a task rewrites them.")
 @phase-end
 
 @phase "task-3"
