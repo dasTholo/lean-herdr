@@ -125,8 +125,8 @@ class Herdr:
     ) -> dict[str, Any]:
         """Start an agent in the pane. Native arguments after `--`.
 
-        Herdr rejects multi-line arguments (H2) — role texts come as a
-        file, never as argument text.
+        Herdr rejects multi-line arguments (H2) — role texts come as a file,
+        never as argument text.
         """
         args = ["agent", "start", name, "--kind", kind, "--pane", pane]
         if agent_args:
@@ -168,8 +168,8 @@ class Herdr:
 
         Two measured quirks (0.8.2): the ID is POSITIONAL, not
         `--pane`/`--workspace`; and `--source` is mandatory — without it, exit 2.
-        The source is the namespace our tokens live under; a
-        foreign plugin therefore can't overwrite them.
+        The source is the namespace our tokens live under, so another plugin
+        can't overwrite them.
 
         scope is "pane" or "workspace". True if the call went through.
         """
