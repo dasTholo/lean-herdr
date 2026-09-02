@@ -80,8 +80,9 @@ def test_the_cwd_goes_through_canonical_root(world, monkeypatch):
     # Three calls carry the flag -- resume, handoff list, handoff show. Every
     # one of them must carry the SAME canonical root; the predecessor plan
     # unpacked a single call and would have died on the other two.
-    roots = {c[c.index("--project-root") + 1] for c in l_proc.calls if "--project-root" in c}
-    assert roots == {"/repo"}
+    roots = [c[c.index("--project-root") + 1] for c in l_proc.calls if "--project-root" in c]
+    assert len(roots) == 3, roots
+    assert set(roots) == {"/repo"}
 
 
 def test_without_lean_ctx_nothing_happens_and_nothing_breaks(monkeypatch, tmp_path):
@@ -206,13 +207,19 @@ def test_bootstrap_starts_the_orchestrator_in_its_own_workspace(world):
 def test_bootstrap_does_not_start_a_second_orchestrator(world):
     h_proc, _, tmp_path = world
     h_proc.replies = {
-        ("agent", "list"): {"result": {"agents": [{"name": "orch", "pane_id": "w2:p9"}]}}
+        ("agent", "list"): {"result": {"agents": [{"name": "orch", "pane_id": "w2:p9"}]}},
+        # An anchor pane and a split reply are present on purpose: without them
+        # the handler would skip the split for lack of an anchor, and the test
+        # would stay green even with the duplicate guard removed.
+        ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p9"}}},
     }
     handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
         {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
     )))
     assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls)
-    assert h_proc.called_with("notification", "show")
+    note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
+    assert "already running" in " ".join(note), note
 
 
 def test_main_catches_every_exception_and_ends_with_0(monkeypatch, capsys):
