@@ -239,6 +239,50 @@ def test_a_crashed_worktree_worker_becomes_agent_error_too(
     assert result["error"] == "agent_error: APIError: User not found. (401)"
 
 
+def test_timeout_for_a_gone_worktree_creates_nothing(herdr, tmp_path, monkeypatch):
+    """A wait call must not create a worktree merely to diagnose a timeout.
+
+    `--worktree feat/gone` names a branch with no entry in `worktree list`
+    (build mode failed earlier, or the operator cleaned it up). The timeout
+    path only wants to know where the worker's session log might live; it
+    must fall back to `root` and report `no_reply` without ever running
+    `wt switch --create` -- that would leave a stray worktree and workspace
+    as a side effect of merely diagnosing a timeout.
+    """
+    h, proc = herdr
+    proc.replies = {
+        ("agent", "list"): {"result": {"agents": []}},
+        ("worktree", "list"): {
+            "result": {"source": {"repo_root": str(ROOT)}, "worktrees": []}
+        },
+    }
+    # `wt_switch`'s `runner` parameter defaults to the real `subprocess.run`,
+    # bound once at import time -- monkeypatching the `subprocess` module
+    # afterwards cannot intercept it. Spying on `wt_switch` itself is the
+    # reliable way to prove `ensure_worktree`'s create step was never
+    # reached, without risking a real `wt switch --create` subprocess.
+    switch_calls: list[str] = []
+
+    def spy_wt_switch(branch: str, *, cwd: object, runner: object = None) -> None:
+        switch_calls.append(branch)
+
+    monkeypatch.setattr("lean_herdr.worktree.wt_switch", spy_wt_switch)
+    clock = iter([0.0, 0.0, 99.0])
+    result = wait(
+        (h, proc),
+        tmp_path,
+        raw_task("Created"),
+        timeout_ms=1_000,
+        worktree="feat/gone",
+        now=lambda: next(clock),
+    )
+    assert result["error"] == "no_reply"
+    assert switch_calls == [], "timeout diagnosis must not attempt `wt switch --create`"
+    assert not proc.called_with("worktree", "open"), (
+        "timeout diagnosis must not register a workspace with herdr either"
+    )
+
+
 def test_an_unreadable_store_is_never_success_by_silence(herdr, tmp_path):
     path = tmp_path / "tasks.json"
     path.write_text("{broken", encoding="utf-8")

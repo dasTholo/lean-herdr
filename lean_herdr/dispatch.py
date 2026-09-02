@@ -48,6 +48,7 @@ from lean_herdr.worktree import (
     WorktrunkMissing,
     anchor_pane,
     ensure_worktree,
+    find_worktree,
 )
 
 #: Derived, not copied: production reads `cfg.ready_timeout_s`, so a second
@@ -289,13 +290,21 @@ def _worker_root(worktree: str | None, *, herdr: Herdr, root: Path) -> Path:
 
     Falls back to the root when the worktree cannot be resolved: a missing
     reason is bad, an exception out of the wait mode would be worse.
+
+    Read-only: this only runs on the timeout path, purely to locate a log --
+    never to fix the situation. It looks the branch up via `worktree_list()`
+    / `find_worktree()` instead of `ensure_worktree()`, which would CREATE a
+    worktree that a failed build or a cleaned-up workspace left missing. A
+    wait call must not create anything as a side effect of diagnosing one.
     """
     if not worktree:
         return root
     try:
-        return ensure_worktree(worktree, herdr=herdr, cwd=root).path
-    except (WorktrunkMissing, WorktreeOpenFailed, OSError):
+        eintrag = find_worktree(herdr.worktree_list(root), worktree)
+        pfad = eintrag.get("path") if isinstance(eintrag, dict) else None
+    except (TypeError, AttributeError, KeyError):
         return root
+    return Path(pfad) if pfad else root
 
 
 def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:

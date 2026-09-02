@@ -907,8 +907,10 @@ interval_s, sleep, now) -> dict`, `missing_flags(args) -> str | None`,
 **Consumes:** `lean_herdr.tasks.{read_tasks, find_task, message_from, TaskError,
 Task}` (Task 1), `lean_herdr.dispatch.agent_name` (Task 2),
 `lean_herdr.export.{session_error, session_id_from_agent_list}`,
-`lean_herdr.worktree.{ensure_worktree, WorktrunkMissing, WorktreeOpenFailed}`
-(fuer `_worker_root()`, das den Sitzungs-Slug des Arbeiters aufloest).
+`lean_herdr.worktree.find_worktree` (fuer `_worker_root()`, das den Sitzungs-Slug
+des Arbeiters aufloest -- rein lesend ueber `worktree_list()`/`find_worktree()`,
+nie ueber `ensure_worktree()`: ein Warteaufruf darf beim Diagnostizieren eines
+Timeouts keinen Worktree anlegen).
 
 Der Kern des ganzen Entwurfs: **das Warten bleibt im Skript, nicht im Modell.**
 `--await` pollt `tasks.json` als Datei — kein CLI-Aufruf, keine Registrierung,
@@ -1009,13 +1011,21 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
 
         Falls back to the root when the worktree cannot be resolved: a missing
         reason is bad, an exception out of the wait mode would be worse.
+
+        Read-only: this only runs on the timeout path, purely to locate a log --
+        never to fix the situation. It looks the branch up via `worktree_list()`
+        / `find_worktree()` instead of `ensure_worktree()`, which would CREATE a
+        worktree that a failed build or a cleaned-up workspace left missing. A
+        wait call must not create anything as a side effect of diagnosing one.
         """
         if not worktree:
             return root
         try:
-            return ensure_worktree(worktree, herdr=herdr, cwd=root).path
-        except (WorktrunkMissing, WorktreeOpenFailed, OSError):
+            eintrag = find_worktree(herdr.worktree_list(root), worktree)
+            pfad = eintrag.get("path") if isinstance(eintrag, dict) else None
+        except (TypeError, AttributeError, KeyError):
             return root
+        return Path(pfad) if pfad else root
 
 
     def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
