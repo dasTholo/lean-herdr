@@ -65,16 +65,18 @@ DEFAULT_TIMEOUT_MS = 300_000
 #: Exactly one ring per wait call. The payload lives in the task store.
 #: Worded neutrally, because the same text also wakes a task resumed after a
 #: question -- then it is not new. And it points at `get`, not `list`: only
-#: `get` prints the history that carries the orchestrator's answer. The text
-#: itself stays German, like the role prompt it is spoken into.
-WAKE_PROMPT = "Aufgabe {task_id} wartet auf dich — ctx_task get zeigt Auftrag und Verlauf."
+#: `get` prints the history that carries the orchestrator's answer. English,
+#: like the role prompt it is spoken into.
+WAKE_PROMPT = "Task {task_id} is waiting for you -- ctx_task get shows order and history."
 
 #: Machine-readable verdict on the FIRST line of the completion message.
 #: Replaces the bus field `category` that fell away: without it the
 #: orchestrator would have to read prose to tell 'can be merged' from 'must
 #: go back' -- exactly what this design rules out. `failed` will not do: a
-#: reasoned rejection is not a failure. The marker stays German because the
-#: reviewer's role prompt is.
+#: reasoned rejection is not a failure. `VERDIKT:` is a protocol token, not
+#: prose: roles/reviewer.md writes exactly this literal, and every review
+#: already written carries it -- so it stays as it is, English role prompts or
+#: not. `VERDICT:` is deliberately NOT accepted.
 VERDICT_RE = re.compile(r"VERDIKT:\s*(result|reject)\s*$")
 
 

@@ -113,6 +113,10 @@ def test_the_verdict_is_read_from_the_first_line_only():
     assert verdict("all green\nVERDIKT: result") is None, "first line only"
     assert verdict("I write VERDIKT: result somewhere") is None
     assert verdict(None) is None and verdict("") is None
+    assert verdict("VERDICT: result") is None, (
+        "VERDIKT: is a protocol token shared with roles/reviewer.md -- "
+        "translating it would silently invalidate every review already written"
+    )
 
 
 def test_the_reviewers_verdict_comes_back_machine_readable(herdr, tmp_path):
