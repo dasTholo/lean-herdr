@@ -47,7 +47,15 @@ def world(monkeypatch, tmp_path):
     return h_proc, l_proc, tmp_path / "registry.json"
 
 
-def run_dispatch(world, *, reg: dict, request=None, agent_id: str | None = AGENT_ID, **kwargs):
+def run_dispatch(
+    world,
+    *,
+    reg: dict,
+    request=None,
+    agent_id: str | None = AGENT_ID,
+    waiter=None,
+    **kwargs,
+):
     h_proc, _, path = world
     path.write_text(json.dumps(reg), encoding="utf-8")
     return dispatch(
@@ -55,7 +63,7 @@ def run_dispatch(world, *, reg: dict, request=None, agent_id: str | None = AGENT
         herdr=Herdr(runner=h_proc),
         root=ROOT,
         registry_path=path,
-        waiter=lambda *a, **kw: agent_id,
+        waiter=waiter or (lambda *a, **kw: agent_id),
         **kwargs,
     )
 
@@ -139,6 +147,44 @@ def test_layout_from_the_config_reaches_herdr(world):
     split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
     assert "--direction" in split and split[split.index("--direction") + 1] == "down"
     assert "--ratio" in split and split[split.index("--ratio") + 1] == "0.3"
+
+
+def test_the_configured_ready_timeout_reaches_the_waiter(world):
+    """`ready_timeout_s` is the one knob no argv can show.
+
+    Every other test stubs the waiter with `lambda *a, **kw: agent_id` and
+    never looks at what it was handed -- so dropping `timeout_s=cfg.
+    ready_timeout_s` would leave the whole suite green while the config knob
+    quietly did nothing.
+    """
+    seen: list[dict] = []
+
+    def spy(_herdr, _name, **kwargs):
+        seen.append(kwargs)
+        return AGENT_ID
+
+    run_dispatch(
+        world, reg=registry(), settings=RoleSettings(ready_timeout_s=7.5), waiter=spy
+    )
+    assert seen and seen[0].get("timeout_s") == 7.5
+
+
+def test_focus_true_drops_the_no_focus_flag(world):
+    """The second knob no test drove: `focus` only shows in the argv.
+
+    `--no-focus` is added by Herdr.pane_split() when `focus` is false, so
+    re-hardcoding it -- or dropping `focus=cfg.focus` -- would be invisible
+    without both halves of this test.
+    """
+    h_proc, _, _ = world
+    run_dispatch(world, reg=registry(), settings=RoleSettings(focus=True))
+    focused = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+    h_proc.calls.clear()
+    run_dispatch(world, reg=registry(), settings=RoleSettings())
+    unfocused = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+
+    assert "--no-focus" not in focused, "focus = true must hand the pane the focus"
+    assert "--no-focus" in unfocused, "the default must not steal the focus"
 
 
 def test_without_a_config_file_the_split_is_the_one_from_before(world, tmp_path):
