@@ -1,8 +1,8 @@
-"""PID-Join: Herdr-Name → Pane → shell_pid → lean-ctx-agent_id.
+"""PID join: Herdr name → pane → shell_pid → lean-ctx agent_id.
 
-Reine Funktionen ueber bereits geholte Antworten. Aller Aussenverkehr liegt
-in herdr.py und bus.py — hier steht nur die Zuordnung, damit sie ohne Doppel
-testbar bleibt.
+Pure functions over responses that were already fetched. All outside traffic
+lives in herdr.py and bus.py — this module holds only the mapping, so it
+stays testable without duplication.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ from typing import Any
 
 
 def pane_for_agent(agent_list: Iterable[dict[str, Any]], name: str) -> str | None:
-    """pane_id des Agenten mit diesem Herdr-Namen."""
+    """pane_id of the agent with this Herdr name."""
     for entry in agent_list:
         if entry.get("name") == name:
             pane = entry.get("pane_id") or entry.get("pane")
@@ -32,7 +32,7 @@ def shell_pid_from_process_info(info: dict[str, Any]) -> int | None:
 
 
 def agent_id_for_pid(agents: Iterable[dict[str, Any]], pid: int) -> str | None:
-    """Registereintrag mit genau dieser pid — ueber das Feld, nie ueber den ID-String."""
+    """Registry entry with exactly this pid — via the field, never via the ID string."""
     for agent in agents:
         if agent.get("pid") == pid:
             agent_id = agent.get("agent_id")
@@ -40,18 +40,18 @@ def agent_id_for_pid(agents: Iterable[dict[str, Any]], pid: int) -> str | None:
     return None
 
 
-def _stat_felder(pid: int, proc_root: str | Path) -> list[str] | None:
-    """Die Felder ab `state` aus /proc/<pid>/stat, oder None bei jedem Fehler.
+def _stat_fields(pid: int, proc_root: str | Path) -> list[str] | None:
+    """The fields from `state` onward in /proc/<pid>/stat, or None on any error.
 
-    Gemeinsame Grundlage fuer process_group() und process_ancestors() — beide
-    lesen dieselbe Zeile, nur unterschiedliche Felder daraus.
+    Shared basis for process_group() and process_ancestors() — both
+    read the same line, just different fields from it.
     """
     stat_path = Path(proc_root) / str(pid) / "stat"
     try:
         raw = stat_path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
-    # Der Kommandoname steht in Klammern und darf Leerzeichen enthalten.
+    # The command name is in parentheses and may contain spaces.
     close = raw.rfind(")")
     if close == -1:
         return None
@@ -59,12 +59,12 @@ def _stat_felder(pid: int, proc_root: str | Path) -> list[str] | None:
 
 
 def process_group(pid: int, proc_root: str | Path = "/proc") -> int | None:
-    """Prozessgruppe einer PID aus /proc/<pid>/stat (Feld 5).
+    """Process group of a PID from /proc/<pid>/stat (field 5).
 
-    Gibt None zurueck, wenn /proc fehlt oder der Prozess weg ist — der
-    Aufrufer behandelt das als 'kein Treffer', nie als Fehler.
+    Returns None when /proc is missing or the process is gone — the
+    caller treats that as 'no hit', never as an error.
     """
-    fields = _stat_felder(pid, proc_root)
+    fields = _stat_fields(pid, proc_root)
     if fields is None or len(fields) < 3:
         return None
     try:
@@ -74,13 +74,13 @@ def process_group(pid: int, proc_root: str | Path = "/proc") -> int | None:
 
 
 def _parent_pid(pid: int, proc_root: str | Path) -> int | None:
-    """PPID einer PID aus /proc/<pid>/stat (Feld 4).
+    """PPID of a PID from /proc/<pid>/stat (field 4).
 
-    Dieselbe Robustheit wie process_group(): fehlendes /proc, ein
-    verschwundener Prozess oder eine kaputte stat-Datei ergeben None statt
-    einer Exception.
+    Same robustness as process_group(): missing /proc, a
+    vanished process, or a broken stat file all produce None instead of
+    an exception.
     """
-    fields = _stat_felder(pid, proc_root)
+    fields = _stat_fields(pid, proc_root)
     if fields is None or len(fields) < 2:
         return None
     try:
@@ -90,47 +90,47 @@ def _parent_pid(pid: int, proc_root: str | Path) -> int | None:
 
 
 def process_ancestors(
-    pid: int, proc_root: str | Path = "/proc", max_schritte: int = 32
+    pid: int, proc_root: str | Path = "/proc", max_steps: int = 32
 ) -> list[int]:
-    """Vorfahrenkette von pid ueber PPID, naechster Vorfahre zuerst.
+    """Ancestor chain of pid via PPID, nearest ancestor first.
 
-    Grund: Herdrs `agent start` legt den Agenten in eine bestehende
-    interaktive Shell (siehe resolve_agent_id()), aber opencode und claude
-    oeffnen dabei eine **eigene** Prozessgruppe, die der lean-ctx-MCP-Server
-    erbt. Gemessen:
+    Reason: Herdr's `agent start` places the agent into an existing
+    interactive shell (see resolve_agent_id()), but opencode and claude
+    open their **own** process group when they do, which the lean-ctx MCP
+    server inherits. Measured:
 
-        zsh (shell_pid, pgrp=shell_pid) -> opencode/claude (eigene pgrp)
-            -> lean-ctx (erbt die Agenten-pgrp)
+        zsh (shell_pid, pgrp=shell_pid) -> opencode/claude (own pgrp)
+            -> lean-ctx (inherits the agent's pgrp)
 
-    Weder der direkte pid-Treffer noch der Prozessgruppen-Fallback in
-    resolve_agent_id() greifen dann, obwohl shell_pid ein Vorfahre des
-    lean-ctx-Prozesses bleibt — deshalb dieser Walk als dritte Stufe.
+    Neither the direct pid hit nor the process-group fallback in
+    resolve_agent_id() then applies, even though shell_pid remains an
+    ancestor of the lean-ctx process — hence this walk as a third stage.
 
-    Wie process_group(): fehlendes /proc, ein verschwundener Prozess oder
-    eine kaputte stat-Datei ergeben eine leere Liste, nie eine Exception.
-    Begrenzt auf `max_schritte`, damit ein Zyklus in einem kaputten /proc
-    nicht zur Endlosschleife wird; zusaetzlich stoppt die Kette bei PID <= 1
-    und bei einer PID, die schon einmal aufgetaucht ist.
+    Like process_group(): missing /proc, a vanished process, or a
+    broken stat file all produce an empty list, never an exception.
+    Bounded by `max_steps`, so that a cycle in a broken /proc
+    does not become an infinite loop; the chain also stops at PID <= 1
+    and at a PID that has already shown up once.
     """
     kette: list[int] = []
-    gesehen = {pid}
+    seen = {pid}
     aktuell = pid
-    for _ in range(max_schritte):
+    for _ in range(max_steps):
         ppid = _parent_pid(aktuell, proc_root)
-        if ppid is None or ppid <= 1 or ppid in gesehen:
+        if ppid is None or ppid <= 1 or ppid in seen:
             break
         kette.append(ppid)
-        gesehen.add(ppid)
+        seen.add(ppid)
         aktuell = ppid
     return kette
 
 
-def _juengster_agent_id(kandidaten: list[dict[str, Any]]) -> str | None:
-    """Von mehreren Kandidaten den mit dem juengsten started_at waehlen."""
-    if not kandidaten:
+def _newest_agent_id(candidates: list[dict[str, Any]]) -> str | None:
+    """From several candidates, pick the one with the newest started_at."""
+    if not candidates:
         return None
-    juengster = max(kandidaten, key=lambda a: str(a.get("started_at", "")))
-    agent_id = juengster.get("agent_id")
+    newest = max(candidates, key=lambda a: str(a.get("started_at", "")))
+    agent_id = newest.get("agent_id")
     return str(agent_id) if agent_id else None
 
 
@@ -142,7 +142,7 @@ def resolve_agent_id(
     name: str,
     proc_root: str | Path = "/proc",
 ) -> str | None:
-    """Die ganze Kette. None, wenn irgendein Glied fehlt."""
+    """The whole chain. None if any link is missing."""
     if pane_for_agent(agent_list, name) is None:
         return None
     pid = shell_pid_from_process_info(process_info)
@@ -155,23 +155,23 @@ def resolve_agent_id(
 
     pgrp = process_group(pid, proc_root)
     if pgrp is not None:
-        kandidaten = [
+        candidates = [
             a
             for a in agents
             if isinstance(a.get("pid"), int) and process_group(a["pid"], proc_root) == pgrp
         ]
-        gefunden = _juengster_agent_id(kandidaten)
-        if gefunden is not None:
-            return gefunden
+        found = _newest_agent_id(candidates)
+        if found is not None:
+            return found
 
-    # Stufe 3: Vorfahren-Walk. Im echten Betrieb gemessen (siehe
-    # process_ancestors()): opencode/claude oeffnen eine eigene
-    # Prozessgruppe, lean-ctx erbt sie — weder der direkte noch der
-    # Prozessgruppen-Treffer greifen dann, obwohl shell_pid ein Vorfahre
-    # des Registry-Prozesses bleibt.
-    vorfahren_kandidaten = [
+    # Stage 3: ancestor walk. Measured in real operation (see
+    # process_ancestors()): opencode/claude open their own
+    # process group, lean-ctx inherits it — neither the direct nor the
+    # process-group hit then applies, even though shell_pid remains an
+    # ancestor of the registry process.
+    ancestor_candidates = [
         a
         for a in agents
         if isinstance(a.get("pid"), int) and pid in process_ancestors(a["pid"], proc_root)
     ]
-    return _juengster_agent_id(vorfahren_kandidaten)
+    return _newest_agent_id(ancestor_candidates)
