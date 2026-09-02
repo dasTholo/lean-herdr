@@ -1,8 +1,8 @@
-"""Eine Zuteilung = ein Aufruf.
+"""One dispatch = one call.
 
-Reine Mechanik: das Skript fragt kein Modell und trifft keine
-Zuordnungsentscheidung. Wer welche Aufgabe bekommt, entscheidet der
-Orchestrator, bevor er hier hereinkommt.
+Pure mechanics: the script asks no model and makes no assignment decision.
+Who gets which task is decided by the orchestrator, before it comes in
+here.
 """
 
 from __future__ import annotations
@@ -19,16 +19,12 @@ from typing import Any
 
 from lean_herdr.bus import (
     BusError,
-    BusMessage,
     agents_in_registry,
     canonical_root,
-    parse_registry,
     read_registry,
 )
-from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import Herdr
 from lean_herdr.join import resolve_agent_id
-from lean_herdr.leanctx import LeanCtx
 from lean_herdr.worktree import (
     WorktreeOpenFailed,
     WorktrunkMissing,
@@ -36,13 +32,10 @@ from lean_herdr.worktree import (
     ensure_worktree,
 )
 
-#: Voreinstellung je Rolle — gemessene Fixkosten je Schritt:
-#: minimal 2 711, standard 4 920, power 11 559 Token.
+#: Default per role -- measured fixed cost per step:
+#: minimal 2 711, standard 4 920, power 11 559 token.
 PROFILE_BY_ROLE = {"orchestrator": "minimal"}
 DEFAULT_PROFILE = "standard"
-
-#: Antwortkategorien, die eine Aufgabe beenden.
-ANTWORT_KATEGORIEN = ("result", "reject", "blocked")
 
 AGENT_READY_TIMEOUT_S = 45.0
 AGENT_READY_INTERVAL_S = 0.5
@@ -54,11 +47,8 @@ class DispatchRequest:
     kind: str
     model: str
     role_file: Path
-    task_id: str
-    task: str
     worktree: str | None = None
     profile: str | None = None
-    timeout_ms: int = 300_000
 
 
 def profile_for(role: str, override: str | None = None) -> str:
@@ -66,11 +56,11 @@ def profile_for(role: str, override: str | None = None) -> str:
 
 
 def agent_name(role: str, worktree: str | None = None) -> str:
-    """Der Wiederverwendungsschluessel ist (branch, rolle), nicht der Branch allein.
+    """The reuse key is (branch, role), not the branch alone.
 
-    Ein Worktree traegt mehrere Arbeiter — Builder und Reviewer —, und ein
-    Reviewer-Dispatch auf denselben Branch darf niemals den laufenden Builder
-    treffen.
+    A worktree carries several workers -- builder and reviewer -- and a
+    reviewer dispatch onto the same branch must never hit the running
+    builder.
     """
     if not worktree:
         return role
@@ -79,14 +69,14 @@ def agent_name(role: str, worktree: str | None = None) -> str:
 
 
 def agent_args(kind: str, model: str, role_file: Path) -> list[str]:
-    """Native Argumente. Rollentexte gehen als DATEI, nie als Argumenttext (H2)."""
+    """Native arguments. Role prompts travel as a FILE, never as text (H2)."""
     if kind == "claude":
         return ["--model", model, "--append-system-prompt-file", str(role_file)]
     if kind == "opencode":
-        # Der Rollentext haengt bei opencode an agent.<name>.prompt in
-        # opencode.jsonc; hier wird nur der Agent gewaehlt.
+        # With opencode the role prompt hangs on agent.<name>.prompt in
+        # opencode.jsonc; here only the agent is picked.
         return ["--model", model, "--agent", role_file.stem]
-    raise ValueError(f"unbekannter kind: {kind}")
+    raise ValueError(f"unknown kind: {kind}")
 
 
 def wait_for_agent_id(
@@ -99,11 +89,11 @@ def wait_for_agent_id(
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
 ) -> str | None:
-    """Auf den MCP-Server des frisch gestarteten Agenten warten.
+    """Wait for the MCP server of the freshly started agent.
 
-    Blockiert im Shell-Aufruf, nicht im Modell — das ist der billige Teil.
+    Blocks in the shell call, not in the model -- that is the cheap part.
     """
-    frist = now() + timeout_s
+    deadline = now() + timeout_s
     while True:
         agents = herdr.agent_list()
         pane = next((a.get("pane_id") for a in agents if a.get("name") == name), None)
@@ -118,82 +108,68 @@ def wait_for_agent_id(
             )
             if agent_id:
                 return agent_id
-        if now() >= frist:
+        if now() >= deadline:
             return None
         sleep(interval_s)
 
 
-def find_reply(
-    registry: dict[str, Any],
-    *,
-    project_root: str | Path,
-    task_id: str,
-    from_agent: str,
-) -> BusMessage | None:
-    """Juengste Antwort dieses Arbeiters zu dieser Aufgabe."""
-    treffer = [
-        m
-        for m in parse_registry(
-            registry, project_root=project_root, task_id=task_id, from_agent=from_agent
-        )
-        if m.category in ANTWORT_KATEGORIEN
-    ]
-    return max(treffer, key=lambda m: m.timestamp) if treffer else None
-
-
-def _ergebnis(
-    ok: bool, req: DispatchRequest, pane: str | None, agent_id: str | None, **rest: Any
+def _result(
+    ok: bool, pane: str | None, agent_id: str | None, **rest: Any
 ) -> dict[str, Any]:
-    return {"ok": ok, "task_id": req.task_id, "pane": pane, "agent_id": agent_id, **rest}
+    return {"ok": ok, "pane": pane, "agent_id": agent_id, **rest}
 
 
 def dispatch(
     req: DispatchRequest,
     *,
     herdr: Herdr,
-    leanctx: LeanCtx,
     root: Path,
     cwd: Path | None = None,
     registry_path: str | Path | None = None,
     waiter: Callable[..., str | None] = wait_for_agent_id,
 ) -> dict[str, Any]:
-    """Eine ganze Zuteilung. Wirft nie; das Ergebnis traegt `ok`."""
+    """Build one worker. Never raises; the result carries `ok`.
+
+    Creates NO task and does not wait. This process can do neither:
+    `ctx_task create` requires a registered, long-lived MCP agent
+    (tools/ctx_task.rs:12), and a `lean-ctx call` is exactly not that.
+    """
     name = agent_name(req.role, req.worktree)
-    ziel_cwd = cwd if cwd is not None else root
-    # None heisst: im eigenen Workspace teilen (--current). Nur der
-    # Worktree-Fall setzt einen Anker.
-    ziel_pane: str | None = None
+    target_cwd = cwd if cwd is not None else root
+    # None means: split in our own workspace (--current). Only the worktree
+    # case sets an anchor.
+    target_pane: str | None = None
     if req.worktree:
         try:
-            ziel = ensure_worktree(req.worktree, herdr=herdr, cwd=root)
+            target = ensure_worktree(req.worktree, herdr=herdr, cwd=root)
         except WorktrunkMissing:
-            return _ergebnis(False, req, None, None, error="worktrunk_missing")
+            return _result(False, None, None, error="worktrunk_missing")
         except WorktreeOpenFailed as exc:
-            # Nicht weiterlaufen: ein Pane im richtigen Verzeichnis, den der
-            # Abbau nicht kennt, ist schlimmer als ein sauberer Abbruch.
-            return _ergebnis(False, req, None, None, error=f"worktree_open_failed: {exc}")
-        ziel_cwd = ziel.path
-        ziel_pane = anchor_pane(herdr, ziel.workspace_id)
-        if ziel_pane is None:
-            return _ergebnis(False, req, None, None, error="no_anchor_pane")
+            # Do not carry on: a pane in the right directory that teardown
+            # does not know about is worse than a clean abort.
+            return _result(False, None, None, error=f"worktree_open_failed: {exc}")
+        target_cwd = target.path
+        target_pane = anchor_pane(herdr, target.workspace_id)
+        if target_pane is None:
+            return _result(False, None, None, error="no_anchor_pane")
 
-    vorhanden = next((a for a in herdr.agent_list() if a.get("name") == name), None)
-    if vorhanden:
-        pane = str(vorhanden.get("pane_id") or "")
-        # Zwischen zwei Aufgaben zuruecksetzen: /clear deckelt den Kontext auf
-        # die Grundlast und loest KEINEN Lifecycle-Wechsel aus (H4).
+    existing = next((a for a in herdr.agent_list() if a.get("name") == name), None)
+    if existing:
+        pane = str(existing.get("pane_id") or "")
+        # Reset between two tasks: /clear caps the context at the base load
+        # and triggers NO lifecycle change (H4).
         herdr.agent_prompt(name, "/clear", wait=False)
     else:
         pane = herdr.pane_split(
-            ziel_cwd,
-            pane=ziel_pane,
+            target_cwd,
+            pane=target_pane,
             env={
                 "LEAN_CTX_TOOL_PROFILE": profile_for(req.role, req.profile),
                 "LEAN_CTX_ROLE": req.role,
             },
         ) or ""
         if not pane:
-            return _ergebnis(False, req, None, None, error="pane_split_failed")
+            return _result(False, None, None, error="pane_split_failed")
         herdr.agent_start(
             name,
             kind=req.kind,
@@ -203,77 +179,30 @@ def dispatch(
 
     agent_id = waiter(herdr, name, registry_path=registry_path)
     if not agent_id:
-        return _ergebnis(False, req, pane, None, error="no_agent_id")
-
-    # Der Bus traegt den Inhalt, der Prompt nur die Klingel.
-    gepostet = leanctx.post(
-        message=req.task,
-        to_agent=agent_id,
-        task_id=req.task_id,
-        category="task",
-        metadata={"role": req.role, "branch": req.worktree or ""},
-    )
-    if not gepostet.ok:
-        # Ohne Aufgabe auf dem Bus ist die Klingel sinnlos: der Arbeiter faende
-        # nichts und wir haetten am Ende ein irrefuehrendes `no_reply`.
-        return _ergebnis(
-            False, req, pane, agent_id, error=f"post_failed: {gepostet.error}"
-        )
-    herdr.agent_prompt(
-        name,
-        f"Neue Aufgabe {req.task_id} liegt auf dem Bus.",
-        wait=True,
-        timeout_ms=req.timeout_ms,
-    )
-
-    try:
-        registry = read_registry(registry_path)
-    except BusError:
-        return _ergebnis(False, req, pane, agent_id, error="bus_unreadable")
-
-    antwort = find_reply(
-        registry, project_root=root, task_id=req.task_id, from_agent=agent_id
-    )
-    if antwort is not None:
-        return _ergebnis(
-            antwort.category != "blocked",
-            req,
-            pane,
-            agent_id,
-            category=antwort.category,
-            result=antwort.message,
-        )
-
-    # Keine Antwort: die Wahrheit steht in der Sitzungsablage, nicht im Zustand
-    # (H1). Herdr liefert nur die ID; gelesen wird bei Claude die JSONL-Datei,
-    # bei opencode die SQLite-Ablage — `herdr agent export` gibt es nicht.
-    fehler = session_error(
-        req.kind, session_id_from_agent_list(herdr.agent_list(), name), root
-    )
-    if fehler:
-        return _ergebnis(False, req, pane, agent_id, error=f"agent_error: {fehler}")
-    return _ergebnis(False, req, pane, agent_id, error="no_reply")
+        return _result(False, pane, None, error="no_agent_id")
+    # This is the end. The orchestrator creates the task itself through
+    # ctx_task, with exactly this agent_id as to_agent: tasks_for_agent()
+    # compares exactly as a string (core/a2a/task.rs:236), a friendly name
+    # would never find the task.
+    return _result(True, pane, agent_id)
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="herdr-dispatch", description="Eine Zuteilung, ein Aufruf.")
+    p = argparse.ArgumentParser(prog="herdr-dispatch", description="One dispatch, one call.")
     p.add_argument("role", help="builder | reviewer | orchestrator")
     p.add_argument("--kind", required=True, choices=("claude", "opencode"))
     p.add_argument("--model", required=True)
     p.add_argument("--role-file", required=True, type=Path)
-    p.add_argument("--task-id", required=True)
-    p.add_argument("--task", required=True)
-    p.add_argument("--worktree", default=None, help="Branch; der Pane laeuft in dessen Worktree")
-    p.add_argument("--profile", default=None, help="ueberschreibt die Voreinstellung der Rolle")
-    p.add_argument("--timeout-ms", type=int, default=300_000)
+    p.add_argument("--worktree", default=None, help="branch; the pane runs in its worktree")
+    p.add_argument("--profile", default=None, help="overrides the default of the role")
     return p
 
 
 def main(argv: list[str] | None = None) -> int:
-    """Ausgabe: eine JSON-Zeile auf stdout. Exit IMMER 0.
+    """Output: one JSON line on stdout. Exit ALWAYS 0.
 
-    Der Orchestrator liest `ok`, nicht den Exit-Code — damit ein Fehlschlag
-    nicht seinen Shell-Aufruf abbricht.
+    The orchestrator reads `ok`, not the exit code -- so that a failure does
+    not abort its shell call.
     """
     args = build_parser().parse_args(argv)
     req = DispatchRequest(
@@ -281,25 +210,14 @@ def main(argv: list[str] | None = None) -> int:
         kind=args.kind,
         model=args.model,
         role_file=args.role_file,
-        task_id=args.task_id,
-        task=args.task,
         worktree=args.worktree,
         profile=args.profile,
-        timeout_ms=args.timeout_ms,
     )
     try:
         root = canonical_root()
         herdr = Herdr()
-        ergebnis = dispatch(
-            req, herdr=herdr, leanctx=LeanCtx(root), root=root, cwd=root
-        )
-    except Exception as exc:  # noqa: BLE001 -- nie den Aufrufer abbrechen
-        ergebnis = {
-            "ok": False,
-            "task_id": req.task_id,
-            "pane": None,
-            "agent_id": None,
-            "error": f"dispatch_crashed: {exc}",
-        }
-    sys.stdout.write(json.dumps(ergebnis, ensure_ascii=False) + "\n")
+        result = dispatch(req, herdr=herdr, root=root, cwd=root)
+    except Exception as exc:  # noqa: BLE001 -- never abort the caller
+        result = {"ok": False, "error": f"dispatch_crashed: {exc}"}
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
     return 0

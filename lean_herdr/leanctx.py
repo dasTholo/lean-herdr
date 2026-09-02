@@ -121,11 +121,17 @@ class LeanCtx:
         category: str = "task",
         metadata: dict[str, Any] | None = None,
     ) -> CtxAntwort:
-        """Nachricht auf den Bus legen.
+        """Put a message on the bus. NOT usable for work orders.
 
-        `to_agent` MUSS eine lean-ctx-agent_id sein. Ein freundlicher Name wird
-        stumm angenommen und nie zugestellt (B7) — der Aufrufer loest ihn ueber
-        den PID-Join auf.
+        From a CLI process this always posts as `anonymous`: registration is
+        bound to the pid of a short-lived process (B-2), and the role prompts
+        rightly refuse `anonymous` as a client. And `task_id` never arrives:
+        every write path of `ctx_agent post` hard-sets it to `None`
+        (core/agents/registry.rs:430, shared.rs:31). Work orders therefore run
+        through `ctx_task`, see lean_herdr/tasks.py.
+
+        `to_agent` MUST be a lean-ctx agent_id. A friendly name is accepted
+        silently and never delivered (B7).
         """
         args: dict[str, Any] = {"action": "post", "message": message, "category": category}
         if to_agent:

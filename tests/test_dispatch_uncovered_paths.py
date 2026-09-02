@@ -7,13 +7,13 @@
    exercised; the only main() test in test_dispatch.py covers exclusively
    the crash-before-construction path.
 3. wait_for_agent_id() -- and with it Herdr.pane_process_info() and the PID
-   join in lean_herdr.join -- was never run for real; all 17 tests in
-   test_dispatch.py inject `waiter=lambda *a, **kw: agent_id`.
+   join in lean_herdr.join -- was never run for real; every test in
+   test_dispatch.py injects `waiter=lambda *a, **kw: agent_id`.
 4. The `pane_split_failed` branch is reachable but had no dedicated unit
    test.
 
-Production code (lean_herdr/*.py, bin/herdr-dispatch) and the existing
-tests/test_dispatch.py are untouched -- this file only adds new tests.
+Production code (lean_herdr/*.py, bin/herdr-dispatch) is not driven from
+here in any special way -- this file only adds tests.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ from lean_herdr.dispatch import (
     wait_for_agent_id,
 )
 from lean_herdr.herdr import Herdr
-from lean_herdr.leanctx import LeanCtx
 from tests.doubles import FakeProc, which_stub
 
 ROOT = Path("/repo")
@@ -43,22 +42,12 @@ def make_request(**kwargs) -> DispatchRequest:
         "kind": "claude",
         "model": "sonnet",
         "role_file": Path("roles/builder.md"),
-        "task_id": "T1",
-        "task": "Build the foo function.",
     }
     return DispatchRequest(**{**base, **kwargs})  # ty: ignore[invalid-argument-type]
 
 
-def make_registry(*messages: dict) -> dict:
-    return {"agents": [{"agent_id": AGENT_ID, "pid": 42}], "scratchpad": list(messages)}
-
-
-def make_reply(category: str = "result", task_id: str = "T1", **rest) -> dict:
-    return {
-        "id": "m1", "from_agent": AGENT_ID, "to_agent": "orch", "task_id": task_id,
-        "category": category, "message": "done, three tests green",
-        "project_root": str(ROOT), "timestamp": "2026-09-01T10:00:00Z", **rest,
-    }
+def make_registry() -> dict:
+    return {"agents": [{"agent_id": AGENT_ID, "pid": 42}]}
 
 
 @pytest.fixture
@@ -77,18 +66,17 @@ def test_dispatch_forwards_explicit_cwd_to_pane_split_not_root(world):
     """dispatch(cwd=...) must reach Herdr.pane_split() verbatim, not `root`.
 
     Mutation check (done outside the repo, see task report): setting
-    `ziel_cwd = root` inside dispatch() turns this test red. Every one of
-    the 17 tests in test_dispatch.py stays green under that mutation
-    because none of them ever pass a `cwd` that differs from `root`.
+    `target_cwd = root` inside dispatch() turns this test red. Every test in
+    test_dispatch.py stays green under that mutation because none of them
+    ever pass a `cwd` that differs from `root`.
     """
-    h_proc, l_proc, registry_path = world
+    h_proc, _, registry_path = world
     other_cwd = Path("/worktrees/feat-auth")
-    registry_path.write_text(json.dumps(make_registry(make_reply())), encoding="utf-8")
+    registry_path.write_text(json.dumps(make_registry()), encoding="utf-8")
 
     dispatch(
         make_request(),
         herdr=Herdr(runner=h_proc),
-        leanctx=LeanCtx(ROOT, runner=l_proc),
         root=ROOT,
         cwd=other_cwd,
         registry_path=registry_path,
@@ -119,30 +107,23 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
     monkeypatch.setattr("subprocess.Popen", _forbidden)
 
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
-    monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
     monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: ROOT)
 
-    h_proc, l_proc = FakeProc(), FakeProc()
+    h_proc = FakeProc()
     h_proc.replies = {
         ("agent", "list"): {
             "result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}
         },
         ("pane", "process-info"): {"result": {"process_info": {"shell_pid": 4242}}},
     }
-    registry = {
-        "agents": [{"agent_id": AGENT_ID, "pid": 4242}],
-        "scratchpad": [make_reply()],
-    }
+    registry = {"agents": [{"agent_id": AGENT_ID, "pid": 4242}]}
     monkeypatch.setattr("lean_herdr.dispatch.Herdr", lambda *a, **kw: Herdr(runner=h_proc))
-    monkeypatch.setattr(
-        "lean_herdr.dispatch.LeanCtx", lambda root: LeanCtx(root, runner=l_proc)
-    )
     monkeypatch.setattr("lean_herdr.dispatch.read_registry", lambda *a, **kw: registry)
 
     code = main(
         [
             "builder", "--kind", "claude", "--model", "sonnet",
-            "--role-file", "roles/builder.md", "--task-id", "T1", "--task", "x",
+            "--role-file", "roles/builder.md",
         ]
     )
 
@@ -150,14 +131,7 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 1
     result = json.loads(lines[0])
-    assert result == {
-        "ok": True,
-        "task_id": "T1",
-        "pane": "w1:p6",
-        "agent_id": AGENT_ID,
-        "category": "result",
-        "result": "done, three tests green",
-    }
+    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
 
 
 # -- Gap 3: wait_for_agent_id() run for real -------------------------------
@@ -227,8 +201,7 @@ def test_dispatch_reports_pane_split_failed_when_herdr_gives_no_pane(
     writes -- not silently continue or crash.
     """
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
-    monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
-    h_proc, l_proc = FakeProc(), FakeProc()
+    h_proc = FakeProc()
     h_proc.replies = {
         ("agent", "list"): {"result": {"agents": []}},
         ("pane", "split"): {"result": {}},  # no pane_id -> pane_split() returns None
@@ -239,7 +212,6 @@ def test_dispatch_reports_pane_split_failed_when_herdr_gives_no_pane(
     result = dispatch(
         make_request(),
         herdr=Herdr(runner=h_proc),
-        leanctx=LeanCtx(ROOT, runner=l_proc),
         root=ROOT,
         registry_path=registry_path,
         waiter=lambda *a, **kw: pytest.fail(
@@ -249,7 +221,6 @@ def test_dispatch_reports_pane_split_failed_when_herdr_gives_no_pane(
 
     assert result == {
         "ok": False,
-        "task_id": "T1",
         "pane": None,
         "agent_id": None,
         "error": "pane_split_failed",
@@ -279,7 +250,7 @@ def test_dispatch_reports_worktree_open_failed_and_splits_no_pane(world):
     aborting here: a pane in the right directory that teardown does not know
     about is worse than a clean abort.
     """
-    h_proc, l_proc, registry_path = world
+    h_proc, _, registry_path = world
     h_proc.replies = {
         ("worktree", "list"): {
             "result": {
@@ -289,12 +260,11 @@ def test_dispatch_reports_worktree_open_failed_and_splits_no_pane(world):
         },
         ("worktree", "open"): {"error": {"code": "linked_worktree_source"}},
     }
-    registry_path.write_text(json.dumps(make_registry(make_reply())), encoding="utf-8")
+    registry_path.write_text(json.dumps(make_registry()), encoding="utf-8")
 
     result = dispatch(
         make_request(worktree="feat/auth"),
         herdr=Herdr(runner=h_proc),
-        leanctx=LeanCtx(ROOT, runner=l_proc),
         root=ROOT,
         registry_path=registry_path,
         waiter=lambda *a, **kw: AGENT_ID,
