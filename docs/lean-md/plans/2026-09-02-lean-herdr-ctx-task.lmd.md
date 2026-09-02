@@ -2592,16 +2592,22 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
 `lean_herdr/dispatch.py`:
 
 - `PROFILE_BY_ROLE` und `DEFAULT_PROFILE` (`lean_herdr/dispatch.py:41-43`)
-  entfallen hier — sie leben ab jetzt in `settings.py`.
+  entfallen hier als eigene Definition — sie leben ab jetzt in `settings.py`
+  und werden von dort importiert, denn `profile_for()` und die erste Zeile
+  von `dispatch()` brauchen den Rollen-Default weiterhin (siehe unten;
+  Review-Befund: `role` blieb sonst ungelesen und die Vorgabe des
+  Orchestrators fiel still auf `standard` zurueck).
 - Neuer Import:
-  `from lean_herdr.settings import SETTINGS_PATH, RoleSettings, read_settings, settings_for`
+  `from lean_herdr.settings import DEFAULT_PROFILE, PROFILE_BY_ROLE, SETTINGS_PATH, RoleSettings, SettingsError, read_settings, settings_for`
 - `profile_for()` und `agent_name()` werden ersetzt:
 
     def profile_for(
         role: str, override: str | None = None, *, settings: RoleSettings | None = None
     ) -> str:
         """CLI flag beats file beats built-in default."""
-        return override or (settings or RoleSettings()).profile
+        return override or (
+            settings or RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
+        ).profile
 
 
     def agent_name(
@@ -2627,7 +2633,7 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
   `waiter(herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s)`.
   Erste Zeile des Rumpfs:
 
-        cfg = settings or RoleSettings()
+        cfg = settings or RoleSettings(profile=PROFILE_BY_ROLE.get(req.role, DEFAULT_PROFILE))
 
 - `await_task()` bekommt denselben Parameter und reicht ihn an `agent_name()`
   durch — sonst klingelte der Warte-Modus bei einem anders benannten Agenten als
@@ -2646,9 +2652,13 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
   ausschliessen. `root` ersetzt zugleich den bisherigen `canonical_root()`-Aufruf
   in beiden Zweigen; er wird nur noch einmal gemacht.
 
-  Ein `SettingsError` faellt in den bestehenden `except Exception`-Zweig und
-  erscheint als `dispatch_crashed: <text>` in der JSON-Zeile — laut und mit
-  Ursache, ohne den Aufrufer abzubrechen.
+  Ein `SettingsError` wird VOR dem allgemeinen `except Exception`-Zweig
+  abgefangen und erscheint als `config_error: <text>` in der JSON-Zeile — ein
+  falscher Konfigurationswert ist kein Absturz, sondern ein Bedienfehler,
+  laut und mit Ursache, ohne den Aufrufer abzubrechen (Review-Befund:
+  `main()` faengt in dieser Reihenfolge ab: `UsageError` -- schon vor dem
+  Laden der Konfiguration geprueft --, dann `SettingsError`, erst danach die
+  allgemeine `Exception`).
 
 `README.md` — neuer Abschnitt vor "## Entwicklung" (Betreiberdoku, bleibt
 deutsch):

@@ -66,6 +66,23 @@ def test_the_cli_flag_beats_the_file():
     assert profile_for("builder", "minimal", settings=cfg) == "minimal"
 
 
+def test_profile_for_falls_back_to_the_role_default_without_settings():
+    """No `settings` at all must still give each role its built-in default --
+    the orchestrator's `minimal` was silently lost once `role` stopped being
+    read (review finding)."""
+    assert profile_for("orchestrator") == "minimal"
+    assert profile_for("builder") == "standard"
+
+
+def test_profile_for_override_beats_the_role_default_too():
+    assert profile_for("orchestrator", "power") == "power"
+
+
+def test_profile_for_explicit_settings_beats_the_role_default_too():
+    cfg = RoleSettings(profile="power")
+    assert profile_for("orchestrator", settings=cfg) == "power"
+
+
 def test_agent_name_follows_the_template():
     cfg = RoleSettings(name_template="{branch}--{role}")
     assert agent_name("builder", "feat/auth", settings=cfg) == "feat-auth--builder"
@@ -102,6 +119,16 @@ def test_the_profile_is_set_on_the_pane_not_on_the_agent(world):
     assert h_proc.called_with("--env", "LEAN_CTX_ROLE=builder")
     start = next(c for c in h_proc.calls if c[1:3] == ["agent", "start"])
     assert "--env" not in start, "agent start knows no --env (H9)"
+
+
+def test_dispatch_with_no_settings_still_gives_the_orchestrator_its_minimal_profile(
+    world,
+):
+    """Same argv as before Task 7: `settings=None` must not fall back to
+    `standard` for a role that has its own built-in default."""
+    h_proc, _, _ = world
+    run_dispatch(world, reg=registry(), request=req(role="orchestrator"))
+    assert h_proc.called_with("--env", "LEAN_CTX_TOOL_PROFILE=minimal")
 
 
 def test_layout_from_the_config_reaches_herdr(world):
@@ -210,7 +237,10 @@ def test_a_broken_config_is_one_json_line_with_ok_false(monkeypatch, tmp_path, c
     """A present-but-wrong config is an error -- never a silent fallback.
 
     And it reaches the orchestrator the way every other failure does: exit 0,
-    one JSON line, `ok: false`. Not as a traceback, not as exit 1.
+    one JSON line, `ok: false`, `error` starting with `config_error:` and
+    carrying the underlying reason. Not `dispatch_crashed:` -- nothing
+    crashed, an operator wrote a wrong value -- and never a traceback or
+    exit 1.
     """
     root = tmp_path / "repo"
     _write_config(root, '[default]\ndirection = "links"\n')
@@ -226,7 +256,43 @@ def test_a_broken_config_is_one_json_line_with_ok_false(monkeypatch, tmp_path, c
     assert len(lines) == 1
     result = json.loads(lines[0])
     assert result["ok"] is False
+    assert result["error"].startswith("config_error:"), result["error"]
     assert "direction" in result["error"], result["error"]
+
+
+def test_a_broken_config_is_a_config_error_in_await_mode_too(
+    monkeypatch, tmp_path, capsys
+):
+    """`--await` reads the same config through the same code path -- a wrong
+    file must not wear the `dispatch_crashed:` label there either."""
+    root = tmp_path / "repo"
+    _write_config(root, '[default]\ndirection = "links"\n')
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+
+    code = main(["builder", "--kind", "claude", "--await", "--task-id", "T1"])
+
+    assert code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    result = json.loads(lines[0])
+    assert result["ok"] is False
+    assert result["error"].startswith("config_error:"), result["error"]
+    assert "direction" in result["error"], result["error"]
+
+
+def test_a_usage_error_still_wins_over_a_broken_config(monkeypatch, tmp_path, capsys):
+    """Ordering must not shift: missing flags are validated BEFORE the config
+    is even loaded, so a broken config never masks a usage error."""
+    root = tmp_path / "repo"
+    _write_config(root, '[default]\ndirection = "links"\n')
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+
+    code = main(["builder", "--kind", "claude"])  # missing --model / --role-file
+
+    assert code == 0
+    result = json.loads(capsys.readouterr().out.strip())
+    assert result["ok"] is False
+    assert result["error"].startswith("usage_error:"), result["error"]
 
 
 def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch):

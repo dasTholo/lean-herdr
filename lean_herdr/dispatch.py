@@ -27,8 +27,11 @@ from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import Herdr
 from lean_herdr.join import resolve_agent_id
 from lean_herdr.settings import (
+    DEFAULT_PROFILE,
+    PROFILE_BY_ROLE,
     SETTINGS_PATH,
     RoleSettings,
+    SettingsError,
     read_settings,
     settings_for,
 )
@@ -82,7 +85,9 @@ def profile_for(
     role: str, override: str | None = None, *, settings: RoleSettings | None = None
 ) -> str:
     """CLI flag beats file beats built-in default."""
-    return override or (settings or RoleSettings()).profile
+    return override or (
+        settings or RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
+    ).profile
 
 
 def agent_name(
@@ -169,7 +174,7 @@ def dispatch(
     `ctx_task create` requires a registered, long-lived MCP agent
     (tools/ctx_task.rs:12), and a `lean-ctx call` is exactly not that.
     """
-    cfg = settings or RoleSettings()
+    cfg = settings or RoleSettings(profile=PROFILE_BY_ROLE.get(req.role, DEFAULT_PROFILE))
     name = agent_name(req.role, req.worktree, settings=cfg)
     target_cwd = cwd if cwd is not None else root
     # None means: split in our own workspace (--current). Only the worktree
@@ -439,8 +444,9 @@ def main(argv: list[str] | None = None) -> int:
             # SETTINGS_PATH is RELATIVE -- anchored on anything but the
             # canonical root the file would silently not be found as soon as
             # bin/herdr-dispatch runs from a subdirectory or a worktree.
-            # A SettingsError lands in the except Exception branch below and
-            # reaches the caller as `dispatch_crashed: <reason>`.
+            # A SettingsError is caught below and reaches the caller as
+            # `config_error: <reason>` -- an operator's wrong config value is
+            # not a crash.
             root = canonical_root()
             settings = settings_for(args.role, read_settings(root / SETTINGS_PATH))
             if args.waiting:
@@ -473,6 +479,8 @@ def main(argv: list[str] | None = None) -> int:
                 )
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}
+    except SettingsError as exc:
+        result = {"ok": False, "error": f"config_error: {exc}"}
     except Exception as exc:  # noqa: BLE001 -- never abort the caller
         result = {"ok": False, "error": f"dispatch_crashed: {exc}"}
     sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
