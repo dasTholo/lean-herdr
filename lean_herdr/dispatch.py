@@ -300,11 +300,11 @@ def _worker_root(worktree: str | None, *, herdr: Herdr, root: Path) -> Path:
     if not worktree:
         return root
     try:
-        eintrag = find_worktree(herdr.worktree_list(root), worktree)
-        pfad = eintrag.get("path") if isinstance(eintrag, dict) else None
+        entry = find_worktree(herdr.worktree_list(root), worktree)
+        path = entry.get("path") if isinstance(entry, dict) else None
     except (TypeError, AttributeError, KeyError):
         return root
-    return Path(pfad) if pfad else root
+    return Path(path) if path else root
 
 
 def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:

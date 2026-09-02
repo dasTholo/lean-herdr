@@ -2,11 +2,11 @@ id = "lean.herdr"
 name = "lean-herdr context"
 version = "0.1.0"
 min_herdr_version = "0.8.0"
-description = "Zeigt den lean-ctx-Kontext je Pane und Workspace und traegt ihn ueber Serverneustarts."
+description = "Shows the lean-ctx context per pane and workspace and carries it across server restarts."
 platforms = ["linux", "macos"]
 
-# Es gibt kein startup-Event: nach einem Serverneustart legt Herdr die
-# Workspaces neu an, und genau das ist der Wiederaufnahme-Moment.
+# There is no startup event: after a server restart Herdr recreates the
+# workspaces, and that is exactly the moment to resume.
 [[events]]
 on = "workspace.created"
 command = ["python3", "-m", "lean_herdr", "workspace-created"]
@@ -15,7 +15,7 @@ command = ["python3", "-m", "lean_herdr", "workspace-created"]
 on = "workspace.focused"
 command = ["python3", "-m", "lean_herdr", "workspace-created"]
 
-# Auch nach `claude --resume`.
+# Fires after `claude --resume` as well.
 [[events]]
 on = "pane.agent_detected"
 command = ["python3", "-m", "lean_herdr", "pane-detected"]
@@ -24,20 +24,20 @@ command = ["python3", "-m", "lean_herdr", "pane-detected"]
 on = "pane.agent_status_changed"
 command = ["python3", "-m", "lean_herdr", "status-changed"]
 
-# Zustellung ist eine bewusste Geste, nie Automatik: automatisches Prompten
-# aus einem Handler liefe waehrend agent_blocked und stoerte beim Tippen.
+# Delivery is a deliberate gesture, never automatic: prompting from a handler
+# would fire during agent_blocked and interrupt typing.
 [[actions]]
 id = "inject"
-title = "lean-ctx-Digest in den Agenten dieses Panes schicken"
+title = "Send the lean-ctx digest to this pane's agent"
 contexts = ["pane"]
 command = ["python3", "-m", "lean_herdr", "inject"]
 
-# Der Ein-Tastendruck-Bootstrap: Pane mit minimal-Profil aufmachen und den
-# opencode-Orchestrator darin starten. Workspace-Kontext, weil der neue Pane
-# in DIESEN Workspace gehoert.
+# The one-keystroke bootstrap: open a pane with the minimal profile and start
+# the opencode orchestrator in it. Workspace context, because the new pane
+# belongs in THIS workspace.
 [[actions]]
 id = "bootstrap"
-title = "Orchestrator in diesem Workspace starten"
-description = "Legt einen Pane mit LEAN_CTX_TOOL_PROFILE=minimal an und startet den opencode-Orchestrator darin."
+title = "Start the orchestrator in this workspace"
+description = "Creates a pane with LEAN_CTX_TOOL_PROFILE=minimal and starts the opencode orchestrator in it."
 contexts = ["workspace"]
 command = ["python3", "-m", "lean_herdr", "bootstrap"]

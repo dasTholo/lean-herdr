@@ -1,4 +1,4 @@
-"""Profil-Test: `minimal` muss ctx_call enthalten."""
+"""Profile test: `minimal` must carry ctx_call."""
 
 import json
 import os
@@ -21,21 +21,21 @@ INITIALIZED = {"jsonrpc": "2.0", "method": "notifications/initialized"}
 LIST = {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}}
 
 
-def tools_unter(profil: str, tmp_path) -> set[str]:
-    """Echter stdio-Handshake gegen den installierten Server.
+def tools_under(profile: str, tmp_path) -> set[str]:
+    """Real stdio handshake against the installed server.
 
-    HOME zeigt auf tmp_path, damit keine Nutzerkonfiguration mitspricht — aber
-    PATH bleibt der echte. lean-ctx liegt typischerweise in `~/.cargo/bin` oder
-    `~/.local/bin`; ein zusammengesetzter Minimal-PATH wuerde den Server nicht
-    mehr finden, und der Test scheiterte an sich selbst statt am Profil.
+    HOME points at tmp_path so that no user configuration has a say -- but
+    PATH stays the real one. lean-ctx typically lives in `~/.cargo/bin` or
+    `~/.local/bin`; a hand-assembled minimal PATH would no longer find the
+    server, and the test would fail on itself instead of on the profile.
     """
     binary = shutil.which("lean-ctx")
     if binary is None:
-        pytest.skip("lean-ctx nicht installiert")
-    eingabe = "".join(json.dumps(m) + "\n" for m in (INITIALIZE, INITIALIZED, LIST))
+        pytest.skip("lean-ctx not installed")
+    stdin_text = "".join(json.dumps(m) + "\n" for m in (INITIALIZE, INITIALIZED, LIST))
     proc = subprocess.run(
         [binary],
-        input=eingabe,
+        input=stdin_text,
         capture_output=True,
         text=True,
         timeout=60,
@@ -44,29 +44,29 @@ def tools_unter(profil: str, tmp_path) -> set[str]:
         env={
             **os.environ,
             "HOME": str(tmp_path),
-            "LEAN_CTX_TOOL_PROFILE": profil,
+            "LEAN_CTX_TOOL_PROFILE": profile,
         },
     )
-    namen: set[str] = set()
-    for zeile in proc.stdout.splitlines():
+    names: set[str] = set()
+    for line in proc.stdout.splitlines():
         try:
-            nachricht = json.loads(zeile)
+            message = json.loads(line)
         except json.JSONDecodeError:
             continue
-        for tool in (nachricht.get("result") or {}).get("tools") or ():
-            namen.add(tool["name"])
-    return namen
+        for tool in (message.get("result") or {}).get("tools") or ():
+            names.add(tool["name"])
+    return names
 
 
-def test_minimal_enthaelt_ctx_call(tmp_path):
-    namen = tools_unter("minimal", tmp_path)
-    assert namen, "tools/list lieferte nichts — Handshake gescheitert?"
-    assert "ctx_call" in namen, (
-        "Der Orchestrator erreicht ctx_agent ausschliesslich ueber ctx_call. "
-        "Ohne ctx_call verstummt er, ohne einen Fehler zu melden."
+def test_minimal_carries_ctx_call(tmp_path):
+    names = tools_under("minimal", tmp_path)
+    assert names, "tools/list returned nothing -- handshake failed?"
+    assert "ctx_call" in names, (
+        "The orchestrator reaches ctx_agent exclusively through ctx_call. "
+        "Without ctx_call it goes silent without reporting an error."
     )
-    assert len(namen) <= 12, f"minimal ist gewachsen: {sorted(namen)}"
+    assert len(names) <= 12, f"minimal has grown: {sorted(names)}"
 
 
-def test_standard_bringt_ctx_session_mit(tmp_path):
-    assert {"ctx_call", "ctx_session"} <= tools_unter("standard", tmp_path)
+def test_standard_brings_ctx_session_along(tmp_path):
+    assert {"ctx_call", "ctx_session"} <= tools_under("standard", tmp_path)

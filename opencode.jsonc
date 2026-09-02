@@ -1,9 +1,9 @@
 {
-  // Projektkonfiguration fuer opencode.
+  // Project configuration for opencode.
   "$schema": "https://opencode.ai/config.json",
 
-  // lean-ctx wrap kennt opencode nicht — die MCP-Registrierung ist Handarbeit.
-  // Das Kommando OHNE Unterkommando ist der stdio-Server; `serve` waere HTTP.
+  // lean-ctx wrap does not know opencode -- the MCP registration is manual.
+  // The command WITHOUT a subcommand is the stdio server; `serve` would be HTTP.
   "mcp": {
     "lean-ctx": {
       "type": "local",
@@ -14,15 +14,15 @@
 
   "agent": {
     "orchestrator": {
-      "description": "Verteilt Aufgaben an Arbeiter-Agenten. Schreibt selbst keinen Code.",
+      "description": "Hands tasks to worker agents. Writes no code itself.",
       "mode": "primary",
       "prompt": "{file:./roles/orchestrator.md}",
-      // Der einzige Kandidat fuer einen Kostendeckel: max_cost_usd in der
-      // lean-ctx-Rolle zaehlt kein Geld, sondern eine Tool-I/O-Schaetzung (B5).
+      // The only candidate for a cost cap: max_cost_usd in the lean-ctx role
+      // counts no money, but a tool-I/O estimate (B5).
       "steps": 60,
-      // Hier — und nur hier — greift Durchsetzung. Die lean-ctx-Rolle ist ein
-      // Kontextformer, kein Waechter: [tools] allowed/denied wird nicht
-      // durchgesetzt (B4).
+      // Here -- and only here -- enforcement bites. The lean-ctx role is a
+      // context shaper, not a guard: [tools] allowed/denied is not enforced
+      // (B4).
       "permission": {
         "edit": "deny",
         "write": "deny",
@@ -37,7 +37,7 @@
       }
     },
     "reviewer": {
-      "description": "Prueft die Arbeit des Builders. Antwortet mit category result oder reject.",
+      "description": "Reviews the builder's work. Answers with a verdict of result or reject.",
       "mode": "primary",
       "prompt": "{file:./roles/reviewer.md}",
       "steps": 40,

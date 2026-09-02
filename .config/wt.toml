@@ -1,15 +1,15 @@
-# worktrunk-Projekthooks. Projekt-Hooks brauchen beim ersten Lauf eine
-# Freigabe: `wt config approvals`.
+# worktrunk project hooks. Project hooks need an approval on their first run:
+# `wt config approvals`.
 #
-# pre-merge ist das Testtor: worktrunk fuehrt es nach dem Rebase und VOR dem
-# Merge aus, ein Fehlschlag bricht den Merge ab. Damit gibt es eine Pruefung,
-# die nicht von einem Modellurteil abhaengt.
+# pre-merge is the test gate: worktrunk runs it after the rebase and BEFORE the
+# merge, and a failure aborts the merge. That gives one check which does not
+# hang on a model's judgement.
 
 [pre-merge]
 test = "uv run pytest -q"
 
-# W2: `wt list --format=json` gibt heute Schema 1 aus und kuendigt Schema 2 als
-# kuenftige Voreinstellung an. Festgenagelt, damit sich die Ausgabeform nicht
-# unter einem Skript aendert — auch wenn dieser Entwurf `wt list` nicht parst.
+# W2: `wt list --format=json` emits schema 1 today and announces schema 2 as the
+# future default. Pinned so the output shape cannot shift under a script -- even
+# though this design never parses `wt list`.
 [list]
 json-schema = 1

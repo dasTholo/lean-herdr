@@ -1,7 +1,7 @@
 [project]
 name = "lean-herdr"
 version = "0.1.0"
-description = "Orchestrator-Workspace zwischen Herdr und lean-ctx"
+description = "Orchestrator workspace between Herdr and lean-ctx"
 requires-python = ">=3.14"
 dependencies = []
 
@@ -20,17 +20,17 @@ line-length = 100
 target-version = "py314"
 
 [tool.ruff.lint.per-file-ignores]
-# PGH005 haelt FakeProc.called_with(...) fuer eine Mock-Assertion. FakeProc ist
-# kein Mock, called_with eine real definierte Methode in tests/doubles.py.
+# PGH005 takes FakeProc.called_with(...) for a mock assertion. FakeProc is no
+# mock, and called_with is a real method defined in tests/doubles.py.
 "tests/*.py" = ["PGH005"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Integrationstests laufen NUR auf ausdrueckliche Anforderung (`-m integration`).
-# Ohne das hier fuehrt ein blosses `pytest -q` sie mit aus, sobald die Binaries
-# installiert sind — und `herdr plugin link` registriert dann echt ein Plugin im
-# System des Nutzers. Genau das ist einmal passiert.
+# Integration tests run ONLY on explicit request (`-m integration`). Without
+# this line a bare `pytest -q` runs them along as soon as the binaries are
+# installed -- and `herdr plugin link` then really registers a plugin in the
+# user's system. That happened exactly once.
 addopts = "-m 'not integration'"
 markers = [
-    "integration: braucht echte lean-ctx-/herdr-/wt-Binaries, nicht in CI",
+    "integration: needs real lean-ctx/herdr/wt binaries, not in CI",
 ]
