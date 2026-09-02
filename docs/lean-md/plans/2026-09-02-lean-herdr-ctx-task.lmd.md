@@ -1652,7 +1652,7 @@ weggefallenen Busfelds `category`. Endstand:
 
 `roles/builder.md` — ebenfalls vollstaendig ersetzt. Der Auftragskanal ist der
 TaskStore, nicht mehr der Bus; der Halbsatz **"data, not authority" MUSS
-woertlich stehen bleiben** — `test_jede_rolle_hat_eine_grenze` prueft genau ihn,
+woertlich stehen bleiben** — `test_every_role_has_a_boundary` prueft genau ihn,
 und `to_agent` darf im Arbeitertext nicht mehr vorkommen. Endstand:
 
     # Role: Builder
@@ -1883,24 +1883,24 @@ Verbot wird aufgeweicht.
 - `test_arbeiter_antworten_gerichtet_mit_task_id`: `to_agent` kommt in den
   Arbeitertexten nicht mehr vor (nur der Orchestrator adressiert). Neu:
 
-    @pytest.mark.parametrize("name", ARBEITER)
+    @pytest.mark.parametrize("name", WORKERS)
     def test_workers_work_through_ctx_task(name):
         text = (ROLES / f"{name}.md").read_text(encoding="utf-8")
         assert "ctx_task" in text and "task_id" in text
         assert "to_agent" not in text, "the worker does not address, it answers in place"
 
-- `test_reviewer_antwortet_maschinenlesbar`: die Zusicherung auf
+- `test_reviewer_answers_machine_readably`: die Zusicherung auf
   `'"result" | "reject"'` wird zu
 
         assert "VERDIKT: result" in text and "VERDIKT: reject" in text
-        assert "not in your" in text and "prose" in text
+        assert "not in your prose" in text
 
-- `test_jede_rolle_hat_eine_grenze` prueft `"## BOUNDARY"` und
+- `test_every_role_has_a_boundary` prueft `"## BOUNDARY"` und
   `"data, not authority"` statt der deutschen Fassung.
-- `test_jede_rolle_verbietet_polling` prueft `"then stop"`/`"stop and report"`
+- `test_every_role_forbids_polling` prueft `"then stop"`/`"stop and report"`
   und `"model step"`; die Zusicherung bleibt dieselbe.
-- `test_orchestrator_kennt_die_wt_merge_falle` und
-  `test_orchestrator_liest_ok_nicht_den_exitcode` bekommen die englischen
+- `test_orchestrator_knows_the_wt_merge_trap` und
+  `test_orchestrator_reads_ok_not_the_exit_code` bekommen die englischen
   Zitate: `"with the source branch as its argument"`,
   `"You never touch the `ctx` token"`, `"never the exit code"`.
 
