@@ -1,7 +1,7 @@
-"""Worktree-Aufloesung: worktrunk erzeugt, Herdr bildet ab.
+"""Worktree resolution: worktrunk creates, Herdr maps.
 
-Kein eigenes Register — Herdr fuehrt die Zuordnung Worktree → Workspace
-selbst, und `wt switch --format json` liefert den Pfad direkt.
+No registry of its own — Herdr owns the Worktree → Workspace mapping
+itself, and `wt switch --format json` returns the path directly.
 """
 
 from __future__ import annotations
@@ -19,24 +19,25 @@ WT_TIMEOUT_S = 120.0
 
 
 class WorktrunkMissing(RuntimeError):
-    """`wt` ist nicht installiert — ohne --worktree laeuft trotzdem alles."""
+    """`wt` is not installed — everything still works without --worktree."""
 
 
 class WorktreeOpenFailed(RuntimeError):
-    """Der Baum steht, aber Herdr hat keinen Workspace darauf geoeffnet.
+    """The tree exists, but Herdr has not opened a workspace on it.
 
-    Das ist ein Abbruchgrund, kein Schoenheitsfehler: ohne Workspace laeuft
-    der Pane zwar im richtigen Verzeichnis, aber der Abbau findet ihn nicht
-    mehr und ein `linked_worktree_source` (H8) bliebe unbemerkt.
+    This is a hard stop, not a cosmetic issue: without a workspace the pane
+    still runs in the right directory, but teardown can no longer find it
+    and a `linked_worktree_source` (H8) would go unnoticed.
     """
 
 
 @dataclass(frozen=True)
 class WorktreeTarget:
-    """Ein Worktree, wie der Dispatch ihn braucht: Pfad UND Workspace.
+    """A worktree the way dispatch needs it: path AND workspace.
 
-    `workspace_id` ist nicht optional. Ein Ziel ohne Workspace waere nur halb
-    da — der Pane kaeme in den falschen Workspace und der Abbau fiele aus.
+    `workspace_id` is not optional. A target without a workspace would only
+    be half there — the pane would land in the wrong workspace and teardown
+    would fail.
     """
 
     path: Path
@@ -44,15 +45,15 @@ class WorktreeTarget:
 
 
 def repo_root_from(worktree_list: dict[str, Any]) -> Path | None:
-    """`.result.source.repo_root` — nie $PWD annehmen (H8)."""
+    """`.result.source.repo_root` — never assume $PWD (H8)."""
     root = ((worktree_list.get("result") or {}).get("source") or {}).get("repo_root")
     return Path(root) if root else None
 
 
 def find_worktree(worktree_list: dict[str, Any], branch: str) -> dict[str, Any] | None:
-    for eintrag in (worktree_list.get("result") or {}).get("worktrees") or ():
-        if isinstance(eintrag, dict) and eintrag.get("branch") == branch:
-            return eintrag
+    for entry in (worktree_list.get("result") or {}).get("worktrees") or ():
+        if isinstance(entry, dict) and entry.get("branch") == branch:
+            return entry
     return None
 
 
@@ -61,11 +62,11 @@ def wt_switch(
 ) -> Path | None:
     """`wt switch --create <branch> --no-cd --format json --yes` → .path.
 
-    `--no-cd`, weil das Skript nicht umzieht; `--yes`, weil kein Mensch am
-    Approval-Prompt sitzt.
+    `--no-cd` because the script doesn't change directory; `--yes` because
+    no human is sitting at the approval prompt.
     """
     if shutil.which("wt") is None:
-        raise WorktrunkMissing("wt ist nicht installiert")
+        raise WorktrunkMissing("wt is not installed")
     try:
         proc = runner(
             ["wt", "switch", "--create", branch, "--no-cd", "--format", "json", "--yes"],
@@ -80,36 +81,36 @@ def wt_switch(
         data = json.loads(proc.stdout)
     except json.JSONDecodeError:
         return None
-    pfad = data.get("path") if isinstance(data, dict) else None
-    return Path(pfad) if pfad else None
+    path = data.get("path") if isinstance(data, dict) else None
+    return Path(path) if path else None
 
 
 def _open_workspace(
     herdr: Herdr, *, repo_root: Path, path: Path, branch: str
 ) -> str:
-    """Worktree bei Herdr oeffnen und die Workspace-ID liefern — oder scheitern.
+    """Open the worktree with Herdr and return the workspace ID — or fail.
 
-    --cwd MUSS der Repo-Root sein; aus einem Linked-Worktree-Workspace heraus
-    lehnt Herdr mit `linked_worktree_source` ab (H8). Genau dieser Fall kaeme
-    sonst als leeres dict zurueck und saehe aus wie Erfolg.
+    --cwd MUST be the repo root; called from a linked-worktree workspace,
+    Herdr rejects with `linked_worktree_source` (H8). Otherwise that exact
+    case would come back as an empty dict and look like success.
     """
-    geoeffnet = herdr.worktree_open(cwd=repo_root, path=path, label=branch)
-    ergebnis = geoeffnet.get("result") or {}
-    workspace = ergebnis.get("open_workspace_id") or ergebnis.get("workspace_id")
+    opened = herdr.worktree_open(cwd=repo_root, path=path, label=branch)
+    result = opened.get("result") or {}
+    workspace = result.get("open_workspace_id") or result.get("workspace_id")
     if not workspace:
-        grund = (geoeffnet.get("error") or {}).get("code") or "keine workspace_id"
-        raise WorktreeOpenFailed(f"worktree open fuer {branch}: {grund}")
+        reason = (opened.get("error") or {}).get("code") or "no workspace_id"
+        raise WorktreeOpenFailed(f"worktree open for {branch}: {reason}")
     return str(workspace)
 
 
 def anchor_pane(herdr: Herdr, workspace_id: str) -> str | None:
-    """Irgendein Pane dieses Workspaces — der Ankerpunkt fuers Teilen.
+    """Any pane in this workspace — the anchor point for splitting.
 
-    `pane split --current` teilt den Workspace des Aufrufers, also den des
-    Orchestrators. Ein so entstandener Arbeiter liegt im falschen Workspace:
-    `workspace close <worktree_workspace>` beendet ihn nicht, und der Abbau
-    laesst eine Leiche stehen. Deshalb wird gezielt ein Pane des
-    Worktree-Workspaces geteilt.
+    `pane split --current` splits the caller's workspace, i.e. the
+    orchestrator's. A worker created that way would sit in the wrong
+    workspace: `workspace close <worktree_workspace>` wouldn't close it, and
+    teardown would leave an orphan behind. So a pane of the worktree's own
+    workspace is split deliberately instead.
     """
     for pane in herdr.pane_list(workspace_id):
         pane_id = pane.get("pane_id")
@@ -121,35 +122,36 @@ def anchor_pane(herdr: Herdr, workspace_id: str) -> str | None:
 def ensure_worktree(
     branch: str, *, herdr: Herdr, cwd: str | Path, runner: Any = subprocess.run
 ) -> WorktreeTarget:
-    """Worktree des Branches — vorhandenen wiederverwenden, sonst anlegen.
+    """The branch's worktree — reuse an existing one, otherwise create it.
 
-    Reihenfolge: erst Herdr fragen (der Worktree kann schon offen sein), dann
-    worktrunk erzeugen lassen, dann bei Herdr registrieren. Am Ende steht in
-    JEDEM Fall eine Workspace-ID; ein Ziel ohne sie waere nur halb da.
+    Order: ask Herdr first (the worktree might already be open), then let
+    worktrunk create one, then register it with Herdr. In EVERY case the
+    end result is a workspace ID; a target without one would only be half
+    there.
     """
-    liste = herdr.worktree_list(cwd)
-    repo_root = repo_root_from(liste) or Path(cwd)
+    listing = herdr.worktree_list(cwd)
+    repo_root = repo_root_from(listing) or Path(cwd)
 
-    vorhanden = find_worktree(liste, branch)
-    if vorhanden and vorhanden.get("path"):
-        pfad = Path(vorhanden["path"])
-        # Der Baum kann stehen, ohne dass ein Workspace darauf zeigt — z. B.
-        # nach einem Herdr-Neustart. Dann wird er hier nachgeoeffnet.
-        workspace = vorhanden.get("open_workspace_id")
+    existing = find_worktree(listing, branch)
+    if existing and existing.get("path"):
+        path = Path(existing["path"])
+        # The tree can exist without a workspace pointing at it — e.g. after
+        # a Herdr restart. In that case it gets reopened here.
+        workspace = existing.get("open_workspace_id")
         return WorktreeTarget(
-            path=pfad,
+            path=path,
             workspace_id=str(workspace)
             if workspace
-            else _open_workspace(herdr, repo_root=repo_root, path=pfad, branch=branch),
+            else _open_workspace(herdr, repo_root=repo_root, path=path, branch=branch),
         )
 
-    pfad = wt_switch(branch, cwd=repo_root, runner=runner)
-    if pfad is None:
-        raise WorktrunkMissing(f"wt switch lieferte keinen Pfad fuer {branch}")
+    path = wt_switch(branch, cwd=repo_root, runner=runner)
+    if path is None:
+        raise WorktrunkMissing(f"wt switch returned no path for {branch}")
 
     return WorktreeTarget(
-        path=pfad,
+        path=path,
         workspace_id=_open_workspace(
-            herdr, repo_root=repo_root, path=pfad, branch=branch
+            herdr, repo_root=repo_root, path=path, branch=branch
         ),
     )
