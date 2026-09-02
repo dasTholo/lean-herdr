@@ -2156,6 +2156,18 @@ vollstaendig.
 Bewusst getrennt von `lean_herdr/config.py`: die liest `HERDR_*`-Umgebung fuer
 die Plugin-Handler — anderer Zweck, andere Lebensdauer.
 
+**Die oberste Ebene wird mitgeprueft.** Griffe `settings_for` nur `[default]`
+und `[roles.<role>]` heraus, verschwaende jeder Tippfehler eine Ebene hoeher
+lautlos: `[defaults]`, `[role.builder]` oder ein Schluessel ganz ohne
+Abschnittskopf lieferten schlicht die Vorgaben, und der Betreiber erfuehre nie,
+dass seine Datei nichts getan hat. `_check_root` laesst oben deshalb nur
+`default` und `roles` zu — beides Tabellen — und wirft sonst `SettingsError`
+mit dem Namen des Stoerenfrieds. Rollennamen bleiben ausdruecklich frei:
+`dispatch` kennt fuer `role` keine `choices`, also ist `[roles.irgendwas]` kein
+Fehler. Ein falscher Typ ganz oben (`roles = "builder"`) und ein Nicht-Mapping
+als `data` ergeben ebenfalls `SettingsError` statt eines `AttributeError` —
+Task 7 faengt `SettingsError`, ein `AttributeError` schluepfte daran vorbei.
+
 `lean_herdr/settings.py` (neu):
 
     """`.config/lean-herdr.toml` -> RoleSettings. Precedence: CLI > file > default.
@@ -2219,6 +2231,9 @@ die Plugin-Handler — anderer Zweck, andere Lebensdauer.
     }
 
     ALLOWED = frozenset(f.name for f in fields(RoleSettings))
+
+    #: The only two keys the top level of the file may carry.
+    ROOT_KEYS = ("default", "roles")
 
 
     def read_settings(path: str | Path | None = None) -> dict[str, Any]:
@@ -2285,13 +2300,38 @@ die Plugin-Handler — anderer Zweck, andere Lebensdauer.
         return merged
 
 
+    def _check_root(table: Any) -> dict[str, Any]:
+        """Top level: only `[default]` and `[roles]`, and both must be tables.
+
+        Reading just the two known sections would let `[defaults]`, `[role.x]` or
+        a key without any section header evaporate in silence -- the operator gets
+        plain defaults and never learns that the file did nothing. The type check
+        keeps a wrong `roles` an error the caller can catch, not an AttributeError.
+        """
+        if not isinstance(table, dict):
+            raise SettingsError(
+                f"settings: root is not a table, but {type(table).__name__}"
+            )
+        unknown = sorted(set(table) - set(ROOT_KEYS))
+        if unknown:
+            raise SettingsError(
+                f"settings: unknown top-level keys {unknown}; allowed: {sorted(ROOT_KEYS)}"
+            )
+        roles = table.get("roles")
+        if roles is not None and not isinstance(roles, dict):
+            raise SettingsError(
+                f"settings: roles is not a table, but {type(roles).__name__}"
+            )
+        return table
+
+
     def settings_for(role: str, data: dict[str, Any] | None = None) -> RoleSettings:
         """Default -> `[default]` -> `[roles.<role>]`. Each layer may override.
 
         `[default]` in the file beats the built-in per-role default too: to
         change only the builder, write it under `[roles.builder]`.
         """
-        table = data or {}
+        table = _check_root({} if data is None else data)
         values = RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
         for block in (table.get("default"), (table.get("roles") or {}).get(role)):
             if block is not None:
@@ -2327,8 +2367,19 @@ Verhalten ist Zeichen fuer Zeichen dasselbe wie ohne Datei:
     # [roles.reviewer]
     # ratio = 0.3
 
+`test_the_shipped_template_changes_nothing` liest diese Datei aus `git`
+(`git show HEAD:.config/lean-herdr.toml`), nicht aus dem Arbeitsbaum: sie liegt
+ja gerade dort, damit der Betreiber Zeilen einkommentiert — der erste, der das
+tut, bekaeme sonst eine rote Suite und einen schmutzigen Baum. Die Zusicherung
+bleibt dieselbe: **wie ausgeliefert** ergibt die Vorlage `{}` und fuer jede
+Rolle exakt die eingebauten Vorgaben. Ist `git` nicht da oder die Datei noch
+nicht in `HEAD`, wird sauber uebersprungen — ein Skip ist ehrlich, ein falsches
+Gruen nicht.
+
 `tests/test_settings.py` (neu):
 
+    import re
+    import subprocess
     from pathlib import Path
 
     import pytest
@@ -2414,17 +2465,92 @@ Verhalten ist Zeichen fuer Zeichen dasselbe wie ohne Datei:
             settings_for("builder", {"default": {"name_template": template}})
 
 
-    def test_the_shipped_template_changes_nothing():
-        """The file in the repo is fully commented out -- that is its purpose."""
+    @pytest.mark.parametrize(
+        "text, offender",
+        [
+            ('direction = "down"\n', "'direction'"),
+            ('[defaults]\ndirection = "down"\n', "'defaults'"),
+            ('[role.builder]\ndirection = "down"\n', "'role'"),
+        ],
+        ids=["no-section-header", "defaults-typo", "role-typo"],
+    )
+    def test_misplaced_top_level_content_does_not_stay_silent(tmp_path, text, offender):
+        """A typo one level up evaporates just as quietly as one inside a section
+        -- and hands the operator plain defaults instead of an error."""
+        path = tmp_path / "lean-herdr.toml"
+        path.write_text(text, encoding="utf-8")
+        data = read_settings(path)
+        with pytest.raises(SettingsError, match=re.escape(offender)):
+            settings_for("builder", data)
+
+
+    @pytest.mark.parametrize("roles", ["builder", [1, 2], 3])
+    def test_a_non_table_roles_does_not_raise_attribute_error(roles):
+        """The caller catches SettingsError -- an AttributeError slips past it."""
+        with pytest.raises(SettingsError, match="roles is not a table"):
+            settings_for("builder", {"roles": roles})
+
+
+    @pytest.mark.parametrize("data", [["x"], "x", 3, ("default", {})])
+    def test_non_mapping_settings_data_does_not_raise_attribute_error(data):
+        with pytest.raises(SettingsError, match="root is not a table"):
+            settings_for("builder", data)
+
+
+    def test_a_valid_file_survives_the_top_level_check(tmp_path):
+        """Guard against over-correcting: role names stay free-form, and a file
+        that only uses [default] and [roles.*] behaves exactly as before."""
+        path = tmp_path / "lean-herdr.toml"
+        path.write_text(
+            '[default]\ndirection = "down"\n\n[roles.whatever]\nratio = 0.3\n',
+            encoding="utf-8",
+        )
+        data = read_settings(path)
+        assert settings_for("whatever", data) == RoleSettings(
+            direction="down", ratio=0.3, profile="standard"
+        )
+        assert settings_for("builder", data).direction == "down"
+        assert settings_for("builder", data).ratio is None
+
+
+    def test_the_shipped_template_changes_nothing(tmp_path):
+        """As SHIPPED the file is fully commented out -- that is its purpose.
+
+        Read from git, not from the working tree: the file exists to invite the
+        operator to uncomment lines, and the first one who does must not get a red
+        suite plus a dirty tree. If git cannot answer, skip -- a skip is honest,
+        a false pass is not.
+        """
         # Anchored on the repo root, not relative: SETTINGS_PATH is relative and
         # pytest may be started from any directory.
-        data = read_settings(Path(__file__).resolve().parents[1] / SETTINGS_PATH)
+        root = Path(__file__).resolve().parents[1]
+        try:
+            shipped = subprocess.run(
+                ["git", "show", f"HEAD:{SETTINGS_PATH.as_posix()}"],
+                cwd=root,
+                capture_output=True,
+                timeout=30,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            pytest.skip(f"git is unavailable: {exc}")
+        if shipped.returncode != 0:
+            pytest.skip(f"{SETTINGS_PATH} is not in HEAD yet")
+        path = tmp_path / SETTINGS_PATH.name
+        path.write_bytes(shipped.stdout)
+        data = read_settings(path)
         assert data == {}, f"{SETTINGS_PATH} carries active values: {sorted(data)}"
         assert settings_for("builder", data) == RoleSettings(profile="standard")
+        assert settings_for("reviewer", data) == RoleSettings(profile="standard")
+        assert settings_for("orchestrator", data) == RoleSettings(profile="minimal")
 
 @call tdd(-k unknown_keys_do_not_stay_silent)
 
 @call tdd(-k a_name_template_missing_either_placeholder_is_rejected)
+
+@call tdd(-k misplaced_top_level_content_does_not_stay_silent)
+
+@call tdd(-k does_not_raise_attribute_error)
 
 @call tdd(-k the_shipped_template_changes_nothing)
 

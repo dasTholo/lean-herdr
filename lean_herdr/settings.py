@@ -60,6 +60,9 @@ _TYPES: dict[str, Any] = {
 
 ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
+#: The only two keys the top level of the file may carry.
+ROOT_KEYS = ("default", "roles")
+
 
 def read_settings(path: str | Path | None = None) -> dict[str, Any]:
     """The file as a raw dict. Missing: {}. Broken: SettingsError."""
@@ -125,13 +128,38 @@ def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
     return merged
 
 
+def _check_root(table: Any) -> dict[str, Any]:
+    """Top level: only `[default]` and `[roles]`, and both must be tables.
+
+    Reading just the two known sections would let `[defaults]`, `[role.x]` or
+    a key without any section header evaporate in silence -- the operator gets
+    plain defaults and never learns that the file did nothing. The type check
+    keeps a wrong `roles` an error the caller can catch, not an AttributeError.
+    """
+    if not isinstance(table, dict):
+        raise SettingsError(
+            f"settings: root is not a table, but {type(table).__name__}"
+        )
+    unknown = sorted(set(table) - set(ROOT_KEYS))
+    if unknown:
+        raise SettingsError(
+            f"settings: unknown top-level keys {unknown}; allowed: {sorted(ROOT_KEYS)}"
+        )
+    roles = table.get("roles")
+    if roles is not None and not isinstance(roles, dict):
+        raise SettingsError(
+            f"settings: roles is not a table, but {type(roles).__name__}"
+        )
+    return table
+
+
 def settings_for(role: str, data: dict[str, Any] | None = None) -> RoleSettings:
     """Default -> `[default]` -> `[roles.<role>]`. Each layer may override.
 
     `[default]` in the file beats the built-in per-role default too: to
     change only the builder, write it under `[roles.builder]`.
     """
-    table = data or {}
+    table = _check_root({} if data is None else data)
     values = RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
     for block in (table.get("default"), (table.get("roles") or {}).get(role)):
         if block is not None:

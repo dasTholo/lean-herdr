@@ -1,3 +1,5 @@
+import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -83,10 +85,81 @@ def test_a_name_template_missing_either_placeholder_is_rejected(template):
         settings_for("builder", {"default": {"name_template": template}})
 
 
-def test_the_shipped_template_changes_nothing():
-    """The file in the repo is fully commented out -- that is its purpose."""
+@pytest.mark.parametrize(
+    "text, offender",
+    [
+        ('direction = "down"\n', "'direction'"),
+        ('[defaults]\ndirection = "down"\n', "'defaults'"),
+        ('[role.builder]\ndirection = "down"\n', "'role'"),
+    ],
+    ids=["no-section-header", "defaults-typo", "role-typo"],
+)
+def test_misplaced_top_level_content_does_not_stay_silent(tmp_path, text, offender):
+    """A typo one level up evaporates just as quietly as one inside a section
+    -- and hands the operator plain defaults instead of an error."""
+    path = tmp_path / "lean-herdr.toml"
+    path.write_text(text, encoding="utf-8")
+    data = read_settings(path)
+    with pytest.raises(SettingsError, match=re.escape(offender)):
+        settings_for("builder", data)
+
+
+@pytest.mark.parametrize("roles", ["builder", [1, 2], 3])
+def test_a_non_table_roles_does_not_raise_attribute_error(roles):
+    """The caller catches SettingsError -- an AttributeError slips past it."""
+    with pytest.raises(SettingsError, match="roles is not a table"):
+        settings_for("builder", {"roles": roles})
+
+
+@pytest.mark.parametrize("data", [["x"], "x", 3, ("default", {})])
+def test_non_mapping_settings_data_does_not_raise_attribute_error(data):
+    with pytest.raises(SettingsError, match="root is not a table"):
+        settings_for("builder", data)
+
+
+def test_a_valid_file_survives_the_top_level_check(tmp_path):
+    """Guard against over-correcting: role names stay free-form, and a file
+    that only uses [default] and [roles.*] behaves exactly as before."""
+    path = tmp_path / "lean-herdr.toml"
+    path.write_text(
+        '[default]\ndirection = "down"\n\n[roles.whatever]\nratio = 0.3\n',
+        encoding="utf-8",
+    )
+    data = read_settings(path)
+    assert settings_for("whatever", data) == RoleSettings(
+        direction="down", ratio=0.3, profile="standard"
+    )
+    assert settings_for("builder", data).direction == "down"
+    assert settings_for("builder", data).ratio is None
+
+
+def test_the_shipped_template_changes_nothing(tmp_path):
+    """As SHIPPED the file is fully commented out -- that is its purpose.
+
+    Read from git, not from the working tree: the file exists to invite the
+    operator to uncomment lines, and the first one who does must not get a red
+    suite plus a dirty tree. If git cannot answer, skip -- a skip is honest,
+    a false pass is not.
+    """
     # Anchored on the repo root, not relative: SETTINGS_PATH is relative and
     # pytest may be started from any directory.
-    data = read_settings(Path(__file__).resolve().parents[1] / SETTINGS_PATH)
+    root = Path(__file__).resolve().parents[1]
+    try:
+        shipped = subprocess.run(
+            ["git", "show", f"HEAD:{SETTINGS_PATH.as_posix()}"],
+            cwd=root,
+            capture_output=True,
+            timeout=30,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.skip(f"git is unavailable: {exc}")
+    if shipped.returncode != 0:
+        pytest.skip(f"{SETTINGS_PATH} is not in HEAD yet")
+    path = tmp_path / SETTINGS_PATH.name
+    path.write_bytes(shipped.stdout)
+    data = read_settings(path)
     assert data == {}, f"{SETTINGS_PATH} carries active values: {sorted(data)}"
     assert settings_for("builder", data) == RoleSettings(profile="standard")
+    assert settings_for("reviewer", data) == RoleSettings(profile="standard")
+    assert settings_for("orchestrator", data) == RoleSettings(profile="minimal")
