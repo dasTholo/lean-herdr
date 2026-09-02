@@ -10,14 +10,14 @@ from lean_herdr.bus import (
     BusMessage,
     agents_in_registry,
     parse_registry,
-    parse_zeit,
+    parse_time,
     read_registry,
 )
 
 FIXTURE = Path(__file__).parent / "fixtures" / "registry.sample.json"
-PROJEKT = "/home/tholo/Scripts/lean-herdr"
-#: Fest, nicht `now()`: die Probe ist eingefroren, die Uhr darf nicht mitreden.
-JETZT = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
+PROJECT = "/home/tholo/Scripts/lean-herdr"
+#: Fixed, not `now()`: the sample is frozen, the clock must not have a say.
+NOW = datetime(2026, 9, 1, 12, 0, tzinfo=UTC)
 
 
 @pytest.fixture
@@ -25,50 +25,50 @@ def sample() -> dict:
     return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-def test_eingefrorene_probe_hat_die_erwartete_form(sample):
-    """Bricht sichtbar, wenn lean-ctx sein internes Format aendert."""
+def test_the_frozen_sample_has_the_expected_shape(sample):
+    """Breaks visibly if lean-ctx changes its internal format."""
     assert "scratchpad" in sample, sorted(sample)
     assert "agents" in sample
     first = sample["scratchpad"][0]
-    for feld in (
+    for field in (
         "id", "from_agent", "to_agent", "task_id", "category", "priority",
         "privacy", "message", "metadata", "project_root", "timestamp",
         "read_by", "expires_at",
     ):
-        assert feld in first, f"Feld {feld} fehlt in der Probe"
-    assert "pid" in sample["agents"][0], "PID-Join braucht das pid-Feld"
+        assert field in first, f"field {field} is missing from the sample"
+    assert "pid" in sample["agents"][0], "PID join needs the pid field"
 
 
-def test_parse_registry_nimmt_projektlose_nachrichten_mit(sample):
-    msgs = parse_registry(sample, project_root=PROJEKT, now=JETZT)
-    assert msgs, "projektlose Nachrichten (project_root=null) duerfen nicht wegfallen"
-    assert all(m.project_root in (None, PROJEKT) for m in msgs)
+def test_parse_registry_keeps_messages_without_a_project(sample):
+    msgs = parse_registry(sample, project_root=PROJECT, now=NOW)
+    assert msgs, "messages without a project (project_root=null) must not be dropped"
+    assert all(m.project_root in (None, PROJECT) for m in msgs)
     assert "m-fremdes-projekt" not in [m.id for m in msgs]
 
 
-def test_neun_nachkommastellen_sind_lesbar():
-    """fromisoformat vertraegt hoechstens sechs — lean-ctx schreibt neun."""
-    wert = parse_zeit("2026-08-01T15:10:08.404790674Z")
-    assert wert is not None and wert.tzinfo is not None
-    assert wert.year == 2026 and wert.microsecond == 404790
-    assert parse_zeit(None) is None and parse_zeit("morgen frueh") is None
+def test_nine_fractional_digits_are_readable():
+    """fromisoformat tolerates at most six — lean-ctx writes nine."""
+    value = parse_time("2026-08-01T15:10:08.404790674Z")
+    assert value is not None and value.tzinfo is not None
+    assert value.year == 2026 and value.microsecond == 404790
+    assert parse_time(None) is None and parse_time("morgen frueh") is None
 
 
-def test_abgelaufene_nachrichten_fallen_weg(sample):
-    """Eine tote Antwort von gestern darf nicht als Ergebnis durchgehen."""
-    ids = [m.id for m in parse_registry(sample, project_root=PROJEKT, now=JETZT)]
+def test_expired_messages_are_dropped(sample):
+    """A dead reply from yesterday must not pass as a result."""
+    ids = [m.id for m in parse_registry(sample, project_root=PROJECT, now=NOW)]
     assert "m-abgelaufen" not in ids
-    assert "m-mit-projekt" in ids, "expires_at in der Zukunft bleibt gueltig"
-    assert "m-ohne-projekt" in ids, "ohne expires_at gilt unbegrenzt"
+    assert "m-mit-projekt" in ids, "expires_at in the future stays valid"
+    assert "m-ohne-projekt" in ids, "without expires_at it stays valid indefinitely"
 
 
-def test_vor_dem_ablauf_ist_die_nachricht_noch_da(sample):
-    frueher = datetime(2026, 9, 1, 5, 0, tzinfo=UTC)
-    ids = [m.id for m in parse_registry(sample, project_root=PROJEKT, now=frueher)]
+def test_before_expiry_the_message_is_still_there(sample):
+    earlier = datetime(2026, 9, 1, 5, 0, tzinfo=UTC)
+    ids = [m.id for m in parse_registry(sample, project_root=PROJECT, now=earlier)]
     assert "m-abgelaufen" in ids
 
 
-def test_parse_registry_verwirft_fremden_root():
+def test_parse_registry_rejects_a_foreign_root():
     data = {
         "scratchpad": [
             {"id": "a", "from_agent": "x", "project_root": "/fremd", "message": "nein"},
@@ -79,7 +79,7 @@ def test_parse_registry_verwirft_fremden_root():
     assert [m.id for m in msgs] == ["b"]
 
 
-def test_parse_registry_filtert_auf_task_id_und_absender():
+def test_parse_registry_filters_by_task_id_and_sender():
     data = {
         "scratchpad": [
             {"id": "a", "from_agent": "w1", "task_id": "T1", "message": "treffer"},
@@ -91,22 +91,22 @@ def test_parse_registry_filtert_auf_task_id_und_absender():
     assert [m.id for m in msgs] == ["a"]
 
 
-def test_parse_registry_bricht_bei_fehlendem_schluessel():
+def test_parse_registry_raises_on_missing_key():
     with pytest.raises(BusError, match="scratchpad"):
         parse_registry({"messages": []}, project_root="/p")
 
 
-def test_read_registry_meldet_fehlende_datei(tmp_path: Path):
+def test_read_registry_reports_a_missing_file(tmp_path: Path):
     with pytest.raises(BusError, match="unreadable"):
-        read_registry(tmp_path / "gibt-es-nicht.json")
+        read_registry(tmp_path / "does-not-exist.json")
 
 
-def test_agents_in_registry_liefert_pid_traeger(sample):
+def test_agents_in_registry_returns_pid_carriers(sample):
     agents = agents_in_registry(sample)
     assert agents and all(isinstance(a.get("pid"), int) for a in agents)
 
 
-def test_busmessage_ist_unveraenderlich():
+def test_busmessage_is_immutable():
     m = BusMessage.from_raw({"id": "a", "from_agent": "x"})
     with pytest.raises(FrozenInstanceError):
         m.id = "b"  # type: ignore[misc]  # ty: ignore[invalid-assignment]

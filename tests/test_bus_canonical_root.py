@@ -25,19 +25,19 @@ def repo_with_worktree(tmp_path: Path) -> tuple[Path, Path]:
     return main.resolve(), linked.resolve()
 
 
-def test_canonical_root_im_haupt_checkout(repo_with_worktree):
+def test_canonical_root_in_the_main_checkout(repo_with_worktree):
     main, _ = repo_with_worktree
     assert canonical_root(main) == main
 
 
-def test_canonical_root_aus_linked_worktree(repo_with_worktree):
-    """Der eine Test, der den selbstgemachten Bus-Split faengt (B12)."""
+def test_canonical_root_from_a_linked_worktree(repo_with_worktree):
+    """The one test that catches the homemade bus split (B12)."""
     main, linked = repo_with_worktree
     assert canonical_root(linked) == main
     assert canonical_root(linked) != linked
 
 
-def test_canonical_root_ohne_repo_wirft(tmp_path: Path):
+def test_canonical_root_without_a_repo_raises(tmp_path: Path):
     from lean_herdr.bus import BusError
 
     with pytest.raises(BusError):

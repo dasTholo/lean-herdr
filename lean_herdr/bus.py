@@ -1,8 +1,8 @@
-"""Bus-Zugriff: kanonischer Projekt-Root und Nachrichten aus registry.json.
+"""Bus access: canonical project root and messages from registry.json.
 
-Die zwei Wahrheiten, die sich `bin/herdr-dispatch` und die Plugin-Handler
-teilen. Beide existieren genau einmal, weil beide Seiten sie sonst
-unterschiedlich falsch machen wuerden.
+The two truths shared by `bin/herdr-dispatch` and the plugin handlers.
+Both exist exactly once, because otherwise both sides would get them
+wrong in different ways.
 """
 
 from __future__ import annotations
@@ -19,17 +19,17 @@ GIT_TIMEOUT_S = 5.0
 
 
 class BusError(RuntimeError):
-    """Der Bus ist nicht lesbar — nie stillschweigend als Erfolg werten."""
+    """The bus is unreadable — never silently treat this as success."""
 
 
 def canonical_root(cwd: str | Path | None = None) -> Path:
-    """Repo-Root eines Checkouts, auch aus einem Linked Worktree heraus.
+    """Repo root of a checkout, even from inside a linked worktree.
 
-    `git rev-parse --git-common-dir` zeigt aus jedem Worktree auf das `.git`
-    des Haupt-Checkouts; dessen Elternverzeichnis ist der Root, auf den
-    lean-ctx einen stdio-Server ohnehin kanonisiert. Jeder
-    `--project-root`-Wert im Projekt kommt aus dieser Funktion — nie aus
-    $PWD, nie aus einem Worktree-Pfad (B12).
+    `git rev-parse --git-common-dir` points from any worktree at the `.git`
+    of the main checkout; its parent directory is the root that
+    lean-ctx canonicalizes a stdio server to anyway. Every
+    `--project-root` value in the project comes from this function — never from
+    $PWD, never from a worktree path (B12).
     """
     proc = subprocess.run(
         ["git", "rev-parse", "--git-common-dir"],
@@ -50,34 +50,34 @@ def canonical_root(cwd: str | Path | None = None) -> Path:
 
 REGISTRY_PATH = Path.home() / ".local" / "share" / "lean-ctx" / "agents" / "registry.json"
 
-#: Top-Level-Schluessel, unter dem lean-ctx die Bus-Nachrichten ablegt.
-#: An einer echten registry.json verifiziert (2026-09-01) — nicht "messages".
+#: Top-level key under which lean-ctx stores the bus messages.
+#: Verified against a real registry.json (2026-09-01) — not "messages".
 MESSAGES_KEY = "scratchpad"
 
-#: lean-ctx schreibt NEUN Nachkommastellen; fromisoformat vertraegt hoechstens
-#: sechs und wirft sonst ValueError. Gemessen: 2026-08-01T15:10:08.404790674Z.
-_NANOSEKUNDEN = re.compile(r"(\.\d{6})\d+")
+#: lean-ctx writes NINE fractional digits; fromisoformat tolerates at most
+#: six and otherwise raises ValueError. Measured: 2026-08-01T15:10:08.404790674Z.
+_NANOSECONDS = re.compile(r"(\.\d{6})\d+")
 
 
-def parse_zeit(text: str | None) -> datetime | None:
-    """RFC-3339-Zeitstempel → aware datetime. Unlesbares wird zu None.
+def parse_time(text: str | None) -> datetime | None:
+    """RFC-3339 timestamp → aware datetime. Unreadable input becomes None.
 
-    None heisst hier ausdruecklich 'unbekannt', nicht 'jetzt' und nicht
-    'abgelaufen' — ein unlesbarer Zeitstempel darf keine Nachricht verwerfen.
+    Here, None explicitly means 'unknown' — not 'now' and not
+    'expired' — an unreadable timestamp must never drop a message.
     """
     if not text:
         return None
-    normal = _NANOSEKUNDEN.sub(r"\1", str(text).replace("Z", "+00:00"))
+    normal = _NANOSECONDS.sub(r"\1", str(text).replace("Z", "+00:00"))
     try:
-        wert = datetime.fromisoformat(normal)
+        value = datetime.fromisoformat(normal)
     except ValueError:
         return None
-    return wert if wert.tzinfo else wert.replace(tzinfo=UTC)
+    return value if value.tzinfo else value.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True)
 class BusMessage:
-    """Eine Bus-Nachricht, so wie registry.json sie traegt."""
+    """A bus message, as registry.json carries it."""
 
     id: str
     from_agent: str
@@ -112,22 +112,22 @@ class BusMessage:
         )
 
     def is_expired(self, now: datetime) -> bool:
-        """Abgelaufen? Ohne oder mit unlesbarem expires_at: nein.
+        """Expired? Missing or unreadable expires_at: no.
 
-        Die 12-h-TTL steht nur in der Dokumentation; im Feld ist das Feld
-        meistens null. Fehlt es, gilt die Nachricht unbegrenzt — steht dort
-        aber eine vergangene Zeit, ist sie tot und darf nicht mehr als
-        aktuelles Ergebnis durchgehen.
+        The 12-hour TTL exists only in the documentation; in practice the field
+        is usually null. If it's missing, the message is valid indefinitely — but if
+        it holds a past time, the message is dead and must not pass as a
+        current result.
         """
-        frist = parse_zeit(self.expires_at)
-        return frist is not None and frist <= now
+        deadline = parse_time(self.expires_at)
+        return deadline is not None and deadline <= now
 
 
 def read_registry(path: str | Path | None = None) -> dict[str, Any]:
-    """registry.json laden. Fehlt sie oder ist sie kaputt: BusError.
+    """Load registry.json. If it's missing or broken: BusError.
 
-    Nie Erfolg durch Schweigen — ein leeres Ergebnis und ein unlesbarer Bus
-    sind zwei verschiedene Dinge.
+    Never success through silence — an empty result and an unreadable bus
+    are two different things.
     """
     p = Path(path) if path is not None else REGISTRY_PATH
     try:
@@ -151,20 +151,20 @@ def parse_registry(
     from_agent: str | None = None,
     now: datetime | None = None,
 ) -> list[BusMessage]:
-    """Bus-Nachrichten dieses Projekts, optional auf Aufgabe und Absender gefiltert.
+    """Bus messages for this project, optionally filtered by task and sender.
 
-    `project_root` ist ein Kanonisierungsergebnis (canonical_root()), kein $PWD.
-    Nachrichten ohne `project_root` werden mitgenommen — lean-ctx setzt das Feld
-    nicht immer —, Nachrichten eines fremden Roots nie. Abgelaufene fallen weg;
-    `now` ist injizierbar, damit der Test keine Uhr braucht.
+    `project_root` is a canonicalization result (canonical_root()), not $PWD.
+    Messages without `project_root` are kept — lean-ctx doesn't always set the
+    field —, messages from a foreign root never are. Expired ones are dropped;
+    `now` is injectable so the test doesn't need a clock.
     """
     if MESSAGES_KEY not in data:
         raise BusError(
-            f"registry hat keinen Schluessel {MESSAGES_KEY!r} — "
-            f"Format geaendert? vorhanden: {sorted(data)}"
+            f"registry has no key {MESSAGES_KEY!r} — "
+            f"format changed? present: {sorted(data)}"
         )
     wanted = str(Path(project_root).resolve())
-    jetzt = now if now is not None else datetime.now(UTC)
+    effective_now = now if now is not None else datetime.now(UTC)
     out: list[BusMessage] = []
     for raw in data[MESSAGES_KEY] or ():
         if not isinstance(raw, dict):
@@ -172,7 +172,7 @@ def parse_registry(
         msg = BusMessage.from_raw(raw)
         if msg.project_root is not None and msg.project_root != wanted:
             continue
-        if msg.is_expired(jetzt):
+        if msg.is_expired(effective_now):
             continue
         if task_id is not None and msg.task_id != task_id:
             continue
@@ -183,5 +183,5 @@ def parse_registry(
 
 
 def agents_in_registry(data: dict[str, Any]) -> list[dict[str, Any]]:
-    """Die registrierten Agenten — Quelle fuer den PID-Join (Task 3)."""
+    """The registered agents — source for the PID join (Task 3)."""
     return [a for a in (data.get("agents") or ()) if isinstance(a, dict)]
