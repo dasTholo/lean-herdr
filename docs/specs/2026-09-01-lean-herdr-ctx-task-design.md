@@ -254,6 +254,17 @@ Arbeiter prueft `ctx_task list`, beginnt mit `update(state="working")`, endet mi
   schreiben, ueber `ctx_call`.
 - **Keine Migration alter Bus-Auftraege.** Es gibt keine — der Weg hat nie
   funktioniert.
+- **Kein Einsatz der `leanctx-sdk`.** Version 1.0.0 wurde am 2026-09-02 gegen die
+  echte `lean-ctx 3.10.1` gemessen und verworfen. Sechs Gründe, jeder allein
+  ausreichend: `SubprocessEngineClient` kennt nur zwei Engine-Operationen und kann
+  `ctx_call` nicht ersetzen; `fork` plus `attach_session` scheitert, womit der
+  Fan-out-Weg entfällt; ein `ContextWorkspace` trägt genau einen Auftrag; ein
+  `input-required`-Zustand fehlt; unsere Arbeiter sind MCP-Agenten, für die es
+  keinen Adapter gibt; und die SDK ist source-available, der Betrieb bräuchte
+  einen Vertrag mit Thinkery AG. Der oft vermutete siebte Grund — der
+  Engine-Versions-Pin — trägt **nicht**: 3.10.1 wird angenommen. Belege,
+  Gegenprobe und Reproduktion in
+  `docs/specs/2026-09-02-leanctx-sdk-evaluation.md`.
 
 ## 8. Stand des Implementierungsplans
 

@@ -1,14 +1,17 @@
 # leanctx-sdk 1.0.0 — Bewertung für den Auftragsweg von lean-herdr
 
-**Status:** gemessen, keine Entscheidung getroffen
+**Status:** gemessen; Entscheidung getroffen — **Option A** (bei `ctx_task`
+bleiben), eingetragen in Abschnitt 7 der bezogenen Spec
 **Bezug:** `2026-09-01-lean-herdr-ctx-task-design.md` (Auftragsweg auf `ctx_task`)
 **Anlass:** Thinkery AG hat die `leanctx-sdk` in Version 1.0.0 veröffentlicht
 (<https://github.com/Thinkery-AG/leanctx-sdk>). Frage des Betreibers: hilft sie
 uns beim Auftragsweg?
 
-Dieses Dokument hält fest, **was gemessen wurde**. Es ändert die bestehende Spec
-nicht und empfiehlt nichts verbindlich. Abschnitt 6 nennt die Optionen, die aus
-den Befunden folgen.
+Dieses Dokument hält fest, **was gemessen wurde**. Abschnitt 6 nennt die Optionen,
+die aus den Befunden folgen; der Betreiber hat sich für **A** entschieden. Die
+Befunde selbst bleiben unverändert stehen — sie sind der Grund, aus dem B und C
+später wieder aufgerufen werden könnten, ohne noch einmal gemessen werden zu
+müssen.
 
 > **Zur Schreibweise:** Dieses Dokument benutzt korrekte deutsche Umlaute. Die
 > älteren Specs im selben Verzeichnis benutzen die Ersatzschreibung `ae/oe/ue`.
@@ -312,12 +315,11 @@ Die hier dokumentierte Messung fällt unter „Evaluation" und ist gedeckt.
 
 ## 6. Optionen
 
-Keine davon ist hier entschieden.
-
-**A — Bei `ctx_task` bleiben.** Die bestehende Spec bekommt in Abschnitt 7 einen
-Eintrag „Geprüft und verworfen: leanctx-sdk 1.0.0" mit Verweis auf dieses
-Dokument. Tragende Gründe: E-2, E-4, E-5, E-6, E-8, E-9. Der Plan läuft ab Task 8
-unverändert weiter.
+**A — Bei `ctx_task` bleiben. ‹gewählt am 2026-09-02›** Die bestehende Spec führt
+in Abschnitt 7 nun „Kein Einsatz der `leanctx-sdk`" mit Verweis auf dieses
+Dokument. Tragende Gründe: E-2, E-4, E-5, E-6, E-8, E-9. Ausdrücklich **nicht**
+tragend: E-1 — der Versions-Pin war ein Fehlschluss, kein Hindernis. Der
+Implementierungsplan läuft ab Task 8 unverändert weiter.
 
 **B — Workspace als Auftragsweg.** Setzt voraus, dass E-4 sich auflösen lässt
 (Fehlerbericht an Thinkery AG oder Verzicht auf `fork` zugunsten eines eigenen
