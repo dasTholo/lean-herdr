@@ -154,8 +154,8 @@ def parse_registry(
     """Bus messages for this project, optionally filtered by task and sender.
 
     `project_root` is a canonicalization result (canonical_root()), not $PWD.
-    Messages without `project_root` are kept — lean-ctx doesn't always set the
-    field —, messages from a foreign root never are. Expired ones are dropped;
+    Messages without `project_root` are kept (lean-ctx doesn't always set the
+    field); messages from a foreign root never are. Expired ones are dropped;
     `now` is injectable so the test doesn't need a clock.
     """
     if MESSAGES_KEY not in data:
