@@ -71,8 +71,8 @@ def test_before_expiry_the_message_is_still_there(sample):
 def test_parse_registry_rejects_a_foreign_root():
     data = {
         "scratchpad": [
-            {"id": "a", "from_agent": "x", "project_root": "/fremd", "message": "nein"},
-            {"id": "b", "from_agent": "x", "project_root": None, "message": "ja"},
+            {"id": "a", "from_agent": "x", "project_root": "/foreign", "message": "no"},
+            {"id": "b", "from_agent": "x", "project_root": None, "message": "yes"},
         ]
     }
     msgs = parse_registry(data, project_root="/home/tholo/Scripts/lean-herdr")
@@ -82,9 +82,9 @@ def test_parse_registry_rejects_a_foreign_root():
 def test_parse_registry_filters_by_task_id_and_sender():
     data = {
         "scratchpad": [
-            {"id": "a", "from_agent": "w1", "task_id": "T1", "message": "treffer"},
-            {"id": "b", "from_agent": "w2", "task_id": "T1", "message": "falscher absender"},
-            {"id": "c", "from_agent": "w1", "task_id": "T2", "message": "falsche aufgabe"},
+            {"id": "a", "from_agent": "w1", "task_id": "T1", "message": "hit"},
+            {"id": "b", "from_agent": "w2", "task_id": "T1", "message": "wrong sender"},
+            {"id": "c", "from_agent": "w1", "task_id": "T2", "message": "wrong task"},
         ]
     }
     msgs = parse_registry(data, project_root="/p", task_id="T1", from_agent="w1")
