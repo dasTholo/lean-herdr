@@ -32,7 +32,7 @@ lean_herdr/
   settings.py   NEU  .config/lean-herdr.toml -> RoleSettings (tomllib, stdlib)
   dispatch.py   ~    zwei Modi: Aufbau (Pane, Agent, agent_id) und Warten (--await)
   herdr.py      ~    pane_split bekommt --ratio
-  leanctx.py    ~    post() behaelt die Signatur, verliert den Aufrufer + Warnung
+  leanctx.py    WEG  seit Task 2 ohne Aufrufer; im Abschluss-Review geloescht
   bus.py join.py export.py worktree.py config.py   unberuehrt
 roles/{orchestrator,builder,reviewer}.md   Dreischritt-Sequenz ueber ctx_task
 .config/lean-herdr.toml   NEU  vollstaendig auskommentierte Vorlage
@@ -121,7 +121,7 @@ Gemessene Grundlagen dieses Plans (Quelle `~/Scripts/lean-ctx`, 3.10.1):
   Genau auf diesem Grund uebersetzt Task 2 `lean_herdr/dispatch.py` und
   `tests/test_dispatch.py` und Task 4 die vier Artefaktdateien samt
   `tests/test_role_prohibitions.py` und `tests/test_roles.py`, die sie woertlich
-  zitieren. `bus.py`, `herdr.py`, `leanctx.py`, `export.py`, `join.py` und
+  zitieren. `bus.py`, `herdr.py`, `export.py`, `join.py` und
   `worktree.py` behalten ihre deutschen Bezeichner, bis ein Task sie neu
   schreibt — ein Review meldet sie NICHT als Befund. Protokoll-Token wie
   `VERDIKT:` sind keine Prosa: sie folgen dem Code (`dispatch.VERDICT_RE`) und
@@ -672,8 +672,10 @@ Zeichen fuer Zeichen, mit den neun Nachkommastellen und der PascalCase-Variante:
 
 @call recall_context("lean-herdr dispatch bus post task_id agent_id")
 
-**Files:** Modify `lean_herdr/dispatch.py`, `lean_herdr/leanctx.py`,
-`tests/test_dispatch.py`, `tests/test_dispatch_uncovered_paths.py`.
+**Files:** Modify `lean_herdr/dispatch.py`, `tests/test_dispatch.py`,
+`tests/test_dispatch_uncovered_paths.py`. (`lean_herdr/leanctx.py` stand hier
+urspruenglich mit; der Betreiber hat die Datei im Abschluss-Review vom
+2026-09-02 geloescht — siehe unten.)
 **Interfaces:** Produces `DispatchRequest(role, kind, model, role_file, worktree,
 profile)` und `dispatch(req, *, herdr, root, cwd, registry_path, waiter) ->
 {"ok", "pane", "agent_id"[, "error"]}`. Entfernt `find_reply()`,
@@ -694,8 +696,8 @@ falschen Ort.
 `tests/test_dispatch.py` werden in diesem Task **durchgehend englisch** —
 Bezeichner, Kommentare, Docstrings, Testnamen. Beide Dateien werden ohnehin an
 Kopf und Fuss neu geschrieben, und `tests/test_dispatch_uncovered_paths.py` ist
-bereits englisch; der Rest des Bestands (`bus.py`, `herdr.py`, `leanctx.py`,
-`export.py`, `join.py`, `worktree.py`) bleibt unberuehrt und wartet auf die
+bereits englisch; der Rest des Bestands (`bus.py`, `herdr.py`, `export.py`,
+`join.py`, `worktree.py`) bleibt unberuehrt und wartet auf die
 Sammeluebersetzung des Betreibers.
 
 Diese Stellen in `lean_herdr/dispatch.py` verschwinden ersatzlos:
@@ -782,24 +784,16 @@ dem Ergebnis-dict — im Absturzfall vor der Konstruktion ist keines davon bekan
 
         result = {"ok": False, "error": f"dispatch_crashed: {exc}"}
 
-`lean_herdr/leanctx.py` — `post()` behaelt Signatur und Verhalten, bekommt aber
-eine Warnung in den Docstring (ersetzt den bestehenden Docstring in
-`lean_herdr/leanctx.py:post`), damit niemand spaeter danach greift. Diese eine
-Stelle wird englisch geschrieben, obwohl die uebrige Datei deutsch bleibt — sie
-ist neuer Text, kein uebersetzter Bestand:
-
-        """Put a message on the bus. NOT usable for work orders.
-
-        From a CLI process this always posts as `anonymous`: registration is
-        bound to the pid of a short-lived process (B-2), and the role prompts
-        rightly refuse `anonymous` as a client. And `task_id` never arrives:
-        every write path of `ctx_agent post` hard-sets it to `None`
-        (core/agents/registry.rs:430, shared.rs:31). Work orders therefore run
-        through `ctx_task`, see lean_herdr/tasks.py.
-
-        `to_agent` MUST be a lean-ctx agent_id. A friendly name is accepted
-        silently and never delivered (B7).
-        """
+`lean_herdr/leanctx.py` bekam hier urspruenglich nur eine Warnung in den
+Docstring von `post()`, damit niemand spaeter danach greift. **Ueberholt:** im
+Abschluss-Review vom 2026-09-02 hat der Betreiber entschieden, die Datei ganz
+zu loeschen — seit diesem Task importiert sie keine Produktionsdatei mehr, und
+sie ueberlebte allein durch `tests/test_leanctx.py`. Beide Dateien sind weg;
+wer das Gateway spaeter braucht, holt es aus der Git-Historie. Der Grund, aus
+dem `post()` fuer Auftraege ohnehin untauglich war, bleibt derselbe: aus einem
+CLI-Prozess postet es immer als `anonymous` (B-2), und `task_id` setzt jeder
+Schreibpfad von `ctx_agent post` hart auf `None` (core/agents/registry.rs:430,
+shared.rs:31). Auftraege laufen ueber `ctx_task`, siehe `lean_herdr/tasks.py`.
 
 **Tests, die mitziehen muessen** — in `tests/test_dispatch.py`:
 
@@ -848,7 +842,7 @@ ist neuer Text, kein uebersetzter Bestand:
 
     def test_build_mode_returns_pane_and_agent_id_and_creates_nothing(world):
         """The build mode is finished the moment the agent_id is resolved."""
-        h_proc, _, _ = world
+        h_proc, _ = world
         result = run_dispatch(world, reg=registry())
         assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
         assert h_proc.called_with("agent", "start"), "the worker is running"
@@ -895,9 +889,9 @@ entfernten Importen.
 
 @call verify(lean_herdr/dispatch.py)
 @call review_change()
-@call gate(lean_herdr/dispatch.py lean_herdr/leanctx.py tests/test_dispatch.py tests/test_dispatch_uncovered_paths.py)
+@call gate(lean_herdr/dispatch.py tests/test_dispatch.py tests/test_dispatch_uncovered_paths.py)
 @call commit("lean_herdr/ tests/", "refactor(dispatch): build mode without a bus-borne work order")
-@call remember_decision("lean-herdr: bin/herdr-dispatch creates no task and posts nothing. A CLI process has no lean-ctx identity (cli/call_cmd.rs:160 leaves ToolContext.agent_id at None), so it posts as anonymous and cannot run ctx_task create. The orchestrator creates the task itself; leanctx.post() has had no caller since this change. Everything outside docs/ is English -- code, comments, docstrings, test names, commit messages, roles/*.md and README.md (AGENTS.md holds the rule). There are no translation sweeps: existing German outside docs/ stays put until something rewrites that file or section anyway, and is then rewritten in full. lean_herdr/dispatch.py and tests/test_dispatch.py were translated wholesale in this task on exactly that ground; bus.py, herdr.py, leanctx.py, export.py, join.py and worktree.py keep their German identifiers until a task rewrites them.")
+@call remember_decision("lean-herdr: bin/herdr-dispatch creates no task and posts nothing. A CLI process has no lean-ctx identity (cli/call_cmd.rs:160 leaves ToolContext.agent_id at None), so it posts as anonymous and cannot run ctx_task create. The orchestrator creates the task itself; leanctx.post() has had no caller since this change, and the final review of 2026-09-02 deleted lean_herdr/leanctx.py and tests/test_leanctx.py outright -- git history keeps them. Everything outside docs/ is English -- code, comments, docstrings, test names, commit messages, roles/*.md and README.md (AGENTS.md holds the rule). There are no translation sweeps: existing German outside docs/ stays put until something rewrites that file or section anyway, and is then rewritten in full. lean_herdr/dispatch.py and tests/test_dispatch.py were translated wholesale in this task on exactly that ground; bus.py, herdr.py, export.py, join.py and worktree.py keep their German identifiers until a task rewrites them.")
 @phase-end
 
 @phase "task-3"
@@ -912,7 +906,9 @@ interval_s, sleep, now) -> dict`, `missing_flags(args) -> str | None`,
 `UsageError`.
 **Consumes:** `lean_herdr.tasks.{read_tasks, find_task, message_from, TaskError,
 Task}` (Task 1), `lean_herdr.dispatch.agent_name` (Task 2),
-`lean_herdr.export.{session_error, session_id_from_agent_list}`.
+`lean_herdr.export.{session_error, session_id_from_agent_list}`,
+`lean_herdr.worktree.{ensure_worktree, WorktrunkMissing, WorktreeOpenFailed}`
+(fuer `_worker_root()`, das den Sitzungs-Slug des Arbeiters aufloest).
 
 Der Kern des ganzen Entwurfs: **das Warten bleibt im Skript, nicht im Modell.**
 `--await` pollt `tasks.json` als Datei — kein CLI-Aufruf, keine Registrierung,
@@ -959,19 +955,25 @@ Neue Konstanten (neben `AGENT_READY_TIMEOUT_S`):
     #: The wait mode asks the file, not the CLI: no process start per round.
     POLL_INTERVAL_S = 1.0
 
+    #: How long `--await` waits without the flag. One value for the parser AND
+    #: for AwaitRequest -- two copies would drift apart unnoticed.
+    DEFAULT_TIMEOUT_MS = 300_000
+
     #: Exactly one ring per wait call. The payload lives in the task store.
     #: Worded neutrally, because the same text also wakes a task resumed after a
     #: question -- then it is not new. And it points at `get`, not `list`: only
-    #: `get` prints the history that carries the orchestrator's answer. The text
-    #: itself stays German, like the role prompt it is spoken into.
-    WAKE_PROMPT = "Aufgabe {task_id} wartet auf dich — ctx_task get zeigt Auftrag und Verlauf."
+    #: `get` prints the history that carries the orchestrator's answer. English,
+    #: like the role prompt it is spoken into.
+    WAKE_PROMPT = "Task {task_id} is waiting for you -- ctx_task get shows order and history."
 
     #: Machine-readable verdict on the FIRST line of the completion message.
     #: Replaces the bus field `category` that fell away: without it the
     #: orchestrator would have to read prose to tell 'can be merged' from 'must
     #: go back' -- exactly what this design rules out. `failed` will not do: a
-    #: reasoned rejection is not a failure. The marker stays German because the
-    #: reviewer's role prompt is.
+    #: reasoned rejection is not a failure. `VERDIKT:` is a protocol token, not
+    #: prose: roles/reviewer.md writes exactly this literal, and every review
+    #: already written carries it -- so it stays as it is, English role prompts or
+    #: not. `VERDICT:` is deliberately NOT accepted.
     VERDICT_RE = re.compile(r"VERDIKT:\s*(result|reject)\s*$")
 
 Neuer Code, ans Ende des Moduls vor `build_parser()`:
@@ -982,7 +984,7 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
         kind: str
         task_id: str
         worktree: str | None = None
-        timeout_ms: int = 300_000
+        timeout_ms: int = DEFAULT_TIMEOUT_MS
 
 
     def verdict(message: str | None) -> str | None:
@@ -994,6 +996,26 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
         lines = (message or "").lstrip().splitlines()
         hit = VERDICT_RE.match(lines[0]) if lines else None
         return hit.group(1) if hit else None
+
+
+    def _worker_root(worktree: str | None, *, herdr: Herdr, root: Path) -> Path:
+        """The directory a worker of this dispatch runs in.
+
+        The build mode splits its pane in `ensure_worktree(...).path` and
+        `claude_session_path()` slugs exactly that cwd into
+        `~/.claude/projects/<slug>`. Looking for a worktree worker's error under
+        the repo-root slug would never find it, and every crash would come back
+        as `no_reply` -- which the orchestrator retries instead of escalating.
+
+        Falls back to the root when the worktree cannot be resolved: a missing
+        reason is bad, an exception out of the wait mode would be worse.
+        """
+        if not worktree:
+            return root
+        try:
+            return ensure_worktree(worktree, herdr=herdr, cwd=root).path
+        except (WorktrunkMissing, WorktreeOpenFailed, OSError):
+            return root
 
 
     def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
@@ -1090,7 +1112,9 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
         # store, not in the lifecycle (H1): a crashed worker leaves the task
         # sitting on `created` or `working`.
         error = session_error(
-            req.kind, session_id_from_agent_list(herdr.agent_list(), name), root
+            req.kind,
+            session_id_from_agent_list(herdr.agent_list(), name),
+            _worker_root(req.worktree, herdr=herdr, root=root),
         )
         if error:
             return _await_result(
@@ -1144,25 +1168,58 @@ beiden Klassen, die den Parser-Fehler auf stdout holen:
         p.add_argument(
             "--profile", default=None, help="overrides the role's default profile"
         )
-        p.add_argument("--timeout-ms", type=int, default=300_000, help="only with --await")
+        # `default=None`, not the number: only that tells a `--timeout-ms` given
+        # in build mode from one left out. main() fills the value in.
+        p.add_argument(
+            "--timeout-ms",
+            type=int,
+            default=None,
+            help=f"only with --await (default {DEFAULT_TIMEOUT_MS})",
+        )
         return p
 
 
+    def _given(*pairs: tuple[str, Any]) -> str:
+        """The flags of that list that were actually given, as one phrase."""
+        return " and ".join(flag for flag, value in pairs if value is not None)
+
+
     def missing_flags(args: argparse.Namespace) -> str | None:
-        """Mode-dependent required flags -- deliberately NOT via argparse.
+        """Mode-dependent flag validation -- deliberately NOT via argparse.
 
         `required=True` ends the process with exit 2 and one line on stderr.
         The orchestrator reads `ok` on stdout; a typo would look to it like no
         output at all.
+
+        The same holds for the flags of the OTHER mode: argparse accepts every
+        one of them in both, and the mode that does not read them drops them
+        without a word -- `--timeout-ms` in build mode, though its own help says
+        "only with --await", and `--model`/`--role-file`/`--profile` under
+        `--await`. A non-positive `--timeout-ms` bought exactly one ring and an
+        immediate `no_reply`.
         """
         if args.waiting:
-            return None if args.task_id else "--await needs --task-id"
+            if not args.task_id:
+                return "--await needs --task-id"
+            stray = _given(
+                ("--model", args.model),
+                ("--role-file", args.role_file),
+                ("--profile", args.profile),
+            )
+            if stray:
+                return f"--await does not take {stray}"
+            if args.timeout_ms is not None and args.timeout_ms <= 0:
+                return f"--timeout-ms must be positive, not {args.timeout_ms}"
+            return None
         missing = [
             flag
             for flag, value in (("--model", args.model), ("--role-file", args.role_file))
             if not value
         ]
-        return f"build mode needs {' and '.join(missing)}" if missing else None
+        if missing:
+            return f"build mode needs {' and '.join(missing)}"
+        stray = _given(("--timeout-ms", args.timeout_ms))
+        return f"build mode does not take {stray}" if stray else None
 
 
     def main(argv: list[str] | None = None) -> int:
@@ -1184,7 +1241,7 @@ beiden Klassen, die den Parser-Fehler auf stdout holen:
                         kind=args.kind,
                         task_id=args.task_id,
                         worktree=args.worktree,
-                        timeout_ms=args.timeout_ms,
+                        timeout_ms=args.timeout_ms or DEFAULT_TIMEOUT_MS,
                     ),
                     herdr=Herdr(),
                     root=canonical_root(),
@@ -1251,14 +1308,22 @@ beiden Klassen, die den Parser-Fehler auf stdout holen:
         return Herdr(runner=proc), proc
 
 
-    def wait(herdr, tmp_path, *tasks, timeout_ms=300_000, role="builder", **rest):
+    def wait(
+        herdr, tmp_path, *tasks, timeout_ms=300_000, role="builder", worktree=None, **rest
+    ):
         path = tmp_path / "tasks.json"
         path.write_text(
             json.dumps({"tasks": list(tasks), "updated_at": ""}), encoding="utf-8"
         )
         h, _ = herdr
         return await_task(
-            AwaitRequest(role=role, kind="claude", task_id=TASK_ID, timeout_ms=timeout_ms),
+            AwaitRequest(
+                role=role,
+                kind="claude",
+                task_id=TASK_ID,
+                worktree=worktree,
+                timeout_ms=timeout_ms,
+            ),
             herdr=h,
             root=ROOT,
             tasks_path=path,
@@ -2230,6 +2295,13 @@ Task 7 faengt `SettingsError`, ein `AttributeError` schluepfte daran vorbei.
         "ready_timeout_s": (float, int),
     }
 
+    #: Keys where a bool would slip through `_TYPES`: `isinstance(True, int)` is
+    #: True. `ready_timeout_s = true` would pass `float(True) == 1.0 > 0` too and
+    #: become a live one-second timeout -- a wrong value silently turned into a
+    #: working one. `ratio = true` its 0..1 bounds would catch, but the message
+    #: would blame the range instead of the type.
+    _NO_BOOL = ("ratio", "ready_timeout_s")
+
     ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
     #: The only two keys the top level of the file may carry.
@@ -2258,7 +2330,8 @@ Task 7 faengt `SettingsError`, ein `AttributeError` schluepfte daran vorbei.
                 f"{role}: unknown keys {unknown}; allowed: {sorted(ALLOWED)}"
             )
         for key, value in block.items():
-            if not isinstance(value, _TYPES[key]):
+            sneaky_bool = key in _NO_BOOL and isinstance(value, bool)
+            if sneaky_bool or not isinstance(value, _TYPES[key]):
                 raise SettingsError(
                     f"{role}.{key}: {value!r} is {type(value).__name__}"
                 )
@@ -2448,6 +2521,23 @@ Gruen nicht.
     def test_ratio_must_lie_between_zero_and_one(value):
         with pytest.raises(SettingsError, match="ratio"):
             settings_for("builder", {"default": {"ratio": value}})
+
+
+    @pytest.mark.parametrize("key", ["ratio", "ready_timeout_s"])
+    @pytest.mark.parametrize("value", [True, False])
+    def test_a_bool_is_not_a_number(key, value):
+        """`isinstance(True, int)` is True -- so a bool slips through the type
+        check unless it is rejected by name.
+
+        `ready_timeout_s = true` would then pass `float(True) == 1.0 > 0` as well
+        and become a live one-second agent-ready timeout: a wrong value silently
+        turned into a working one, which is exactly what a present-but-wrong file
+        must never do. `ratio = true` is caught by its 0..1 bounds anyway -- but
+        then the message blames the range instead of the type, so both keys are
+        rejected by name and the message says `is bool`.
+        """
+        with pytest.raises(SettingsError, match=rf"{key}: {value} is bool"):
+            settings_for("builder", {"default": {key: value}})
 
 
     def test_ready_timeout_must_be_positive():
@@ -2640,6 +2730,29 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
   dem, den der Aufbau-Modus gestartet hat.
 - `wait_for_agent_id()` nimmt `timeout_s` bereits entgegen
   (`lean_herdr/dispatch.py:91`); nur der Aufruf aendert sich.
+- `AGENT_READY_TIMEOUT_S` wird **abgeleitet, nicht kopiert** —
+  `AGENT_READY_TIMEOUT_S = RoleSettings.ready_timeout_s`. Produktiv gilt
+  `cfg.ready_timeout_s`; ein zweites Literal im Modul drifted unbemerkt weg.
+- `wait_for_agent_id()` loest den Registry-Pfad selbst auf, statt `None` an
+  `bus.read_registry()` durchzureichen:
+
+        def default_registry_path() -> Path:
+            """The registry NEXT TO the task store -- same install, same resolution.
+
+            `bus.REGISTRY_PATH` is the hardcoded XDG default, while
+            `tasks.task_store_path()` honours `LEAN_CTX_DATA_DIR`, a legacy
+            `~/.lean-ctx` and `XDG_*`. Both name the SAME `agents/` directory, so
+            without this the build mode read an absent registry -- a full
+            `ready_timeout_s` stall ending in `no_agent_id` -- exactly where the wait
+            mode read the right store.
+            """
+            return task_store_path().parent / "registry.json"
+
+  Erste Zeile des Rumpfs von `wait_for_agent_id()`, vor `deadline = ...`:
+
+        path = registry_path if registry_path is not None else default_registry_path()
+
+  `bus.py` bleibt dabei unberuehrt — es ist per Global Constraint eingefroren.
 - `main()` laedt die Datei genau einmal und reicht das Ergebnis in beide Modi:
 
         root = canonical_root()
@@ -2700,7 +2813,7 @@ deutsch):
 
 
     def test_layout_from_the_config_reaches_herdr(world):
-        h_proc, _, _ = world
+        h_proc, _ = world
         run_dispatch(
             world, reg=registry(), settings=RoleSettings(direction="down", ratio=0.3)
         )
@@ -2708,7 +2821,51 @@ deutsch):
         assert "--direction" in split and split[split.index("--direction") + 1] == "down"
         assert "--ratio" in split and split[split.index("--ratio") + 1] == "0.3"
 
-  (`run_dispatch()` reicht `**kwargs` bereits an `dispatch()` durch.)
+  (`run_dispatch()` reicht `**kwargs` bereits an `dispatch()` durch und nimmt
+  zusaetzlich einen `waiter=`-Parameter, damit ein Test die Kwargs des Waiters
+  sehen kann.)
+
+- Zwei Regler erreichen kein Argv, das ein bestehender Test liest —
+  `ready_timeout_s` geht nur an den Waiter, den jeder Test stubt, und `focus`
+  hat nie ein Test auf `True` gestellt. Beide Verdrahtungszeilen liessen sich
+  loeschen, ohne dass ein Test rot wurde; deshalb je ein Test:
+
+    def test_the_configured_ready_timeout_reaches_the_waiter(world):
+        """`ready_timeout_s` is the one knob no argv can show.
+
+        Every other test stubs the waiter with `lambda *a, **kw: agent_id` and
+        never looks at what it was handed -- so dropping `timeout_s=cfg.
+        ready_timeout_s` would leave the whole suite green while the config knob
+        quietly did nothing.
+        """
+        seen: list[dict] = []
+
+        def spy(_herdr, _name, **kwargs):
+            seen.append(kwargs)
+            return AGENT_ID
+
+        run_dispatch(
+            world, reg=registry(), settings=RoleSettings(ready_timeout_s=7.5), waiter=spy
+        )
+        assert seen and seen[0].get("timeout_s") == 7.5
+
+
+    def test_focus_true_drops_the_no_focus_flag(world):
+        """The second knob no test drove: `focus` only shows in the argv.
+
+        `--no-focus` is added by Herdr.pane_split() when `focus` is false, so
+        re-hardcoding it -- or dropping `focus=cfg.focus` -- would be invisible
+        without both halves of this test.
+        """
+        h_proc, _ = world
+        run_dispatch(world, reg=registry(), settings=RoleSettings(focus=True))
+        focused = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+        h_proc.calls.clear()
+        run_dispatch(world, reg=registry(), settings=RoleSettings())
+        unfocused = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+
+        assert "--no-focus" not in focused, "focus = true must hand the pane the focus"
+        assert "--no-focus" in unfocused, "the default must not steal the focus"
 
 - `tests/test_herdr.py`: ein Test, dass `--ratio` nur erscheint, wenn gesetzt:
 
