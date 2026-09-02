@@ -55,9 +55,15 @@ def test_the_token_is_single_line_and_capped():
 def test_the_token_falls_back_to_the_findings_count():
     assert summary_token("Key findings: a; b") == "2 findings"
     assert summary_token("Project: x") is None
+    # A real resume is multi-line and neither line comes first: without
+    # re.MULTILINE both patterns would miss and the token would be None.
+    assert summary_token(RESUME) == "rework the plan"
+    assert summary_token("Project: x\nKey findings: a; b") == "2 findings"
 
 
 def test_the_handoff_is_capped():
     many = "\n".join(f"  - file{i}.py" for i in range(40))
     text = render_digest("Task: t", many)
-    assert text is not None and text.count("  - file") <= 12
+    # `- file`, not `  - file`: render_digest() strips the joined handoff, so
+    # the FIRST line loses its indentation. Counting without it stays exact.
+    assert text is not None and text.count("- file") == 12
