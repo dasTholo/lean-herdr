@@ -70,6 +70,23 @@ def test_ratio_must_lie_between_zero_and_one(value):
         settings_for("builder", {"default": {"ratio": value}})
 
 
+@pytest.mark.parametrize("key", ["ratio", "ready_timeout_s"])
+@pytest.mark.parametrize("value", [True, False])
+def test_a_bool_is_not_a_number(key, value):
+    """`isinstance(True, int)` is True -- so a bool slips through the type
+    check unless it is rejected by name.
+
+    `ready_timeout_s = true` would then pass `float(True) == 1.0 > 0` as well
+    and become a live one-second agent-ready timeout: a wrong value silently
+    turned into a working one, which is exactly what a present-but-wrong file
+    must never do. `ratio = true` is caught by its 0..1 bounds anyway -- but
+    then the message blames the range instead of the type, so both keys are
+    rejected by name and the message says `is bool`.
+    """
+    with pytest.raises(SettingsError, match=rf"{key}: {value} is bool"):
+        settings_for("builder", {"default": {key: value}})
+
+
 def test_ready_timeout_must_be_positive():
     with pytest.raises(SettingsError, match="ready_timeout_s"):
         settings_for("builder", {"default": {"ready_timeout_s": 0}})

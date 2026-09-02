@@ -58,6 +58,13 @@ _TYPES: dict[str, Any] = {
     "ready_timeout_s": (float, int),
 }
 
+#: Keys where a bool would slip through `_TYPES`: `isinstance(True, int)` is
+#: True. `ready_timeout_s = true` would pass `float(True) == 1.0 > 0` too and
+#: become a live one-second timeout -- a wrong value silently turned into a
+#: working one. `ratio = true` its 0..1 bounds would catch, but the message
+#: would blame the range instead of the type.
+_NO_BOOL = ("ratio", "ready_timeout_s")
+
 ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
 #: The only two keys the top level of the file may carry.
@@ -86,7 +93,8 @@ def _check_types(block: dict[str, Any], role: str) -> None:
             f"{role}: unknown keys {unknown}; allowed: {sorted(ALLOWED)}"
         )
     for key, value in block.items():
-        if not isinstance(value, _TYPES[key]):
+        sneaky_bool = key in _NO_BOOL and isinstance(value, bool)
+        if sneaky_bool or not isinstance(value, _TYPES[key]):
             raise SettingsError(
                 f"{role}.{key}: {value!r} is {type(value).__name__}"
             )
