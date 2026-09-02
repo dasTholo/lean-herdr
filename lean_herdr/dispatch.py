@@ -255,6 +255,26 @@ def verdict(message: str | None) -> str | None:
     return hit.group(1) if hit else None
 
 
+def _worker_root(worktree: str | None, *, herdr: Herdr, root: Path) -> Path:
+    """The directory a worker of this dispatch runs in.
+
+    The build mode splits its pane in `ensure_worktree(...).path` and
+    `claude_session_path()` slugs exactly that cwd into
+    `~/.claude/projects/<slug>`. Looking for a worktree worker's error under
+    the repo-root slug would never find it, and every crash would come back
+    as `no_reply` -- which the orchestrator retries instead of escalating.
+
+    Falls back to the root when the worktree cannot be resolved: a missing
+    reason is bad, an exception out of the wait mode would be worse.
+    """
+    if not worktree:
+        return root
+    try:
+        return ensure_worktree(worktree, herdr=herdr, cwd=root).path
+    except (WorktrunkMissing, WorktreeOpenFailed, OSError):
+        return root
+
+
 def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
     return {"ok": ok, "task_id": task_id, **rest}
 
@@ -353,7 +373,9 @@ def await_task(
     # store, not in the lifecycle (H1): a crashed worker leaves the task
     # sitting on `created` or `working`.
     error = session_error(
-        req.kind, session_id_from_agent_list(herdr.agent_list(), name), root
+        req.kind,
+        session_id_from_agent_list(herdr.agent_list(), name),
+        _worker_root(req.worktree, herdr=herdr, root=root),
     )
     if error:
         return _await_result(

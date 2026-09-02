@@ -36,14 +36,22 @@ def herdr(monkeypatch):
     return Herdr(runner=proc), proc
 
 
-def wait(herdr, tmp_path, *tasks, timeout_ms=300_000, role="builder", **rest):
+def wait(
+    herdr, tmp_path, *tasks, timeout_ms=300_000, role="builder", worktree=None, **rest
+):
     path = tmp_path / "tasks.json"
     path.write_text(
         json.dumps({"tasks": list(tasks), "updated_at": ""}), encoding="utf-8"
     )
     h, _ = herdr
     return await_task(
-        AwaitRequest(role=role, kind="claude", task_id=TASK_ID, timeout_ms=timeout_ms),
+        AwaitRequest(
+            role=role,
+            kind="claude",
+            task_id=TASK_ID,
+            worktree=worktree,
+            timeout_ms=timeout_ms,
+        ),
         herdr=h,
         root=ROOT,
         tasks_path=path,
@@ -157,6 +165,66 @@ def test_a_crashed_worker_becomes_agent_error(herdr, tmp_path, monkeypatch):
     clock = iter([0.0, 0.0, 99.0])
     result = wait(
         (h, proc), tmp_path, raw_task("Created"), timeout_ms=1_000, now=lambda: next(clock)
+    )
+    assert result["error"] == "agent_error: APIError: User not found. (401)"
+
+
+def test_a_crashed_worktree_worker_becomes_agent_error_too(
+    herdr, tmp_path, monkeypatch
+):
+    """The session store is slugged from the WORKER's cwd, not from the repo root.
+
+    A `--worktree` worker runs in the worktree -- the build mode hands
+    `ensure_worktree(...).path` to `pane split` -- so `~/.claude/projects`
+    carries the worktree slug. Searching under the repo-root slug finds
+    nothing and reports `no_reply`, and the orchestrator then retries a crash
+    it is supposed to escalate without a retry.
+    """
+    h, proc = herdr
+    worktree = tmp_path / "repo.feat-auth"
+    worktree.mkdir()
+    proc.replies = {
+        ("agent", "list"): {
+            "result": {
+                "agents": [
+                    {"name": "builder-feat-auth", "pane_id": "w2:p2",
+                     "agent_session": {"value": "sid2"}}
+                ]
+            }
+        },
+        ("worktree", "list"): {
+            "result": {
+                "source": {"repo_root": str(ROOT)},
+                "worktrees": [
+                    {"branch": "feat/auth", "path": str(worktree),
+                     "open_workspace_id": "w2"}
+                ],
+            }
+        },
+    }
+    monkeypatch.setenv("HOME", str(tmp_path))
+    store = tmp_path / ".claude" / "projects" / str(worktree).replace("/", "-")
+    store.mkdir(parents=True)
+    (store / "sid2.jsonl").write_text(
+        json.dumps(
+            {
+                "role": "assistant",
+                "error": {
+                    "name": "APIError",
+                    "data": {"message": "User not found.", "statusCode": 401},
+                },
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+    clock = iter([0.0, 0.0, 99.0])
+    result = wait(
+        (h, proc),
+        tmp_path,
+        raw_task("Created"),
+        timeout_ms=1_000,
+        worktree="feat/auth",
+        now=lambda: next(clock),
     )
     assert result["error"] == "agent_error: APIError: User not found. (401)"
 
