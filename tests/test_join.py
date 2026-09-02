@@ -120,8 +120,8 @@ def test_resolve_agent_id_direct_hit_takes_precedence_over_ancestors(tmp_path: P
     _write_stat(tmp_path, 902, 901, 901)  # lean-ctx, inherits it
 
     agents = [
-        {"agent_id": "mcp-900-exakt", "pid": 900, "started_at": "2026-09-01T09:00:00Z"},
-        {"agent_id": "mcp-902-vorfahre", "pid": 902, "started_at": "2026-09-01T09:05:00Z"},
+        {"agent_id": "mcp-900-exact", "pid": 900, "started_at": "2026-09-01T09:00:00Z"},
+        {"agent_id": "mcp-902-ancestor", "pid": 902, "started_at": "2026-09-01T09:05:00Z"},
     ]
     got = resolve_agent_id(
         [{"name": "builder", "pane_id": "w2:p1"}],
@@ -130,7 +130,7 @@ def test_resolve_agent_id_direct_hit_takes_precedence_over_ancestors(tmp_path: P
         name="builder",
         proc_root=tmp_path,
     )
-    assert got == "mcp-900-exakt"
+    assert got == "mcp-900-exact"
 
 
 def test_resolve_agent_id_no_hit_stays_none(tmp_path: Path):

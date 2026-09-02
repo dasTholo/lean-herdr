@@ -88,14 +88,14 @@ def _opencode_db(tmp_path, session_id, messages):
 def test_opencode_messages_reads_only_its_own_session(tmp_path):
     path = _opencode_db(tmp_path, "s1", [{"role": "user"}, {"role": "assistant"}])
     con = sqlite3.connect(path)
-    con.execute("INSERT INTO message VALUES ('s2', '{\"role\": \"fremd\"}', 9)")
+    con.execute("INSERT INTO message VALUES ('s2', '{\"role\": \"foreign\"}', 9)")
     con.commit()
     con.close()
     assert opencode_messages("s1", path) == [{"role": "user"}, {"role": "assistant"}]
 
 
 def test_opencode_messages_is_empty_without_a_database(tmp_path):
-    assert opencode_messages("s1", tmp_path / "weg.db") == []
+    assert opencode_messages("s1", tmp_path / "gone.db") == []
 
 
 def test_session_error_finds_the_error_in_the_opencode_store(tmp_path):

@@ -112,17 +112,17 @@ def process_ancestors(
     does not become an infinite loop; the chain also stops at PID <= 1
     and at a PID that has already shown up once.
     """
-    kette: list[int] = []
+    chain: list[int] = []
     seen = {pid}
-    aktuell = pid
+    current = pid
     for _ in range(max_steps):
-        ppid = _parent_pid(aktuell, proc_root)
+        ppid = _parent_pid(current, proc_root)
         if ppid is None or ppid <= 1 or ppid in seen:
             break
-        kette.append(ppid)
+        chain.append(ppid)
         seen.add(ppid)
-        aktuell = ppid
-    return kette
+        current = ppid
+    return chain
 
 
 def _newest_agent_id(candidates: list[dict[str, Any]]) -> str | None:
