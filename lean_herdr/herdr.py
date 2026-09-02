@@ -1,6 +1,6 @@
-"""Herdr-CLI → dict. Aller Aussenverkehr zu Herdr liegt hier.
+"""Herdr CLI → dict. All outbound traffic to Herdr lives here.
 
-Kein Aufruf ohne Timeout: ohne ihn wartet Herdr unbegrenzt.
+No call without a timeout: without one, Herdr waits indefinitely.
 """
 
 from __future__ import annotations
@@ -16,10 +16,10 @@ DEFAULT_TIMEOUT_S = 10.0
 
 
 class Herdr:
-    """Duenner Wrapper um die Herdr-CLI. Fehler werden zu {}, nie zu Ausnahmen.
+    """Thin wrapper around the Herdr CLI. Errors become {}, never exceptions.
 
-    Die Plugin-Handler duerfen nie etwas brechen, und die Skripte pruefen den
-    Inhalt. Wer zwischen 'leer' und 'kaputt' unterscheiden muss, fragt
+    The plugin handlers must never break anything, and the scripts check the
+    content. Whoever needs to distinguish 'empty' from 'broken' asks
     is_available().
     """
 
@@ -35,7 +35,7 @@ class Herdr:
         self._runner = runner
         self._available: bool | None = None
 
-    # -- Grundlage ----------------------------------------------------
+    # -- Foundation ----------------------------------------------------
 
     def is_available(self) -> bool:
         if self._available is None:
@@ -43,11 +43,11 @@ class Herdr:
         return self._available
 
     def run(self, *args: str, timeout: float | None = None) -> dict[str, Any]:
-        """`herdr <args>` ausfuehren und die Antwort als dict liefern.
+        """Run `herdr <args>` and return the response as a dict.
 
-        KEIN --json anhaengen: Herdr 0.8.2 kennt den Schalter nicht (weder global
-        noch je Unterbefehl) und bricht mit exit 2 ab. Es gibt ihn nicht, weil
-        Herdr ohnehin immer JSON auf stdout schreibt.
+        NEVER append --json: Herdr 0.8.2 doesn't know the flag (neither global
+        nor per subcommand) and aborts with exit 2. It doesn't exist because
+        Herdr always writes JSON to stdout anyway.
         """
         if not self.is_available():
             return {}
@@ -78,10 +78,10 @@ class Herdr:
             node = node.get(key)
         return node
 
-    # -- Panes und Agenten --------------------------------------------
+    # -- Panes and agents --------------------------------------------
 
     def pane_list(self, workspace: str | None = None) -> list[dict[str, Any]]:
-        """Panes, optional auf einen Workspace eingeschraenkt."""
+        """Panes, optionally restricted to a workspace."""
         args = ["pane", "list"]
         if workspace:
             args += ["--workspace", workspace]
@@ -98,18 +98,17 @@ class Herdr:
         env: dict[str, str] | None = None,
         focus: bool = False,
     ) -> str | None:
-        """Neuen Pane anlegen und seine pane_id liefern.
+        """Create a new pane and return its pane_id.
 
-        Der einzige Ort fuer --env: `agent start` kennt kein --env (H9).
+        The only place for --env: `agent start` doesn't know --env (H9).
 
-        `pane` waehlt den Pane, der geteilt wird — und damit den Workspace, in
-        dem der neue landet. Ohne ihn teilt Herdr `--current`, also IMMER den
-        Workspace des Aufrufers. Fuer einen Arbeiter im Worktree ist das
-        falsch: `workspace close <worktree_workspace>` wuerde ihn nicht
-        beenden.
+        `pane` selects the pane being split — and thus the workspace the new
+        one lands in. Without it, Herdr splits `--current`, i.e. ALWAYS the
+        caller's workspace. For a worker in a worktree that's wrong:
+        `workspace close <worktree_workspace>` would not terminate it.
         """
-        ziel = ["--pane", pane] if pane else ["--current"]
-        args = ["pane", "split", *ziel, "--direction", direction, "--cwd", str(cwd)]
+        target = ["--pane", pane] if pane else ["--current"]
+        args = ["pane", "split", *target, "--direction", direction, "--cwd", str(cwd)]
         if ratio is not None:
             args += ["--ratio", str(ratio)]
         if not focus:
@@ -117,17 +116,17 @@ class Herdr:
         for key, value in (env or {}).items():
             args += ["--env", f"{key}={value}"]
         data = self.run(*args)
-        # Gemessen gegen 0.8.2: {"result": {"pane": {"pane_id": "w1:p7", ...}}}.
+        # Measured against 0.8.2: {"result": {"pane": {"pane_id": "w1:p7", ...}}}.
         pane = self._result(data, "pane", "pane_id") or self._result(data, "pane_id")
         return str(pane) if pane else None
 
     def agent_start(
         self, name: str, *, kind: str, pane: str, agent_args: Sequence[str] = ()
     ) -> dict[str, Any]:
-        """Agent im Pane starten. Native Argumente nach `--`.
+        """Start an agent in the pane. Native arguments after `--`.
 
-        Mehrzeilige Argumente lehnt Herdr ab (H2) — Rollentexte kommen als
-        Datei, nie als Argumenttext.
+        Herdr rejects multi-line arguments (H2) — role texts come as a
+        file, never as argument text.
         """
         args = ["agent", "start", name, "--kind", kind, "--pane", pane]
         if agent_args:
@@ -142,7 +141,7 @@ class Herdr:
         wait: bool = True,
         timeout_ms: int | None = None,
     ) -> dict[str, Any]:
-        """Klingeln. Steuerbefehle (/clear) IMMER mit wait=False senden (H4)."""
+        """Ring the bell. ALWAYS send control commands (/clear) with wait=False (H4)."""
         args = ["agent", "prompt", name, text]
         if wait:
             args.append("--wait")
@@ -158,7 +157,7 @@ class Herdr:
     def pane_process_info(self, pane: str) -> dict[str, Any]:
         return self.run("pane", "process-info", "--pane", pane)
 
-    # -- Sichtbarkeit --------------------------------------------------
+    # -- Visibility --------------------------------------------------
 
     SOURCE = "lean.herdr"
 
@@ -167,12 +166,12 @@ class Herdr:
     ) -> bool:
         """`herdr <scope> report-metadata <id> --source lean.herdr --token k=v`.
 
-        Zwei gemessene Eigenheiten (0.8.2): die ID ist POSITIONAL, nicht
-        `--pane`/`--workspace`; und `--source` ist Pflicht — ohne sie exit 2.
-        Die Source ist der Namensraum, unter dem unsere Tokens stehen; ein
-        fremdes Plugin ueberschreibt sie damit nicht.
+        Two measured quirks (0.8.2): the ID is POSITIONAL, not
+        `--pane`/`--workspace`; and `--source` is mandatory — without it, exit 2.
+        The source is the namespace our tokens live under; a
+        foreign plugin therefore can't overwrite them.
 
-        scope ist "pane" oder "workspace". True, wenn der Aufruf durchging.
+        scope is "pane" or "workspace". True if the call went through.
         """
         data = self.run(
             scope,
@@ -185,7 +184,7 @@ class Herdr:
         )
         return bool(data)
 
-    # -- Workspaces und Worktrees --------------------------------------
+    # -- Workspaces and worktrees --------------------------------------
 
     def workspace_list(self) -> list[dict[str, Any]]:
         spaces = self._result(self.run("workspace", "list"), "workspaces")
@@ -198,7 +197,7 @@ class Herdr:
         return self.run("worktree", "list", "--cwd", str(cwd))
 
     def worktree_open(self, *, cwd: str | Path, path: str | Path, label: str) -> dict[str, Any]:
-        """`--cwd` MUSS der Repo-Root sein, nie ein Linked-Worktree-Pfad (H8)."""
+        """`--cwd` MUST be the repo root, never a linked-worktree path (H8)."""
         return self.run(
             "worktree", "open", "--cwd", str(cwd), "--path", str(path), "--label", label
         )
