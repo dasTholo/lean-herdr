@@ -51,7 +51,7 @@ def test_nine_fractional_digits_are_readable():
     value = parse_time("2026-08-01T15:10:08.404790674Z")
     assert value is not None and value.tzinfo is not None
     assert value.year == 2026 and value.microsecond == 404790
-    assert parse_time(None) is None and parse_time("morgen frueh") is None
+    assert parse_time(None) is None and parse_time("tomorrow morning") is None
 
 
 def test_expired_messages_are_dropped(sample):

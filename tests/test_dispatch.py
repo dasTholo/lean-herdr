@@ -450,5 +450,5 @@ def test_a_missing_worktrunk_reports_worktrunk_missing(world, monkeypatch):
     h_proc.replies = {
         ("worktree", "list"): {"result": {"source": {"repo_root": "/repo"}, "worktrees": []}},
     }
-    result = run_dispatch(world, reg=registry(), request=req(worktree="feat/neu"))
+    result = run_dispatch(world, reg=registry(), request=req(worktree="feat/new"))
     assert result["error"] == "worktrunk_missing"

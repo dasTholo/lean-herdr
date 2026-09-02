@@ -50,7 +50,7 @@ def test_session_id_from_agent_list():
         {"name": "builder", "agent_session": {"value": "1b7c63c4"}},
     ]
     assert session_id_from_agent_list(agents, "builder") == "1b7c63c4"
-    assert session_id_from_agent_list(agents, "weg") is None
+    assert session_id_from_agent_list(agents, "gone") is None
 
 
 def test_claude_path_is_the_slug_of_the_project_root_path(tmp_path):
