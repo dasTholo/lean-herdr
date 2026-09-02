@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from lean_herdr.dispatch import (
+    AGENT_READY_TIMEOUT_S,
     DispatchRequest,
     agent_args,
     agent_name,
@@ -66,6 +67,12 @@ def run_dispatch(
         waiter=waiter or (lambda *a, **kw: agent_id),
         **kwargs,
     )
+
+
+def test_the_ready_timeout_default_exists_only_once():
+    """Production reads `cfg.ready_timeout_s`; the module constant is only the
+    signature default of wait_for_agent_id(). Two literals would drift."""
+    assert AGENT_READY_TIMEOUT_S == RoleSettings().ready_timeout_s
 
 
 def test_the_cli_flag_beats_the_file():

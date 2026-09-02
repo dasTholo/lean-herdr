@@ -50,7 +50,9 @@ from lean_herdr.worktree import (
     ensure_worktree,
 )
 
-AGENT_READY_TIMEOUT_S = 45.0
+#: Derived, not copied: production reads `cfg.ready_timeout_s`, so a second
+#: literal here would drift away from the real default unnoticed.
+AGENT_READY_TIMEOUT_S = RoleSettings.ready_timeout_s
 AGENT_READY_INTERVAL_S = 0.5
 
 #: The wait mode asks the file, not the CLI: no process start per round.
