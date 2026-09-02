@@ -33,7 +33,7 @@ def test_find_error_reads_the_nested_apierror():
 
 
 def test_find_error_is_none_for_a_clean_export():
-    assert find_error({"messages": [{"role": "assistant", "content": "fertig"}]}) is None
+    assert find_error({"messages": [{"role": "assistant", "content": "done"}]}) is None
 
 
 def test_find_error_ignores_empty_error_fields():
@@ -62,12 +62,12 @@ def test_claude_path_is_the_slug_of_the_project_root_path(tmp_path):
 
 def test_read_jsonl_skips_broken_lines(tmp_path):
     file = tmp_path / "s.jsonl"
-    file.write_text('{"a": 1}\nkein json\n\n{"b": 2}\n', encoding="utf-8")
+    file.write_text('{"a": 1}\nnot json\n\n{"b": 2}\n', encoding="utf-8")
     assert read_jsonl(file) == [{"a": 1}, {"b": 2}]
 
 
 def test_read_jsonl_is_empty_when_the_file_is_missing(tmp_path):
-    assert read_jsonl(tmp_path / "gibt-es-nicht.jsonl") == []
+    assert read_jsonl(tmp_path / "does-not-exist.jsonl") == []
 
 
 def _opencode_db(tmp_path, session_id, messages):
