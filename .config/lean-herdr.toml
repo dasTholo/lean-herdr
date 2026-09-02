@@ -1,0 +1,24 @@
+# lean-herdr configuration. Precedence: CLI flag > this file > built-in default.
+# Everything here is commented out, so the project behaves exactly as it does
+# without this file. Uncomment what you want to change.
+#
+# [default] applies to every role and also beats the built-in per-role
+# defaults (orchestrator = minimal). To change a single role, write it under
+# [roles.<role>].
+
+# [default]
+# direction = "right"          # right | down -- herdr pane split --direction
+# ratio = 0.5                  # 0 < r < 1 -- herdr pane split --ratio
+# focus = false                # true: the new pane takes focus
+# name_template = "{role}-{branch}"   # both placeholders are mandatory
+# profile = "standard"         # minimal 2711 / standard 4920 / power 11559 tokens
+# ready_timeout_s = 45.0       # how long to wait for the agent's MCP server
+
+# [roles.orchestrator]
+# profile = "minimal"
+
+# [roles.builder]
+# direction = "down"
+
+# [roles.reviewer]
+# ratio = 0.3
