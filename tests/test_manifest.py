@@ -8,8 +8,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "herdr-plugin.toml"
 
-#: Per `plugin link` ohne Warnung bestaetigt. `layout.updated` existiert NICHT.
-GUELTIGE_EVENTS = {
+#: Confirmed via `plugin link` without warning. `layout.updated` does NOT exist.
+VALID_EVENTS = {
     "pane.agent_detected",
     "pane.agent_status_changed",
     "pane.created",
@@ -27,61 +27,61 @@ def manifest() -> dict:
     return tomllib.loads(MANIFEST.read_text(encoding="utf-8"))
 
 
-def test_jedes_event_ist_bekannt_und_in_punkt_notation():
-    for eintrag in manifest()["events"]:
-        on = eintrag["on"]
-        assert "_" not in on.split(".")[0], f"{on}: Socket-Schema statt Punkt-Notation"
-        assert on in GUELTIGE_EVENTS, f"{on} ist kein gueltiges Herdr-Event"
+def test_every_event_is_known_and_in_dot_notation():
+    for entry in manifest()["events"]:
+        on = entry["on"]
+        assert "_" not in on.split(".")[0], f"{on}: socket schema instead of dot notation"
+        assert on in VALID_EVENTS, f"{on} is not a valid Herdr event"
 
 
-def test_kein_handler_ohne_subcommand():
+def test_no_handler_without_subcommand():
     from lean_herdr.__main__ import HANDLERS
 
-    for eintrag in manifest()["events"] + manifest()["actions"]:
-        sub = eintrag["command"][-1]
-        assert sub in HANDLERS, f"{sub} hat keinen Handler"
+    for entry in manifest()["events"] + manifest()["actions"]:
+        sub = entry["command"][-1]
+        assert sub in HANDLERS, f"{sub} has no handler"
 
 
-def test_die_beiden_aktionen_haengen_am_richtigen_kontext():
-    nach_id = {a["id"]: a for a in manifest()["actions"]}
-    assert nach_id["inject"]["contexts"] == ["pane"]
-    assert nach_id["bootstrap"]["contexts"] == ["workspace"], (
-        "Der Bootstrap legt einen Pane IN diesem Workspace an — Pane-Kontext "
-        "waere der falsche Bezug."
+def test_both_actions_attach_to_the_right_context():
+    by_id = {a["id"]: a for a in manifest()["actions"]}
+    assert by_id["inject"]["contexts"] == ["pane"]
+    assert by_id["bootstrap"]["contexts"] == ["workspace"], (
+        "The bootstrap creates a pane IN this workspace — a pane context "
+        "would be the wrong reference."
     )
 
 
-def test_main_ueberlebt_ein_fehlendes_handlers_modul(monkeypatch, capsys):
-    """Task 13 muss ohne Task 15 durchlaufen: der Import passiert erst im Aufruf."""
+def test_main_survives_a_missing_handlers_module(monkeypatch, capsys):
+    """Task 13 must pass without Task 15: the import only happens on the call."""
     import importlib
 
     from lean_herdr.__main__ import main
 
-    def kein_modul(name):
+    def no_module(name):
         raise ModuleNotFoundError(name)
 
-    monkeypatch.setattr(importlib, "import_module", kein_modul)
+    monkeypatch.setattr(importlib, "import_module", no_module)
     assert main(["inject"]) == 0
-    assert "[lean.herdr] inject fehlgeschlagen" in capsys.readouterr().err
+    assert "[lean.herdr] inject failed" in capsys.readouterr().err
 
 
-def test_unbekannter_subcommand_ist_kein_absturz(capsys):
+def test_an_unknown_subcommand_is_not_a_crash(capsys):
     from lean_herdr.__main__ import main
 
-    assert main(["gibt-es-nicht"]) == 0
-    assert "unbekannter Subcommand" in capsys.readouterr().err
+    assert main(["does-not-exist"]) == 0
+    assert "unknown subcommand" in capsys.readouterr().err
 
 
 @pytest.mark.integration
-def test_plugin_link_erzeugt_keine_warnung(tmp_path):
-    """H6: Herdr warnt bei unbekannten Events nur — hier wird die Warnung fatal."""
+def test_plugin_link_produces_no_warning(tmp_path):
+    """H6: Herdr only warns for unknown events — here the warning becomes fatal."""
     if shutil.which("herdr") is None:
-        pytest.skip("herdr nicht installiert")
+        pytest.skip("herdr not installed")
     subprocess.run(
         ["herdr", "plugin", "link", str(ROOT)], capture_output=True, text=True, check=False
     )
-    liste = subprocess.run(
+    listing = subprocess.run(
         ["herdr", "plugin", "list"], capture_output=True, text=True, timeout=30, check=False
     )
-    zeilen = [z for z in liste.stdout.splitlines() if "lean.herdr" in z or "warning:" in z]
-    assert not any("warning:" in z for z in zeilen), "\n".join(zeilen)
+    lines = [line for line in listing.stdout.splitlines() if "lean.herdr" in line or "warning:" in line]
+    assert not any("warning:" in line for line in lines), "\n".join(lines)

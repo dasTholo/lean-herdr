@@ -1,7 +1,7 @@
-"""Subcommand-Dispatch der Plugin-Handler.
+"""Subcommand dispatch for the plugin handlers.
 
-Ein Handler bricht nie etwas: jeder Pfad endet mit exit 0, jede Ausnahme
-landet auf stderr — und damit in `herdr plugin log list --plugin lean.herdr`.
+A handler never breaks anything: every path ends with exit 0, every exception
+lands on stderr — and thus in `herdr plugin log list --plugin lean.herdr`.
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lean_herdr.config import Config
 
-#: Subcommand → Funktionsname in lean_herdr.handlers. Bewusst NAMEN, nicht
-#: Funktionsobjekte — siehe main().
+#: Subcommand → function name in lean_herdr.handlers. Deliberately NAMES, not
+#: function objects — see main().
 HANDLERS = {
     "workspace-created": "handle_workspace_created",
     "pane-detected": "handle_pane_detected",
@@ -28,20 +28,20 @@ HANDLERS = {
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else argv
     if not args or args[0] not in HANDLERS:
-        sys.stderr.write(f"[lean.herdr] unbekannter Subcommand: {args[:1]}\n")
+        sys.stderr.write(f"[lean.herdr] unknown subcommand: {args[:1]}\n")
         return 0
     try:
-        # Spaet und ueber den NAMEN aufloesen. Zwei Gruende, beide handfest:
-        # 1. lean_herdr.handlers entsteht erst in Task 15. Ein Import am
-        #    Modulkopf liesse schon diese Task an ihrem eigenen Testlauf
-        #    scheitern; so meldet ein fehlender Handler nur eine stderr-Zeile.
-        # 2. Ein zur Importzeit gebundenes Funktionsobjekt waere im Test nicht
-        #    mehr zu ersetzen: ein monkeypatch auf handlers.handle_pane_detected
-        #    ginge am gespeicherten Eintrag vorbei, und der Test pruefte nichts.
+        # Resolved late, by NAME. Two reasons, both concrete:
+        # 1. lean_herdr.handlers does not exist until Task 15. An import at the
+        #    module's top would make this very task fail its own test run; this
+        #    way, a missing handler only reports one stderr line.
+        # 2. A function object bound at import time could no longer be swapped
+        #    in the test: a monkeypatch on handlers.handle_pane_detected would
+        #    miss the stored entry, and the test would check nothing.
         handlers = importlib.import_module("lean_herdr.handlers")
         getattr(handlers, HANDLERS[args[0]])(Config.from_env())
-    except Exception as exc:  # noqa: BLE001 — ein Handler bricht nie etwas
-        sys.stderr.write(f"[lean.herdr] {args[0]} fehlgeschlagen: {exc}\n")
+    except Exception as exc:  # noqa: BLE001 — a handler never breaks anything
+        sys.stderr.write(f"[lean.herdr] {args[0]} failed: {exc}\n")
     return 0
 
 

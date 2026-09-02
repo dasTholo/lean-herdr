@@ -1,7 +1,7 @@
-"""HERDR_*/LEAN_HERDR_*-Umgebung → eine dataclass.
+"""HERDR_*/LEAN_HERDR_* environment → a dataclass.
 
-Herdr setzt HERDR_* in jedem Pane und in jedem Handler-Prozess; ein Skript
-weiss damit ohne Zutun, wo es steht.
+Herdr sets HERDR_* in every pane and every handler process; a script
+knows where it stands without any extra effort.
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ class Config:
 
     @staticmethod
     def _event(raw: str | None) -> dict[str, Any] | None:
-        """Kaputtes Event-JSON ist kein Grund zu brechen — dann eben keins."""
+        """Broken event JSON is no reason to break — then there simply is none."""
         if not raw:
             return None
         try:
@@ -65,5 +65,5 @@ class Config:
         return data if isinstance(data, dict) else None
 
     def digest_path(self, key: str) -> Path | None:
-        """Ablage des Digests je Pane. Ohne STATE_DIR gibt es keine Ablage."""
+        """Digest storage per pane. Without STATE_DIR there is no storage."""
         return (self.state_dir / f"{key}.md") if self.state_dir else None
