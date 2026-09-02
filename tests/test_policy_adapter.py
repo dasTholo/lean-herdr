@@ -137,3 +137,102 @@ def test_a_missing_script_lets_the_tool_through(tmp_path):
     )
     assert "passed through" in proc.stdout, proc.stderr
     assert "is missing" in proc.stderr, "the outage is noted on stderr"
+
+
+def _hooks_dir(tmp_path: Path, body: str) -> Path:
+    """A hooks directory holding one bash script with `body`."""
+    hooks = tmp_path / "hooks"
+    hooks.mkdir(parents=True, exist_ok=True)
+    script = hooks / "bash-enforce-ctx-shell.py"
+    script.write_text(body, encoding="utf-8")
+    script.chmod(0o755)
+    return hooks
+
+
+@pytest.mark.integration
+def test_a_crashing_script_passes_through_but_is_never_silent(tmp_path):
+    """Fail-open is the design -- failing open WITHOUT a word is not.
+
+    A hook that dies leaves the tool unguarded. If that happens silently,
+    nobody learns the hardening stopped working.
+    """
+    hooks = _hooks_dir(tmp_path, "import sys\nsys.stderr.write('boom\\n')\nsys.exit(3)\n")
+    proc = node_driver(
+        tmp_path,
+        f"""
+        process.env.LEAN_HERDR_HOOKS_DIR = {json.dumps(str(hooks))};
+        const {{ LeanCtxPolicy }} = await import({json.dumps(str(ADAPTER))});
+        const hooks = await LeanCtxPolicy({{ directory: process.cwd() }});
+        await hooks["tool.execute.before"](
+          {{ tool: "bash" }}, {{ args: {{ command: "echo hi" }} }},
+        );
+        console.log("passed through");
+        """,
+    )
+    assert "passed through" in proc.stdout, proc.stderr
+    assert "exit 3" in proc.stderr, f"the crash must be noted: {proc.stderr}"
+    assert "boom" in proc.stderr, "the script's own stderr must reach the operator"
+
+
+@pytest.mark.integration
+def test_a_script_that_ignores_stdin_does_not_kill_the_session(tmp_path):
+    """An EPIPE on the hook's stdin must never take the whole process down.
+
+    Without an `error` handler on `child.stdin`, node raises an unhandled
+    'error' event and exits -- the one failure mode the adapter promises can
+    never happen. A payload past the pipe buffer makes it reproducible.
+    """
+    hooks = _hooks_dir(tmp_path, "import sys\nsys.exit(0)\n")
+    proc = node_driver(
+        tmp_path,
+        f"""
+        process.env.LEAN_HERDR_HOOKS_DIR = {json.dumps(str(hooks))};
+        const {{ LeanCtxPolicy }} = await import({json.dumps(str(ADAPTER))});
+        const hooks = await LeanCtxPolicy({{ directory: process.cwd() }});
+        await hooks["tool.execute.before"](
+          {{ tool: "bash" }}, {{ args: {{ command: "x".repeat(4_000_000) }} }},
+        );
+        console.log("survived");
+        """,
+    )
+    assert proc.returncode == 0, f"node died: {proc.stderr}"
+    assert "survived" in proc.stdout, proc.stderr
+    assert "Unhandled" not in proc.stderr, proc.stderr
+
+
+@pytest.mark.integration
+def test_hooks_may_live_inside_the_repository(tmp_path):
+    """Not every checkout shares one home directory.
+
+    Without LEAN_HERDR_HOOKS_DIR the adapter looks in the project's own
+    `.claude/hooks` before falling back to the home directory, so a repo can
+    carry its policy with it.
+    """
+    root = tmp_path / "repo"
+    local = root / ".claude" / "hooks"
+    local.mkdir(parents=True)
+    (local / "bash-enforce-ctx-shell.py").write_text(
+        "import json, sys\n"
+        "print(json.dumps({'hookSpecificOutput': {'permissionDecision': 'deny',\n"
+        "    'permissionDecisionReason': 'denied by the repository-local hook'}}))\n",
+        encoding="utf-8",
+    )
+    proc = node_driver(
+        tmp_path,
+        f"""
+        delete process.env.LEAN_HERDR_HOOKS_DIR;
+        const {{ LeanCtxPolicy }} = await import({json.dumps(str(ADAPTER))});
+        const hooks = await LeanCtxPolicy({{ project: {{ worktree: {json.dumps(str(root))} }} }});
+        try {{
+          await hooks["tool.execute.before"](
+            {{ tool: "bash" }}, {{ args: {{ command: "echo hi" }} }},
+          );
+          console.log("ALLOWED");
+        }} catch (err) {{
+          console.log("DENIED: " + err.message);
+        }}
+        """,
+    )
+    assert "DENIED: denied by the repository-local hook" in proc.stdout, (
+        f"stdout={proc.stdout} stderr={proc.stderr}"
+    )

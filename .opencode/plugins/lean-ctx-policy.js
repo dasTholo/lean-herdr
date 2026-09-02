@@ -9,9 +9,33 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-const HOOKS_DIR =
-  process.env.LEAN_HERDR_HOOKS_DIR || join(homedir(), ".claude", "hooks");
 const TIMEOUT_MS = 5000;
+
+/**
+ * Where a hook script may live, most specific first.
+ *
+ * LEAN_HERDR_HOOKS_DIR is authoritative when set -- an explicit override
+ * means "look there and nowhere else". Otherwise the project's own
+ * `.claude/hooks` wins over the home directory, so a checkout can carry its
+ * policy with it instead of depending on one shared home.
+ */
+function hookDirs(root) {
+  const override = process.env.LEAN_HERDR_HOOKS_DIR;
+  if (override) return [override];
+  const dirs = [];
+  if (root) dirs.push(join(root, ".claude", "hooks"));
+  dirs.push(join(homedir(), ".claude", "hooks"));
+  return dirs;
+}
+
+/** First directory that actually holds `script`, or null. */
+function findHook(script, root) {
+  for (const dir of hookDirs(root)) {
+    const path = join(dir, script);
+    if (existsSync(path)) return path;
+  }
+  return null;
+}
 
 /** Tool name (lower-cased) -> the scripts in charge, in this order. */
 const SCRIPTS = {
@@ -31,10 +55,10 @@ function note(text) {
 }
 
 /** Run one hook. Returns its decision or null. */
-function runHook(script, payload) {
+function runHook(script, payload, root) {
   return new Promise((resolve) => {
-    const path = join(HOOKS_DIR, script);
-    if (!existsSync(path)) {
+    const path = findHook(script, root);
+    if (path === null) {
       note(`${script} is missing -- the tool runs through`);
       return resolve(null);
     }
@@ -46,6 +70,7 @@ function runHook(script, payload) {
       return resolve(null);
     }
     let out = "";
+    let err = "";
     const timer = setTimeout(() => {
       child.kill("SIGKILL");
       note(`${script} did not answer within ${TIMEOUT_MS} ms -- the tool runs through`);
@@ -53,18 +78,36 @@ function runHook(script, payload) {
     }, TIMEOUT_MS);
 
     child.stdout.on("data", (b) => (out += b));
-    child.on("error", (err) => {
+    child.stderr.on("data", (b) => (err += b));
+    child.on("error", (e) => {
       clearTimeout(timer);
-      note(`${script}: ${err.message} -- the tool runs through`);
+      note(`${script}: ${e.message} -- the tool runs through`);
       resolve(null);
     });
-    child.on("close", () => {
+    // A hook that exits before draining stdin gives us EPIPE. Unhandled,
+    // that is a fatal 'error' event -- it would take the whole session down,
+    // which is the one thing this adapter must never do.
+    child.stdin.on("error", () => {});
+    child.on("close", (code) => {
       clearTimeout(timer);
+      let decision = null;
+      let parsed = false;
       try {
-        resolve(JSON.parse(out)?.hookSpecificOutput ?? null);
+        decision = JSON.parse(out)?.hookSpecificOutput ?? null;
+        parsed = true;
       } catch {
-        resolve(null);
+        parsed = false;
       }
+      // Failing open is the design; failing open in silence is not. A
+      // non-zero exit or unusable output means the tool just ran unguarded.
+      if (code !== 0 || (out.trim() && !parsed)) {
+        const first = err.trim().split("\n")[0];
+        note(
+          `${script} exit ${code}${first ? `: ${first}` : ", no usable answer"}` +
+            " -- the tool runs through",
+        );
+      }
+      resolve(decision);
     });
     child.stdin.write(JSON.stringify(payload));
     child.stdin.end();
@@ -95,6 +138,7 @@ function observe(payload) {
       clearTimeout(timer);
       resolve();
     });
+    child.stdin.on("error", () => {});
     child.stdin.write(JSON.stringify(payload));
     child.stdin.end();
   });
@@ -103,13 +147,20 @@ function observe(payload) {
 export const LeanCtxPolicy = async ({ project, directory }) => ({
   "tool.execute.before": async (input, output) => {
     const name = String(input.tool || "").toLowerCase();
+    // The repository root, not the working directory: a repo-local hook set
+    // belongs to the checkout, not to whatever subdirectory a tool runs in.
+    const root = project?.worktree ?? directory ?? process.cwd();
     for (const script of SCRIPTS[name] ?? []) {
-      const decision = await runHook(script, {
-        tool_name: name,
-        tool_input: output.args ?? {},
-        cwd: directory ?? project?.worktree ?? process.cwd(),
-        session_id: input.sessionID ?? null,
-      });
+      const decision = await runHook(
+        script,
+        {
+          tool_name: name,
+          tool_input: output.args ?? {},
+          cwd: directory ?? project?.worktree ?? process.cwd(),
+          session_id: input.sessionID ?? null,
+        },
+        root,
+      );
       if (decision?.permissionDecision === "deny") {
         // Throwing blocks the tool call; opencode shows the reason as a tool
         // error. The turn continues -- never a session abort.
