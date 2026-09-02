@@ -59,6 +59,7 @@ FROZEN_IDS = {
         "m-fremdes-projekt",
         "m-mit-projekt",
         "m-ohne-projekt",
+        "m-abgelaufen",
     ),
 }
 
