@@ -109,17 +109,20 @@ Gemessene Grundlagen dieses Plans (Quelle `~/Scripts/lean-ctx`, 3.10.1):
   Task 3 — abnehmbar ist er erst, wenn `--await` existiert.
 - **`bus.py` bleibt unveraendert.** Der Bus behaelt alles ohne Auftragsbezug
   (Findings, Broadcasts, Plugin-Digest der Stufe 5).
-- **Sprache: Code und Commits sind ENGLISCH.** Das gilt fuer Bezeichner,
-  Kommentare, Docstrings, Testnamen, Commit-Nachrichten und die Texte von
-  `remember_decision`. Deutsch bleiben: die Rollentexte in `roles/` und der
-  README (Prompts und Betreiberdoku, keine Bezeichner — `test_role_prohibitions.py`
-  zitiert sie zwangslaeufig woertlich, wie sein eigener Docstring schon heute
-  festhaelt), sowie die Prosa dieses Plans. Bestehende deutsche Bezeichner in
-  `bus.py`, `herdr.py`, `leanctx.py`, `export.py`, `join.py` und `worktree.py`
-  werden hier NICHT umbenannt — das bleibt der Sammeluebersetzung des Betreibers
-  vorbehalten. Ausnahme: `lean_herdr/dispatch.py` und `tests/test_dispatch.py`
-  werden in Task 2 durchgehend uebersetzt, weil dieser Plan sie ohnehin an Kopf
-  und Fuss neu schreibt.
+- **Sprache: Code, Commits UND ausgelieferte Artefakte sind ENGLISCH.** Das gilt
+  fuer Bezeichner, Kommentare, Docstrings, Testnamen, Commit-Nachrichten, die
+  Texte von `remember_decision` sowie — seit der Entscheidung des Betreibers vom
+  2026-09-02, die die fruehere Fassung dieses Absatzes ersetzt — die Rollentexte
+  in `roles/` und den README. Task 4 stellt diese vier Dateien vollstaendig auf
+  Englisch um und zieht `tests/test_role_prohibitions.py` und
+  `tests/test_roles.py` mit, die sie woertlich zitieren; `AGENTS.md` haelt die
+  Regel als dritte Sprachzeile fest. Deutsch bleibt allein die Prosa dieses
+  Plans. Bestehende deutsche Bezeichner in `bus.py`, `herdr.py`, `leanctx.py`,
+  `export.py`, `join.py` und `worktree.py` werden hier NICHT umbenannt — das
+  bleibt der Sammeluebersetzung des Betreibers vorbehalten. Ausnahme:
+  `lean_herdr/dispatch.py` und `tests/test_dispatch.py` werden in Task 2
+  durchgehend uebersetzt, weil dieser Plan sie ohnehin an Kopf und Fuss neu
+  schreibt.
 - **`@reformat` wird nicht ausgefuehrt** (uebernommene Abweichung des
   Vorgaengerplans, Spec §8): das Qualitaetstor ist `ruff check`, **nicht**
   `ruff format --check` — sonst schriebe der Formatter den woertlichen Plan-Code
