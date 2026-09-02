@@ -12,6 +12,12 @@ from lean_herdr.dispatch import (
     profile_for,
 )
 from lean_herdr.herdr import Herdr
+from lean_herdr.settings import (
+    SETTINGS_PATH,
+    RoleSettings,
+    read_settings,
+    settings_for,
+)
 from tests.doubles import FakeProc, which_stub
 
 ROOT = Path("/repo")
@@ -54,18 +60,21 @@ def run_dispatch(world, *, reg: dict, request=None, agent_id: str | None = AGENT
     )
 
 
-def test_profil_folgt_der_rolle_und_laesst_sich_ueberschreiben():
-    assert profile_for("orchestrator") == "minimal"
-    assert profile_for("builder") == "standard"
-    assert profile_for("reviewer") == "standard"
-    assert profile_for("builder", "minimal") == "minimal"
+def test_the_cli_flag_beats_the_file():
+    cfg = RoleSettings(profile="power")
+    assert profile_for("builder", None, settings=cfg) == "power"
+    assert profile_for("builder", "minimal", settings=cfg) == "minimal"
 
 
-def test_agentenname_ist_branch_UND_rolle():
-    """Ein Reviewer-Dispatch darf nie den laufenden Builder desselben Branches treffen."""
-    assert agent_name("builder") == "builder"
+def test_agent_name_follows_the_template():
+    cfg = RoleSettings(name_template="{branch}--{role}")
+    assert agent_name("builder", "feat/auth", settings=cfg) == "feat-auth--builder"
+    assert agent_name("builder", None, settings=cfg) == "builder"
+
+
+def test_agent_name_is_branch_AND_role():
+    """A reviewer dispatch must never hit the running builder of that branch."""
     assert agent_name("builder", "feat/auth") == "builder-feat-auth"
-    assert agent_name("reviewer", "feat/auth") == "reviewer-feat-auth"
     assert agent_name("builder", "feat/auth") != agent_name("reviewer", "feat/auth")
 
 
@@ -93,6 +102,36 @@ def test_the_profile_is_set_on_the_pane_not_on_the_agent(world):
     assert h_proc.called_with("--env", "LEAN_CTX_ROLE=builder")
     start = next(c for c in h_proc.calls if c[1:3] == ["agent", "start"])
     assert "--env" not in start, "agent start knows no --env (H9)"
+
+
+def test_layout_from_the_config_reaches_herdr(world):
+    h_proc, _, _ = world
+    run_dispatch(
+        world, reg=registry(), settings=RoleSettings(direction="down", ratio=0.3)
+    )
+    split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+    assert "--direction" in split and split[split.index("--direction") + 1] == "down"
+    assert "--ratio" in split and split[split.index("--ratio") + 1] == "0.3"
+
+
+def test_without_a_config_file_the_split_is_the_one_from_before(world, tmp_path):
+    """Global constraint: no `.config/lean-herdr.toml` -- byte-identical.
+
+    The expected argv is the one this project sent before the config existed;
+    a `--ratio` or a `--focus` sneaking in would show up here.
+    """
+    h_proc, _, _ = world
+    missing = tmp_path / SETTINGS_PATH
+    assert not missing.exists()
+    cfg = settings_for("builder", read_settings(missing))
+    run_dispatch(world, reg=registry(), settings=cfg)
+    split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+    assert split == [
+        "herdr", "pane", "split", "--current", "--direction", "right",
+        "--cwd", "/repo", "--no-focus",
+        "--env", "LEAN_CTX_TOOL_PROFILE=standard",
+        "--env", "LEAN_CTX_ROLE=builder",
+    ]
 
 
 def test_an_existing_agent_is_reused_and_cleared(world):
@@ -125,6 +164,69 @@ def test_main_writes_one_json_line_and_exits_0(capsys, monkeypatch):
     assert len(lines) == 1
     result = json.loads(lines[0])
     assert result["ok"] is False and result["error"].startswith("dispatch_crashed")
+
+
+def _write_config(root: Path, text: str) -> None:
+    (root / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (root / SETTINGS_PATH).write_text(text, encoding="utf-8")
+
+
+def test_main_loads_the_config_once_for_both_modes(monkeypatch, tmp_path):
+    """One read, one RoleSettings, both modes -- and read from the repo root.
+
+    Two things would break in silence otherwise. `SETTINGS_PATH` is relative:
+    anchored on `$PWD` the file vanishes as soon as `bin/herdr-dispatch` runs
+    from a subdirectory or a worktree -- which is why this test runs from a
+    foreign cwd. And a wait mode with different settings would ring an agent
+    under a different name than the build mode started.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, '[default]\nname_template = "{branch}.{role}"\n')
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    seen: list[RoleSettings] = []
+
+    def spy(_request, **kwargs):
+        seen.append(kwargs["settings"])
+        return {"ok": True}
+
+    monkeypatch.setattr("lean_herdr.dispatch.dispatch", spy)
+    monkeypatch.setattr("lean_herdr.dispatch.await_task", spy)
+
+    base = ["builder", "--kind", "claude", "--worktree", "feat/auth"]
+    main([*base, "--model", "sonnet", "--role-file", "roles/builder.md"])
+    main([*base, "--await", "--task-id", "T1"])
+
+    assert [s.name_template for s in seen] == ["{branch}.{role}"] * 2, (
+        "the config lives in the repo root, not in $PWD"
+    )
+    assert seen[0] == seen[1], "both modes must name the same agent"
+    assert agent_name("builder", "feat/auth", settings=seen[0]) == "feat-auth.builder"
+
+
+def test_a_broken_config_is_one_json_line_with_ok_false(monkeypatch, tmp_path, capsys):
+    """A present-but-wrong config is an error -- never a silent fallback.
+
+    And it reaches the orchestrator the way every other failure does: exit 0,
+    one JSON line, `ok: false`. Not as a traceback, not as exit 1.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, '[default]\ndirection = "links"\n')
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+
+    code = main(
+        ["builder", "--kind", "claude", "--model", "sonnet",
+         "--role-file", "roles/builder.md"]
+    )
+
+    assert code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    result = json.loads(lines[0])
+    assert result["ok"] is False
+    assert "direction" in result["error"], result["error"]
 
 
 def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch):

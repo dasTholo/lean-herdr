@@ -26,6 +26,12 @@ from lean_herdr.bus import (
 from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import Herdr
 from lean_herdr.join import resolve_agent_id
+from lean_herdr.settings import (
+    SETTINGS_PATH,
+    RoleSettings,
+    read_settings,
+    settings_for,
+)
 from lean_herdr.tasks import (
     Task,
     TaskError,
@@ -39,11 +45,6 @@ from lean_herdr.worktree import (
     anchor_pane,
     ensure_worktree,
 )
-
-#: Default per role -- measured fixed cost per step:
-#: minimal 2 711, standard 4 920, power 11 559 token.
-PROFILE_BY_ROLE = {"orchestrator": "minimal"}
-DEFAULT_PROFILE = "standard"
 
 AGENT_READY_TIMEOUT_S = 45.0
 AGENT_READY_INTERVAL_S = 0.5
@@ -77,21 +78,28 @@ class DispatchRequest:
     profile: str | None = None
 
 
-def profile_for(role: str, override: str | None = None) -> str:
-    return override or PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE)
+def profile_for(
+    role: str, override: str | None = None, *, settings: RoleSettings | None = None
+) -> str:
+    """CLI flag beats file beats built-in default."""
+    return override or (settings or RoleSettings()).profile
 
 
-def agent_name(role: str, worktree: str | None = None) -> str:
-    """The reuse key is (branch, role), not the branch alone.
+def agent_name(
+    role: str, worktree: str | None = None, *, settings: RoleSettings | None = None
+) -> str:
+    """The reuse key is (branch, role), never the branch alone.
 
-    A worktree carries several workers -- builder and reviewer -- and a
+    One worktree carries several workers -- builder and reviewer -- and a
     reviewer dispatch onto the same branch must never hit the running
-    builder.
+    builder. That the template carries both placeholders is checked by
+    settings.py at load time; here they are only filled in.
     """
     if not worktree:
         return role
+    template = (settings or RoleSettings()).name_template
     slug = re.sub(r"[^a-zA-Z0-9]+", "-", worktree).strip("-").lower()
-    return f"{role}-{slug}"
+    return template.format(role=role, branch=slug)
 
 
 def agent_args(kind: str, model: str, role_file: Path) -> list[str]:
@@ -153,6 +161,7 @@ def dispatch(
     cwd: Path | None = None,
     registry_path: str | Path | None = None,
     waiter: Callable[..., str | None] = wait_for_agent_id,
+    settings: RoleSettings | None = None,
 ) -> dict[str, Any]:
     """Build one worker. Never raises; the result carries `ok`.
 
@@ -160,7 +169,8 @@ def dispatch(
     `ctx_task create` requires a registered, long-lived MCP agent
     (tools/ctx_task.rs:12), and a `lean-ctx call` is exactly not that.
     """
-    name = agent_name(req.role, req.worktree)
+    cfg = settings or RoleSettings()
+    name = agent_name(req.role, req.worktree, settings=cfg)
     target_cwd = cwd if cwd is not None else root
     # None means: split in our own workspace (--current). Only the worktree
     # case sets an anchor.
@@ -189,8 +199,13 @@ def dispatch(
         pane = herdr.pane_split(
             target_cwd,
             pane=target_pane,
+            direction=cfg.direction,
+            ratio=cfg.ratio,
+            focus=cfg.focus,
             env={
-                "LEAN_CTX_TOOL_PROFILE": profile_for(req.role, req.profile),
+                "LEAN_CTX_TOOL_PROFILE": profile_for(
+                    req.role, req.profile, settings=cfg
+                ),
                 "LEAN_CTX_ROLE": req.role,
             },
         ) or ""
@@ -203,7 +218,9 @@ def dispatch(
             agent_args=agent_args(req.kind, req.model, req.role_file),
         )
 
-    agent_id = waiter(herdr, name, registry_path=registry_path)
+    agent_id = waiter(
+        herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s
+    )
     if not agent_id:
         return _result(False, pane, None, error="no_agent_id")
     # This is the end. The orchestrator creates the task itself through
@@ -283,13 +300,17 @@ def await_task(
     interval_s: float = POLL_INTERVAL_S,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
+    settings: RoleSettings | None = None,
 ) -> dict[str, Any]:
     """Wait for the state change the worker sets itself.
 
     The waiting stays in the script: no CLI, no registration, no model step
     per round. Never raises; the result carries `ok`.
+
+    `settings` MUST be the same one the build mode got -- it decides the
+    agent's name, and a ring under a different name reaches nobody.
     """
-    name = agent_name(req.role, req.worktree)
+    name = agent_name(req.role, req.worktree, settings=settings)
     deadline = now() + req.timeout_ms / 1000.0
     has_rung = False
     state = ""
@@ -412,33 +433,44 @@ def main(argv: list[str] | None = None) -> int:
         missing = missing_flags(args)
         if missing:
             result = {"ok": False, "error": f"usage_error: {missing}"}
-        elif args.waiting:
-            result = await_task(
-                AwaitRequest(
-                    role=args.role,
-                    kind=args.kind,
-                    task_id=args.task_id,
-                    worktree=args.worktree,
-                    timeout_ms=args.timeout_ms,
-                ),
-                herdr=Herdr(),
-                root=canonical_root(),
-            )
         else:
+            # Read once, hand to both modes: the wait mode has to ring the
+            # agent the build mode started, and the name comes from here.
+            # SETTINGS_PATH is RELATIVE -- anchored on anything but the
+            # canonical root the file would silently not be found as soon as
+            # bin/herdr-dispatch runs from a subdirectory or a worktree.
+            # A SettingsError lands in the except Exception branch below and
+            # reaches the caller as `dispatch_crashed: <reason>`.
             root = canonical_root()
-            result = dispatch(
-                DispatchRequest(
-                    role=args.role,
-                    kind=args.kind,
-                    model=args.model,
-                    role_file=args.role_file,
-                    worktree=args.worktree,
-                    profile=args.profile,
-                ),
-                herdr=Herdr(),
-                root=root,
-                cwd=root,
-            )
+            settings = settings_for(args.role, read_settings(root / SETTINGS_PATH))
+            if args.waiting:
+                result = await_task(
+                    AwaitRequest(
+                        role=args.role,
+                        kind=args.kind,
+                        task_id=args.task_id,
+                        worktree=args.worktree,
+                        timeout_ms=args.timeout_ms,
+                    ),
+                    herdr=Herdr(),
+                    root=root,
+                    settings=settings,
+                )
+            else:
+                result = dispatch(
+                    DispatchRequest(
+                        role=args.role,
+                        kind=args.kind,
+                        model=args.model,
+                        role_file=args.role_file,
+                        worktree=args.worktree,
+                        profile=args.profile,
+                    ),
+                    herdr=Herdr(),
+                    root=root,
+                    cwd=root,
+                    settings=settings,
+                )
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}
     except Exception as exc:  # noqa: BLE001 -- never abort the caller

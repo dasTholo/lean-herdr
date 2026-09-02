@@ -94,6 +94,7 @@ class Herdr:
         *,
         pane: str | None = None,
         direction: str = "right",
+        ratio: float | None = None,
         env: dict[str, str] | None = None,
         focus: bool = False,
     ) -> str | None:
@@ -109,6 +110,8 @@ class Herdr:
         """
         ziel = ["--pane", pane] if pane else ["--current"]
         args = ["pane", "split", *ziel, "--direction", direction, "--cwd", str(cwd)]
+        if ratio is not None:
+            args += ["--ratio", str(ratio)]
         if not focus:
             args.append("--no-focus")
         for key, value in (env or {}).items():

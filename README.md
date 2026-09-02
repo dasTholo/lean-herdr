@@ -51,6 +51,16 @@ Then resolve the orchestrator's lean-ctx agent_id and enter it in
 `<ORCHESTRATOR_AGENT_ID>` — that is the trust model: a task cannot claim to
 come from the orchestrator.
 
+## Configuration
+
+`.config/lean-herdr.toml` ships fully commented out: without an edit the
+project behaves exactly as it does without the file. Precedence is
+**CLI flag > file > built-in default**; `[default]` applies to every role,
+`[roles.<role>]` beats `[default]`.
+
+An unknown key, a wrong direction or a `name_template` without `{role}` and
+`{branch}` are errors and are reported — never silently reset to the default.
+
 ## Development
 
     uv sync --dev

@@ -37,6 +37,16 @@ def test_pane_split_mit_ziel_pane_landet_im_fremden_workspace(fake):
     assert "--current" not in fake.calls[0]
 
 
+def test_ratio_appears_only_when_set(monkeypatch):
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    fake = FakeProc()
+    h = Herdr(runner=fake)
+    h.pane_split("/repo")
+    assert "--ratio" not in fake.calls[0]
+    h.pane_split("/repo", ratio=0.25)
+    assert fake.calls[1][fake.calls[1].index("--ratio") + 1] == "0.25"
+
+
 def test_pane_list_filtert_auf_den_workspace(fake):
     fake.replies = {("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}}}
     assert h(fake).pane_list("w2") == [{"pane_id": "w2:p1"}]
