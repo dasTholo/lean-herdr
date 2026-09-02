@@ -109,6 +109,17 @@ Gemessene Grundlagen dieses Plans (Quelle `~/Scripts/lean-ctx`, 3.10.1):
   Task 3 — abnehmbar ist er erst, wenn `--await` existiert.
 - **`bus.py` bleibt unveraendert.** Der Bus behaelt alles ohne Auftragsbezug
   (Findings, Broadcasts, Plugin-Digest der Stufe 5).
+- **Sprache: Code und Commits sind ENGLISCH.** Das gilt fuer Bezeichner,
+  Kommentare, Docstrings, Testnamen, Commit-Nachrichten und die Texte von
+  `remember_decision`. Deutsch bleiben: die Rollentexte in `roles/` und der
+  README (Prompts und Betreiberdoku, keine Bezeichner — `test_role_prohibitions.py`
+  zitiert sie zwangslaeufig woertlich, wie sein eigener Docstring schon heute
+  festhaelt), sowie die Prosa dieses Plans. Bestehende deutsche Bezeichner in
+  `bus.py`, `herdr.py`, `leanctx.py`, `export.py`, `join.py` und `worktree.py`
+  werden hier NICHT umbenannt — das bleibt der Sammeluebersetzung des Betreibers
+  vorbehalten. Ausnahme: `lean_herdr/dispatch.py` und `tests/test_dispatch.py`
+  werden in Task 2 durchgehend uebersetzt, weil dieser Plan sie ohnehin an Kopf
+  und Fuss neu schreibt.
 - **`@reformat` wird nicht ausgefuehrt** (uebernommene Abweichung des
   Vorgaengerplans, Spec §8): das Qualitaetstor ist `ruff check`, **nicht**
   `ruff format --check` — sonst schriebe der Formatter den woertlichen Plan-Code
@@ -142,15 +153,15 @@ erwartet, sieht jede fertige Aufgabe ewig als offen und laeuft in jeden Timeout.
 
 `lean_herdr/tasks.py` (neu):
 
-    """Lesender Zugriff auf den A2A-TaskStore von lean-ctx.
+    """Read-only access to the A2A task store of lean-ctx.
 
-    Das Gegenstueck zu bus.py fuer den Auftragsweg. Diese Datei SCHREIBT NIE.
-    Eine Aufgabe anlegen oder ihren Zustand aendern darf nur ein registrierter,
-    langlebiger MCP-Agent ueber `ctx_call(name="ctx_task", ...)`; ein
-    CLI-Prozess hat keine Identitaet (`cli/call_cmd.rs:160` laesst `agent_id`
-    auf `None`) und wird mit `agent must be registered first` abgewiesen. Lesen
-    darf jeder Prozess — deshalb liest der Warte-Modus die Datei direkt, statt
-    `lean-ctx call` zu bemuehen (dieselbe Regel wie B9 beim Bus).
+    The counterpart to bus.py for the work-order path. This file NEVER WRITES.
+    Creating a task or changing its state is reserved for a registered,
+    long-lived MCP agent via `ctx_call(name="ctx_task", ...)`; a CLI process has
+    no identity (`cli/call_cmd.rs:160` leaves `agent_id` at `None`) and is
+    turned away with `agent must be registered first`. Reading is open to any
+    process -- which is why the wait mode reads the file directly instead of
+    going through `lean-ctx call` (same rule as B9 on the bus).
     """
 
     from __future__ import annotations
@@ -163,17 +174,17 @@ erwartet, sieht jede fertige Aufgabe ewig als offen und laeuft in jeden Timeout.
 
 
     class TaskError(RuntimeError):
-        """Der TaskStore ist nicht lesbar — nie als 'nichts zu tun' durchgehen."""
+        """The task store is unreadable -- never let that pass as 'nothing to do'."""
 
 
-    #: Zustaende, nach denen keine Aenderung mehr kommt (core/a2a/task.rs:42).
+    #: States after which no further change arrives (core/a2a/task.rs:42).
     TERMINAL_STATES = frozenset({"completed", "failed", "canceled"})
 
-    #: tasks.json traegt die Rust-Enum-VARIANTEN, nicht die CLI-Namen. Real
-    #: gemessen: "state": "Created". `TaskState` hat kein serde(rename)
-    #: (core/a2a/task.rs:6); die kleingeschriebenen Namen stammen allein aus dem
-    #: Display-impl (:16), das die CLI und die Tool-Beschreibung benutzen.
-    _ZUSTANDSNAMEN = {
+    #: tasks.json carries the Rust enum VARIANTS, not the CLI names. Measured on
+    #: a real file: "state": "Created". `TaskState` has no serde(rename)
+    #: (core/a2a/task.rs:6); the lowercase names come solely from the Display
+    #: impl (:16) that the CLI and the tool description use.
+    _STATE_NAMES = {
         "Created": "created",
         "Working": "working",
         "InputRequired": "input-required",
@@ -182,20 +193,20 @@ erwartet, sieht jede fertige Aufgabe ewig als offen und laeuft in jeden Timeout.
         "Canceled": "canceled",
     }
 
-    #: Marker eines Alt- oder Mischinstalls, dessen Datenverzeichnis nicht nach
-    #: XDG aufgeteilt ist (core/data_dir.rs:10).
-    _DATEN_MARKER = ("stats.json", "sessions", "vectors", "graphs", "knowledge")
+    #: Markers of a legacy or mixed install whose data directory is not split
+    #: along XDG lines (core/data_dir.rs:10).
+    _DATA_MARKERS = ("stats.json", "sessions", "vectors", "graphs", "knowledge")
 
 
     def normalize_state(raw: Any) -> str:
-        """Enum-Variante → CLI-Name. Unbekanntes bleibt woertlich stehen.
+        """Enum variant -> CLI name. Anything unknown is kept verbatim.
 
-        Ein unbekannter Zustand darf nie terminal werden: sonst verwandelte ein
-        Formatwechsel bei lean-ctx den Warte-Modus in einen falschen Erfolg. So
-        laeuft er in den Timeout — sichtbar, und ohne zu luegen.
+        An unknown state must never become terminal: otherwise a format change
+        in lean-ctx would turn the wait mode into a false success. This way it
+        runs into the timeout -- visible, and without lying.
         """
         text = str(raw or "")
-        return _ZUSTANDSNAMEN.get(text, text)
+        return _STATE_NAMES.get(text, text)
 
 
     def is_terminal(state: str) -> bool:
@@ -204,7 +215,7 @@ erwartet, sieht jede fertige Aufgabe ewig als offen und laeuft in jeden Timeout.
 
     @dataclass(frozen=True)
     class Task:
-        """Eine Aufgabe, so wie tasks.json sie traegt."""
+        """One task, exactly as tasks.json carries it."""
 
         id: str
         from_agent: str
@@ -231,101 +242,100 @@ erwartet, sieht jede fertige Aufgabe ewig als offen und laeuft in jeden Timeout.
             )
 
 
-    def _traegt_daten(verzeichnis: Path) -> bool:
-        """Ein LEERES Altverzeichnis zaehlt nicht (core/data_dir.rs:22).
+    def _has_data(directory: Path) -> bool:
+        """An EMPTY legacy directory does not count (core/data_dir.rs:22).
 
-        Sonst spaltete ein vom Setup angelegtes, leeres ~/.lean-ctx den Store:
-        lean-ctx schriebe nach XDG, wir laesen daneben.
+        Otherwise an empty ~/.lean-ctx created by setup would split the store:
+        lean-ctx would write to XDG while we read next to it.
         """
-        return any((verzeichnis / marker).exists() for marker in _DATEN_MARKER)
+        return any((directory / marker).exists() for marker in _DATA_MARKERS)
 
 
-    def _daten_verzeichnis() -> Path:
-        """lean_ctx_data_dir() nachgebildet, gleiche Rangfolge (core/data_dir.rs:12).
+    def _data_dir() -> Path:
+        """lean_ctx_data_dir() rebuilt, same precedence (core/data_dir.rs:12).
 
-        Nachgebildet und nicht erfragt: `lean-ctx call` gibt den Pfad nirgends
-        aus, und ein zweiter Prozessstart je Poll fraesse genau die Ersparnis
-        auf, derentwegen der Warte-Modus die Datei liest.
+        Rebuilt rather than queried: `lean-ctx call` never prints the path, and
+        a second process start per poll would eat exactly the saving for which
+        the wait mode reads the file in the first place.
         """
         override = os.environ.get("LEAN_CTX_DATA_DIR", "").strip()
         if override:
             return Path(override)
         legacy = Path.home() / ".lean-ctx"
-        if _traegt_daten(legacy):
+        if _has_data(legacy):
             return legacy
         cfg = os.environ.get("XDG_CONFIG_HOME", "").strip()
-        gemischt = (Path(cfg) if cfg else Path.home() / ".config") / "lean-ctx"
-        if _traegt_daten(gemischt):
-            return gemischt
+        mixed = (Path(cfg) if cfg else Path.home() / ".config") / "lean-ctx"
+        if _has_data(mixed):
+            return mixed
         data = os.environ.get("XDG_DATA_HOME", "").strip()
-        basis = Path(data) if data else Path.home() / ".local" / "share"
-        return basis / "lean-ctx"
+        base = Path(data) if data else Path.home() / ".local" / "share"
+        return base / "lean-ctx"
 
 
     def task_store_path() -> Path:
-        """`$LEAN_CTX_DATA_DIR` vor XDG, dann `agents/tasks.json`."""
-        return _daten_verzeichnis() / "agents" / "tasks.json"
+        """`$LEAN_CTX_DATA_DIR` before XDG, then `agents/tasks.json`."""
+        return _data_dir() / "agents" / "tasks.json"
 
 
     def read_tasks(path: str | Path | None = None) -> list[Task]:
-        """Alle Aufgaben des Stores, ungefiltert.
+        """Every task in the store, unfiltered.
 
-        Fehlende Datei: leere Liste — vor der ersten Aufgabe existiert sie
-        schlicht nicht. Unlesbare oder kaputte Datei: TaskError. Der
-        Unterschied ist der Punkt: ein zerstoerter Store darf nie aussehen wie
-        'nichts zu tun'.
+        Missing file: empty list -- before the first task it simply does not
+        exist. Unreadable or broken file: TaskError. That difference is the
+        point: a destroyed store must never look like 'nothing to do'.
 
-        Nicht gefiltert wird nach Projekt, weil `Task` kein project_root-Feld
-        hat (core/a2a/task.rs:100) — die Zuordnung laeuft ueber die eindeutige
-        task_id. Ein halb geschriebener Store ist nicht moeglich:
-        TaskStore::save() schreibt nach tasks.tmp und benennt um (:213).
+        No filtering by project, because `Task` has no project_root field
+        (core/a2a/task.rs:100) -- the mapping runs through the unique task_id.
+        A half-written store is impossible: TaskStore::save() writes tasks.tmp
+        and renames it into place (:213).
         """
         p = Path(path) if path is not None else task_store_path()
         try:
-            roh = p.read_text(encoding="utf-8")
+            raw = p.read_text(encoding="utf-8")
         except FileNotFoundError:
             return []
         except OSError as exc:
             raise TaskError(f"task store unreadable at {p}: {exc}") from exc
         try:
-            daten = json.loads(roh)
+            data = json.loads(raw)
         except json.JSONDecodeError as exc:
             raise TaskError(f"task store malformed at {p}: {exc}") from exc
-        if not isinstance(daten, dict) or "tasks" not in daten:
-            gesehen = sorted(daten) if isinstance(daten, dict) else type(daten).__name__
+        if not isinstance(data, dict) or "tasks" not in data:
+            seen = sorted(data) if isinstance(data, dict) else type(data).__name__
             raise TaskError(
-                f"task store hat keinen Schluessel 'tasks' at {p} — "
-                f"Format geaendert? vorhanden: {gesehen}"
+                f"task store has no 'tasks' key at {p} -- "
+                f"format changed? present: {seen}"
             )
-        return [Task.from_raw(r) for r in (daten["tasks"] or ()) if isinstance(r, dict)]
+        return [Task.from_raw(r) for r in (data["tasks"] or ()) if isinstance(r, dict)]
 
 
     def find_task(tasks: list[Task], task_id: str) -> Task | None:
-        """Der einzige Zugriffsweg des Warte-Modus.
+        """The one and only lookup path of the wait mode.
 
-        Eine Filterung nach agent_id gibt es bewusst nicht: sie haette in
-        diesem Plan keinen Aufrufer. Braucht das Plugin der Stufe 5 spaeter
-        eine Agentensicht, kommt sie dort dazu.
+        There is deliberately no filter by agent_id: it would have no caller in
+        this plan. Should the stage-5 plugin later need an agent's view, it gets
+        one there.
         """
         return next((t for t in tasks if t.id == task_id), None)
 
 
     def message_from(task: Task, agent: str) -> str | None:
-        """Juengste Nachricht dieses Absenders, als Text — sonst None.
+        """Newest message from that sender, as text -- otherwise None.
 
-        `ctx_task update` haengt die mitgegebene Nachricht mit `role=<agent_id>`
-        an (tools/ctx_task.rs, handle_update). Die ERSTE Nachricht einer Aufgabe
-        traegt dagegen die Rolle des Erstellers und ist nur die Beschreibung:
-        wer blind die letzte nimmt, gibt bei einem wortlosen Abschluss den
-        eigenen Auftrag als Antwort des Arbeiters zurueck.
+        `ctx_task update` appends the given message with `role=<agent_id>`
+        (tools/ctx_task.rs, handle_update). The FIRST message of a task carries
+        the creator's role instead and is only the description: blindly taking
+        the last one would hand our own order back as the worker's answer
+        whenever the worker completes without words.
         """
-        for nachricht in reversed(task.messages):
-            if str(nachricht.get("role", "")) != agent:
+        for message in reversed(task.messages):
+            if str(message.get("role", "")) != agent:
                 continue
             text = "\n".join(
-                str(teil.get("text", ""))
-                for teil in (nachricht.get("parts") or ())
-                if isinstance(teil, dict) and teil.get("type") == "text"
+                str(part.get("text", ""))
+                for part in (message.get("parts") or ())
+                if isinstance(part, dict) and part.get("type") == "text"
             ).strip()
             if text:
                 return text
@@ -396,45 +406,45 @@ Zeichen fuer Zeichen, mit den neun Nachkommastellen und der PascalCase-Variante:
     )
 
     FIXTURE = Path(__file__).parent / "fixtures" / "tasks.sample.json"
-    GEMESSENE_ID = "task-1a05e34cd15-1cf3b885"
-    ERSTELLER = "mcp-218709-e52c50725afd452fb2ea4bba4cf93730"
+    MEASURED_ID = "task-1a05e34cd15-1cf3b885"
+    CREATOR = "mcp-218709-e52c50725afd452fb2ea4bba4cf93730"
 
 
     @pytest.fixture
-    def probe() -> dict:
+    def sample() -> dict:
         return json.loads(FIXTURE.read_text(encoding="utf-8"))
 
 
-    def test_eingefrorene_probe_hat_die_erwartete_form(probe):
-        """Bricht sichtbar, wenn lean-ctx sein Task-Format aendert."""
-        assert "tasks" in probe, sorted(probe)
-        erste = probe["tasks"][0]
-        for feld in (
+    def test_the_frozen_sample_has_the_expected_shape(sample):
+        """Breaks visibly when lean-ctx changes its task format."""
+        assert "tasks" in sample, sorted(sample)
+        first = sample["tasks"][0]
+        for field in (
             "id", "from_agent", "to_agent", "state", "description",
             "messages", "artifacts", "history", "metadata",
             "created_at", "updated_at",
         ):
-            assert feld in erste, f"Feld {feld} fehlt in der Probe"
+            assert field in first, f"field {field} missing from the sample"
 
 
-    def test_die_probe_traegt_die_enum_variante_nicht_den_cli_namen(probe):
-        """Der Befund, auf dem normalize_state() steht."""
-        assert probe["tasks"][0]["state"] == "Created", (
-            "tasks.json schreibt die Rust-Enum-Variante. Steht hier "
-            "kleingeschrieben etwas anderes, hat lean-ctx serde(rename) "
-            "bekommen und _ZUSTANDSNAMEN muss nach."
+    def test_the_sample_carries_the_enum_variant_not_the_cli_name(sample):
+        """The finding normalize_state() rests on."""
+        assert sample["tasks"][0]["state"] == "Created", (
+            "tasks.json writes the Rust enum variant. If something lowercase "
+            "shows up here, lean-ctx has gained serde(rename) and _STATE_NAMES "
+            "must follow."
         )
 
 
-    def test_die_probe_traegt_echte_gemessene_werte(probe):
-        """Lektion aus Task 2 des Vorgaengerplans: konstruierte Werte belegen nichts."""
-        task = probe["tasks"][0]
-        assert task["id"] == GEMESSENE_ID
-        assert task["from_agent"] == ERSTELLER, "der Absender ist eine echte MCP-agent_id"
+    def test_the_sample_carries_real_measured_values(sample):
+        """Lesson from task 2 of the predecessor plan: invented values prove nothing."""
+        task = sample["tasks"][0]
+        assert task["id"] == MEASURED_ID
+        assert task["from_agent"] == CREATOR, "the sender is a real MCP agent_id"
         assert task["messages"][0]["role"] == task["from_agent"]
 
 
-    def test_zustandsnamen_werden_uebersetzt():
+    def test_state_names_are_translated():
         assert normalize_state("Created") == "created"
         assert normalize_state("Working") == "working"
         assert normalize_state("InputRequired") == "input-required"
@@ -443,150 +453,150 @@ Zeichen fuer Zeichen, mit den neun Nachkommastellen und der PascalCase-Variante:
         assert normalize_state("Canceled") == "canceled"
 
 
-    def test_unbekannter_zustand_bleibt_stehen_und_ist_nie_terminal():
-        """Ein Formatwechsel darf nie zu einem falschen Erfolg werden."""
-        assert normalize_state("Verschollen") == "Verschollen"
-        assert is_terminal("Verschollen") is False
+    def test_an_unknown_state_survives_and_is_never_terminal():
+        """A format change must never turn into a false success."""
+        assert normalize_state("Vanished") == "Vanished"
+        assert is_terminal("Vanished") is False
         assert normalize_state(None) == ""
         assert is_terminal("") is False
 
 
-    def test_terminal_ist_genau_completed_failed_canceled():
+    def test_terminal_is_exactly_completed_failed_canceled():
         assert set(TERMINAL_STATES) == {"completed", "failed", "canceled"}
-        assert all(is_terminal(z) for z in TERMINAL_STATES)
-        assert not any(is_terminal(z) for z in ("created", "working", "input-required"))
+        assert all(is_terminal(s) for s in TERMINAL_STATES)
+        assert not any(is_terminal(s) for s in ("created", "working", "input-required"))
 
 
-    def _schreiben(tmp_path: Path, daten: dict) -> Path:
-        pfad = tmp_path / "tasks.json"
-        pfad.write_text(json.dumps(daten), encoding="utf-8")
-        return pfad
+    def _write(tmp_path: Path, data: dict) -> Path:
+        path = tmp_path / "tasks.json"
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return path
 
 
-    def test_read_tasks_liest_die_probe(probe, tmp_path):
-        tasks = read_tasks(_schreiben(tmp_path, probe))
-        assert [t.id for t in tasks] == [GEMESSENE_ID]
-        assert tasks[0].state == "created", "die Variante wird beim Lesen uebersetzt"
+    def test_read_tasks_reads_the_sample(sample, tmp_path):
+        tasks = read_tasks(_write(tmp_path, sample))
+        assert [t.id for t in tasks] == [MEASURED_ID]
+        assert tasks[0].state == "created", "the variant is translated on read"
         assert tasks[0].to_agent == "probe-builder"
-        assert tasks[0].from_agent == ERSTELLER
+        assert tasks[0].from_agent == CREATOR
 
 
-    def test_fehlende_datei_ist_kein_fehler(tmp_path):
-        """Vor der ersten Aufgabe existiert der Store schlicht nicht."""
-        assert read_tasks(tmp_path / "gibt-es-nicht.json") == []
+    def test_a_missing_file_is_not_an_error(tmp_path):
+        """Before the first task the store simply does not exist."""
+        assert read_tasks(tmp_path / "does-not-exist.json") == []
 
 
-    def test_kaputte_datei_ist_ein_fehler(tmp_path):
-        """Ein zerstoerter Store darf nie aussehen wie 'nichts zu tun'."""
-        pfad = tmp_path / "tasks.json"
-        pfad.write_text("{kaputt", encoding="utf-8")
+    def test_a_broken_file_is_an_error(tmp_path):
+        """A destroyed store must never look like 'nothing to do'."""
+        path = tmp_path / "tasks.json"
+        path.write_text("{broken", encoding="utf-8")
         with pytest.raises(TaskError, match="malformed"):
-            read_tasks(pfad)
+            read_tasks(path)
 
 
-    def test_fehlender_tasks_schluessel_ist_ein_fehler(tmp_path):
+    def test_a_missing_tasks_key_is_an_error(tmp_path):
         with pytest.raises(TaskError, match="tasks"):
-            read_tasks(_schreiben(tmp_path, {"aufgaben": []}))
+            read_tasks(_write(tmp_path, {"aufgaben": []}))
 
 
-    def test_find_task_sucht_ueber_die_id(probe, tmp_path):
-        tasks = read_tasks(_schreiben(tmp_path, probe))
-        assert find_task(tasks, GEMESSENE_ID) is not None
-        assert find_task(tasks, "task-gibt-es-nicht") is None
+    def test_find_task_looks_up_by_id(sample, tmp_path):
+        tasks = read_tasks(_write(tmp_path, sample))
+        assert find_task(tasks, MEASURED_ID) is not None
+        assert find_task(tasks, "task-does-not-exist") is None
 
 
     def _task(**rest) -> Task:
-        basis = {
+        base = {
             "id": "task-1", "from_agent": "orch", "to_agent": "w1",
-            "state": "Working", "description": "bau foo", "messages": [],
+            "state": "Working", "description": "build foo", "messages": [],
             "created_at": "", "updated_at": "",
         }
-        return Task.from_raw({**basis, **rest})
+        return Task.from_raw({**base, **rest})
 
 
-    def _nachricht(role: str, text: str) -> dict:
+    def _message(role: str, text: str) -> dict:
         return {"role": role, "parts": [{"type": "text", "text": text}]}
 
 
-    def test_message_from_nimmt_die_juengste_des_absenders():
+    def test_message_from_takes_the_newest_of_that_sender():
         task = _task(messages=[
-            _nachricht("orch", "bau foo"),
-            _nachricht("w1", "angefangen"),
-            _nachricht("w1", "fertig, drei Tests gruen"),
+            _message("orch", "build foo"),
+            _message("w1", "started"),
+            _message("w1", "done, three tests green"),
         ])
-        assert message_from(task, "w1") == "fertig, drei Tests gruen"
+        assert message_from(task, "w1") == "done, three tests green"
 
 
-    def test_message_from_gibt_nie_den_eigenen_auftrag_zurueck():
-        """Ein wortloser Abschluss ist None, nicht die Beschreibung."""
-        task = _task(messages=[_nachricht("orch", "bau foo")])
+    def test_message_from_never_returns_our_own_order():
+        """A wordless completion is None, not the description."""
+        task = _task(messages=[_message("orch", "build foo")])
         assert message_from(task, "w1") is None
 
 
-    def test_message_from_liest_nur_text_teile():
+    def test_message_from_reads_only_text_parts():
         task = _task(messages=[
             {"role": "w1", "parts": [{"type": "data", "mime_type": "x", "data": "y"}]},
-            _nachricht("w1", "der Text zaehlt"),
+            _message("w1", "the text is what counts"),
         ])
-        assert message_from(task, "w1") == "der Text zaehlt"
+        assert message_from(task, "w1") == "the text is what counts"
 
 
-    def test_task_ist_unveraenderlich():
+    def test_task_is_immutable():
         task = _task()
         with pytest.raises(FrozenInstanceError):
-            task.id = "andere"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
+            task.id = "other"  # type: ignore[misc]  # ty: ignore[invalid-assignment]
 
 
-    def test_store_pfad_folgt_LEAN_CTX_DATA_DIR(tmp_path, monkeypatch):
-        """Damit Integrationstests einen vollstaendig isolierten Store bekommen."""
+    def test_store_path_follows_LEAN_CTX_DATA_DIR(tmp_path, monkeypatch):
+        """This is what gives the integration tests a fully isolated store."""
         monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(tmp_path))
         assert task_store_path() == tmp_path / "agents" / "tasks.json"
 
 
-    def test_store_pfad_faellt_auf_xdg_zurueck(tmp_path, monkeypatch):
+    def test_store_path_falls_back_to_xdg(tmp_path, monkeypatch):
         monkeypatch.delenv("LEAN_CTX_DATA_DIR", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "daten"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
         assert task_store_path() == (
-            tmp_path / "daten" / "lean-ctx" / "agents" / "tasks.json"
+            tmp_path / "data" / "lean-ctx" / "agents" / "tasks.json"
         )
 
 
-    def test_ein_altinstall_mit_daten_gewinnt_vor_xdg(tmp_path, monkeypatch):
-        """core/data_dir.rs:14 — ein Altinstall wird nie stillschweigend verschoben."""
+    def test_a_legacy_install_with_data_wins_over_xdg(tmp_path, monkeypatch):
+        """core/data_dir.rs:14 -- a legacy install is never silently relocated."""
         monkeypatch.delenv("LEAN_CTX_DATA_DIR", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "daten"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
         (tmp_path / ".lean-ctx").mkdir()
         (tmp_path / ".lean-ctx" / "stats.json").write_text("{}", encoding="utf-8")
         assert task_store_path() == tmp_path / ".lean-ctx" / "agents" / "tasks.json"
 
 
-    def test_ein_leeres_altverzeichnis_zaehlt_nicht(tmp_path, monkeypatch):
-        """Sonst spaltete ein vom Setup angelegtes leeres ~/.lean-ctx den Store."""
+    def test_an_empty_legacy_directory_does_not_count(tmp_path, monkeypatch):
+        """Otherwise an empty ~/.lean-ctx left by setup would split the store."""
         monkeypatch.delenv("LEAN_CTX_DATA_DIR", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", str(tmp_path))
-        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "daten"))
+        monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
         (tmp_path / ".lean-ctx").mkdir()
         assert task_store_path() == (
-            tmp_path / "daten" / "lean-ctx" / "agents" / "tasks.json"
+            tmp_path / "data" / "lean-ctx" / "agents" / "tasks.json"
         )
 
-@call tdd(-k die_probe_traegt_die_enum_variante_nicht_den_cli_namen)
+@call tdd(-k the_sample_carries_the_enum_variant_not_the_cli_name)
 
-@call tdd(-k unbekannter_zustand_bleibt_stehen_und_ist_nie_terminal)
+@call tdd(-k an_unknown_state_survives_and_is_never_terminal)
 
-@call tdd(-k message_from_gibt_nie_den_eigenen_auftrag_zurueck)
+@call tdd(-k message_from_never_returns_our_own_order)
 
 ### Verify & Close
 
 @call verify(lean_herdr/tasks.py)
 @call gate(lean_herdr/tasks.py tests/test_tasks.py tests/fixtures/tasks.sample.json)
-@call commit("lean_herdr/tasks.py tests/", "feat(tasks): tasks.json lesen, gegen eine real gemessene Probe")
-@call remember_decision("lean-herdr: tasks.json traegt die Rust-Enum-Varianten des Zustands (Created/Working/InputRequired/Completed/Failed/Canceled), NICHT die CLI-Namen — core/a2a/task.rs:6 hat kein serde(rename). lean_herdr.tasks.normalize_state uebersetzt; ein unbekannter Zustand bleibt stehen und ist nie terminal.")
+@call commit("lean_herdr/tasks.py tests/", "feat(tasks): read tasks.json against a real measured sample")
+@call remember_decision("lean-herdr: tasks.json carries the Rust enum variants of the state (Created/Working/InputRequired/Completed/Failed/Canceled), NOT the CLI names -- core/a2a/task.rs:6 has no serde(rename), the lowercase names come from the Display impl the CLI uses. lean_herdr.tasks.normalize_state translates them; an unknown state is kept verbatim and is never terminal, so a format change runs into the timeout instead of into a false success. lean_herdr/tasks.py never writes.")
 @phase-end
 
 @phase "task-2"
@@ -612,6 +622,14 @@ geaenderten Dateien; das Skript setzt aber nur `sys.path` und ruft `main()` —
 alle Flags leben in `dispatch.build_parser()`. Wer dort etwas aendert, aendert am
 falschen Ort.
 
+**Sprachwechsel, hier und nur hier:** `lean_herdr/dispatch.py` und
+`tests/test_dispatch.py` werden in diesem Task **durchgehend englisch** —
+Bezeichner, Kommentare, Docstrings, Testnamen. Beide Dateien werden ohnehin an
+Kopf und Fuss neu geschrieben, und `tests/test_dispatch_uncovered_paths.py` ist
+bereits englisch; der Rest des Bestands (`bus.py`, `herdr.py`, `leanctx.py`,
+`export.py`, `join.py`, `worktree.py`) bleibt unberuehrt und wartet auf die
+Sammeluebersetzung des Betreibers.
+
 Diese Stellen in `lean_herdr/dispatch.py` verschwinden ersatzlos:
 
 - die Konstante `ANTWORT_KATEGORIEN` (`lean_herdr/dispatch.py:46`)
@@ -622,6 +640,19 @@ Diese Stellen in `lean_herdr/dispatch.py` verschwinden ersatzlos:
 - der gesamte `from lean_herdr.export import …`-Import (kommt in Task 3 zurueck,
   wenn `await_task()` ihn braucht; ein ungenutzter Import waere `F401`)
 - der `from lean_herdr.leanctx import LeanCtx`-Import
+
+Umbenannt beim Uebersetzen von `lean_herdr/dispatch.py` (Verhalten unveraendert):
+
+| alt | neu |
+|---|---|
+| `_ergebnis` | `_result` |
+| `ziel_cwd` · `ziel_pane` · `ziel` (in `dispatch()`) | `target_cwd` · `target_pane` · `target` |
+| `vorhanden` (in `dispatch()`) | `existing` |
+| `frist` (in `wait_for_agent_id()`) | `deadline` |
+
+Der Modul-Docstring, der Kommentar ueber `PROFILE_BY_ROLE` und die Docstrings von
+`profile_for`, `agent_name`, `agent_args` und `wait_for_agent_id` werden dabei
+mituebersetzt; ihre Aussage bleibt Wort fuer Wort dieselbe.
 
 `DispatchRequest` (ersetzt `lean_herdr/dispatch.py:52-61` vollstaendig):
 
@@ -634,15 +665,15 @@ Diese Stellen in `lean_herdr/dispatch.py` verschwinden ersatzlos:
         worktree: str | None = None
         profile: str | None = None
 
-`_ergebnis()` (ersetzt `lean_herdr/dispatch.py:141`) — ohne `task_id`, denn im
-Aufbau-Modus gibt es noch keine Aufgabe:
+`_result()` (ersetzt `_ergebnis()`, `lean_herdr/dispatch.py:141`) — ohne
+`task_id`, denn im Aufbau-Modus gibt es noch keine Aufgabe:
 
-    def _ergebnis(
+    def _result(
         ok: bool, pane: str | None, agent_id: str | None, **rest: Any
     ) -> dict[str, Any]:
         return {"ok": ok, "pane": pane, "agent_id": agent_id, **rest}
 
-`dispatch()` — Signatur ohne `leanctx`, jeder `_ergebnis(...)`-Aufruf ohne `req`,
+`dispatch()` — Signatur ohne `leanctx`, jeder `_result(...)`-Aufruf ohne `req`,
 und ein neuer Schluss ab der Zeile `agent_id = waiter(...)`
 (`lean_herdr/dispatch.py:206`); alles danach bis zum Funktionsende faellt weg:
 
@@ -655,24 +686,23 @@ und ein neuer Schluss ab der Zeile `agent_id = waiter(...)`
         registry_path: str | Path | None = None,
         waiter: Callable[..., str | None] = wait_for_agent_id,
     ) -> dict[str, Any]:
-        """Einen Arbeiter aufbauen. Wirft nie; das Ergebnis traegt `ok`.
+        """Build one worker. Never raises; the result carries `ok`.
 
-        Legt KEINE Aufgabe an und wartet nicht. Beides kann dieser Prozess
-        nicht: `ctx_task create` verlangt einen registrierten, langlebigen
-        MCP-Agenten (tools/ctx_task.rs:12), und ein `lean-ctx call` ist genau
-        das nicht.
+        Creates NO task and does not wait. This process can do neither:
+        `ctx_task create` requires a registered, long-lived MCP agent
+        (tools/ctx_task.rs:12), and a `lean-ctx call` is exactly not that.
         """
 
 … unveraendert bis einschliesslich der `agent_start()`-Zweige, dann:
 
         agent_id = waiter(herdr, name, registry_path=registry_path)
         if not agent_id:
-            return _ergebnis(False, pane, None, error="no_agent_id")
-        # Hier ist Schluss. Den Auftrag legt der Orchestrator ueber ctx_task an,
-        # mit genau dieser agent_id als to_agent: tasks_for_agent() vergleicht
-        # exakt als String (core/a2a/task.rs:236), ein freundlicher Name faende
-        # die Aufgabe nie.
-        return _ergebnis(True, pane, agent_id)
+            return _result(False, pane, None, error="no_agent_id")
+        # This is the end. The orchestrator creates the task itself through
+        # ctx_task, with exactly this agent_id as to_agent: tasks_for_agent()
+        # compares exactly as a string (core/a2a/task.rs:236), a friendly name
+        # would never find the task.
+        return _result(True, pane, agent_id)
 
 `build_parser()` verliert `--task-id`, `--task` und `--timeout-ms`. Task 3 gibt
 `--task-id` und `--timeout-ms` zurueck, dann auf den Warte-Modus bezogen;
@@ -682,23 +712,25 @@ ctx_task-Aufgabe. `main()` baut den
 `except`-Zweig in `main()` verliert `"task_id"`, `"pane"` und `"agent_id"` aus
 dem Ergebnis-dict — im Absturzfall vor der Konstruktion ist keines davon bekannt:
 
-        ergebnis = {"ok": False, "error": f"dispatch_crashed: {exc}"}
+        result = {"ok": False, "error": f"dispatch_crashed: {exc}"}
 
 `lean_herdr/leanctx.py` — `post()` behaelt Signatur und Verhalten, bekommt aber
 eine Warnung in den Docstring (ersetzt den bestehenden Docstring in
-`lean_herdr/leanctx.py:post`), damit niemand spaeter danach greift:
+`lean_herdr/leanctx.py:post`), damit niemand spaeter danach greift. Diese eine
+Stelle wird englisch geschrieben, obwohl die uebrige Datei deutsch bleibt — sie
+ist neuer Text, kein uebersetzter Bestand:
 
-        """Nachricht auf den Bus legen. NICHT fuer Auftraege geeignet.
+        """Put a message on the bus. NOT usable for work orders.
 
-        Aus einem CLI-Prozess postet dies immer als `anonymous`: die
-        Registrierung haengt an der PID eines kurzlebigen Prozesses (B-2). Die
-        Rollentexte lehnen `anonymous` als Auftraggeber ab — richtigerweise.
-        Und `task_id` kommt nie an: jeder Schreibpfad von `ctx_agent post`
-        setzt sie hart auf `None` (core/agents/registry.rs:430, shared.rs:31).
-        Auftraege laufen deshalb ueber `ctx_task`, siehe lean_herdr/tasks.py.
+        From a CLI process this always posts as `anonymous`: registration is
+        bound to the pid of a short-lived process (B-2), and the role prompts
+        rightly refuse `anonymous` as a client. And `task_id` never arrives:
+        every write path of `ctx_agent post` hard-sets it to `None`
+        (core/agents/registry.rs:430, shared.rs:31). Work orders therefore run
+        through `ctx_task`, see lean_herdr/tasks.py.
 
-        `to_agent` MUSS eine lean-ctx-agent_id sein. Ein freundlicher Name wird
-        stumm angenommen und nie zugestellt (B7).
+        `to_agent` MUST be a lean-ctx agent_id. A friendly name is accepted
+        silently and never delivered (B7).
         """
 
 **Tests, die mitziehen muessen** — in `tests/test_dispatch.py`:
@@ -718,41 +750,51 @@ eine Warnung in den Docstring (ersetzt den bestehenden Docstring in
   Die drei letztgenannten Faelle (`no_reply`, `agent_error`, unlesbare Quelle)
   kehren in Task 3 gegen den TaskStore zurueck — sie gehen nicht verloren,
   sie wechseln die Quelle.
-- `lauf()` (`tests/test_dispatch.py:41`) verliert den `leanctx=`-Parameter.
-- `registry()` (`tests/test_dispatch.py:33`) verliert den Parameter
-  `*nachrichten` UND den Schluessel `scratchpad` und liefert nur noch
-  `{"agents": [{"agent_id": AGENT_ID, "pid": 42}]}`; `antwort()` (`:36`) faellt
-  ersatzlos weg. Damit werden die fuenf ueberlebenden Aufrufe `registry(antwort())`
-  zu `registry()` — in `test_das_profil_wird_am_pane_gesetzt_nicht_am_agenten`,
-  `test_vorhandener_agent_wird_wiederverwendet_und_geleert`,
-  `test_worktree_dispatch_startet_den_pane_im_worktree`,
-  `test_worktree_dispatch_teilt_einen_pane_des_worktree_workspaces` und
-  `test_worktree_ohne_ankerpane_bricht_ab`.
+- `registry()` (`:33`) verliert den Parameter `*nachrichten` UND den Schluessel
+  `scratchpad` und liefert nur noch `{"agents": [{"agent_id": AGENT_ID, "pid": 42}]}`;
+  `antwort()` (`:36`) faellt ersatzlos weg. Damit werden die fuenf ueberlebenden
+  Aufrufe `registry(antwort())` zu `registry()`.
 - Aus dem Importblock fallen `find_reply` und `LeanCtx` — ungenutzte Importe
   sind `F401` und brechen das `gate`.
+- Uebersetzung der ueberlebenden Namen (nur Namen, kein Verhalten):
+
+| alt | neu |
+|---|---|
+| `welt` (Fixture) | `world` |
+| `lauf` (Helfer) | `run_dispatch` |
+| `test_rollentext_geht_als_datei_nie_als_text` | `test_the_role_prompt_travels_as_a_file_never_as_text` |
+| `test_das_profil_wird_am_pane_gesetzt_nicht_am_agenten` | `test_the_profile_is_set_on_the_pane_not_on_the_agent` |
+| `test_vorhandener_agent_wird_wiederverwendet_und_geleert` | `test_an_existing_agent_is_reused_and_cleared` |
+| `test_ohne_agent_id_meldet_das_skript_fehler` | `test_without_an_agent_id_the_script_reports_an_error` |
+| `test_main_schreibt_eine_json_zeile_und_endet_mit_0` | `test_main_writes_one_json_line_and_exits_0` |
+| `test_worktree_dispatch_startet_den_pane_im_worktree` | `test_a_worktree_dispatch_starts_the_pane_in_the_worktree` |
+| `test_worktree_dispatch_teilt_einen_pane_des_worktree_workspaces` | `test_a_worktree_dispatch_splits_a_pane_of_that_workspace` |
+| `test_worktree_ohne_ankerpane_bricht_ab` | `test_a_worktree_without_an_anchor_pane_aborts` |
+| `test_fehlendes_worktrunk_meldet_worktrunk_missing` | `test_a_missing_worktrunk_reports_worktrunk_missing` |
+
+  Die deutschen Docstrings dieser Tests werden mituebersetzt; ihre Aussage bleibt
+  dieselbe. `test_profil_folgt_der_rolle_und_laesst_sich_ueberschreiben` und
+  `test_agentenname_ist_branch_UND_rolle` bleiben vorerst, wie sie sind — Task 7
+  ersetzt beide ohnehin.
 - Neuer Test an die Stelle des geloeschten Durchlauf-Tests:
 
-    def test_aufbau_liefert_pane_und_agent_id_und_legt_nichts_an(welt):
-        """Der Aufbau-Modus ist fertig, sobald die agent_id steht."""
-        h_proc, _, _ = welt
-        ergebnis = lauf(welt, reg=registry())
-        assert ergebnis == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
-        assert h_proc.called_with("agent", "start"), "der Arbeiter laeuft"
+    def test_build_mode_returns_pane_and_agent_id_and_creates_nothing(world):
+        """The build mode is finished the moment the agent_id is resolved."""
+        h_proc, _, _ = world
+        result = run_dispatch(world, reg=registry())
+        assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
+        assert h_proc.called_with("agent", "start"), "the worker is running"
         assert not h_proc.called_with("agent", "prompt", "--wait"), (
-            "im Aufbau-Modus wird nicht geklingelt und nicht gewartet"
+            "the build mode neither rings nor waits"
         )
 
-- Anzupassen, weil `task_id` aus dem Ergebnis faellt:
-  `test_keine_antwort…` entfaellt (s. o.); in
-  `test_ohne_agent_id_meldet_das_skript_fehler`,
-  `test_worktree_ohne_ankerpane_bricht_ab` und
-  `test_fehlendes_worktrunk_meldet_worktrunk_missing` bleibt die
-  `error`-Zusicherung unveraendert richtig.
-- `test_main_schreibt_eine_json_zeile_und_endet_mit_0`: die Argumentliste
-  verliert `--task-id T1 --task x`; die Zusicherung auf `ok` und
-  `dispatch_crashed` bleibt.
+- `test_main_writes_one_json_line_and_exits_0`: die Argumentliste verliert
+  `--task-id T1 --task x`; die Zusicherung auf `ok` und `dispatch_crashed`
+  bleibt. In den drei Fehlerfaellen (`no_agent_id`, `no_anchor_pane`,
+  `worktrunk_missing`) bleibt die `error`-Zusicherung unveraendert richtig, nur
+  `task_id` faellt aus dem Ergebnis.
 
-In `tests/test_dispatch_uncovered_paths.py`:
+In `tests/test_dispatch_uncovered_paths.py` (bereits englisch, nur Anpassungen):
 
 - `make_request()`: `task_id`/`task` entfernen. `make_reply()` faellt weg,
   `make_registry()` verliert `*messages` und behaelt nur `{"agents": [...]}`;
@@ -774,17 +816,20 @@ In `tests/test_dispatch_uncovered_paths.py`:
   `pane_split_failed`-Test wird das erwartete dict zu
   `{"ok": False, "pane": None, "agent_id": None, "error": "pane_split_failed"}`.
 
-@call tdd(-k aufbau_liefert_pane_und_agent_id_und_legt_nichts_an)
+@call tdd(-k build_mode_returns_pane_and_agent_id_and_creates_nothing)
 
 Run: `{{ test_cmd }}` — Expected: gruen; kein Test importiert noch `find_reply`.
+
+Run: `{{ lint_cmd }}` — Expected: clean; insbesondere kein `F401` aus den
+entfernten Importen.
 
 ### Verify & Close
 
 @call verify(lean_herdr/dispatch.py)
 @call review_change()
 @call gate(lean_herdr/dispatch.py lean_herdr/leanctx.py tests/test_dispatch.py tests/test_dispatch_uncovered_paths.py)
-@call commit("lean_herdr/ tests/", "refactor(dispatch): Aufbau-Modus ohne Bus-Auftrag")
-@call remember_decision("lean-herdr: bin/herdr-dispatch legt keine Aufgabe an und postet nichts. Ein CLI-Prozess hat keine lean-ctx-Identitaet (cli/call_cmd.rs:160 laesst ToolContext.agent_id auf None), also postet er als anonymous und kann kein ctx_task create. Den Auftrag legt der Orchestrator selbst an; leanctx.post() hat seit dieser Aenderung keinen Aufrufer mehr.")
+@call commit("lean_herdr/ tests/", "refactor(dispatch): build mode without a bus-borne work order")
+@call remember_decision("lean-herdr: bin/herdr-dispatch creates no task and posts nothing. A CLI process has no lean-ctx identity (cli/call_cmd.rs:160 leaves ToolContext.agent_id at None), so it posts as anonymous and cannot run ctx_task create. The orchestrator creates the task itself; leanctx.post() has had no caller since this change. From here on new code, comments, docstrings, test names and commit messages are English; lean_herdr/dispatch.py and tests/test_dispatch.py were translated wholesale in this task, the remaining German-named modules await the operator's sweep. Role prompts in roles/ and the README stay German.")
 @phase-end
 
 @phase "task-3"
@@ -835,22 +880,23 @@ nimm die neuen dazu:
 
 Neue Konstanten (neben `AGENT_READY_TIMEOUT_S`):
 
-    #: Der Warte-Modus fragt die Datei, nicht die CLI: kein Prozessstart je Runde.
+    #: The wait mode asks the file, not the CLI: no process start per round.
     POLL_INTERVAL_S = 1.0
 
-    #: Genau eine Klingel je Warte-Aufruf. Der Inhalt steht im TaskStore.
-    #: Neutral formuliert, weil derselbe Text auch die Wiederaufnahme nach einer
-    #: Rueckfrage weckt — dann ist die Aufgabe nicht neu. Und er zeigt auf `get`,
-    #: nicht auf `list`: nur `get` druckt den Verlauf, in dem die Antwort des
-    #: Orchestrators steht.
-    KLINGEL = "Aufgabe {task_id} wartet auf dich — ctx_task get zeigt Auftrag und Verlauf."
+    #: Exactly one ring per wait call. The payload lives in the task store.
+    #: Worded neutrally, because the same text also wakes a task resumed after a
+    #: question -- then it is not new. And it points at `get`, not `list`: only
+    #: `get` prints the history that carries the orchestrator's answer. The text
+    #: itself stays German, like the role prompt it is spoken into.
+    WAKE_PROMPT = "Aufgabe {task_id} wartet auf dich — ctx_task get zeigt Auftrag und Verlauf."
 
-    #: Maschinenlesbares Urteil in der ERSTEN Zeile der Abschlussnachricht.
-    #: Ersatz fuer das weggefallene Bus-Feld `category`: ohne es muesste der
-    #: Orchestrator Prosa lesen, um 'kann gemerged werden' von 'muss zurueck'
-    #: zu unterscheiden — genau das schliesst der Entwurf aus. `failed` taugt
-    #: dafuer nicht: eine begruendete Ablehnung ist kein Scheitern.
-    VERDIKT = re.compile(r"VERDIKT:\s*(result|reject)\s*$")
+    #: Machine-readable verdict on the FIRST line of the completion message.
+    #: Replaces the bus field `category` that fell away: without it the
+    #: orchestrator would have to read prose to tell 'can be merged' from 'must
+    #: go back' -- exactly what this design rules out. `failed` will not do: a
+    #: reasoned rejection is not a failure. The marker stays German because the
+    #: reviewer's role prompt is.
+    VERDICT_RE = re.compile(r"VERDIKT:\s*(result|reject)\s*$")
 
 Neuer Code, ans Ende des Moduls vor `build_parser()`:
 
@@ -864,53 +910,53 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
 
 
     def verdict(message: str | None) -> str | None:
-        """`VERDIKT: result` oder `VERDIKT: reject` als ERSTE Zeile — sonst None.
+        """`VERDIKT: result` or `VERDIKT: reject` on the FIRST line -- else None.
 
-        Nur die erste Zeile, damit ein Zitat derselben Worte weiter unten in der
-        Begruendung das Urteil nicht kippen kann.
+        First line only, so that quoting the same words further down in the
+        reasoning cannot flip the verdict.
         """
-        zeilen = (message or "").lstrip().splitlines()
-        treffer = VERDIKT.match(zeilen[0]) if zeilen else None
-        return treffer.group(1) if treffer else None
+        lines = (message or "").lstrip().splitlines()
+        hit = VERDICT_RE.match(lines[0]) if lines else None
+        return hit.group(1) if hit else None
 
 
-    def _warte_ergebnis(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
+    def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
         return {"ok": ok, "task_id": task_id, **rest}
 
 
-    def _ruecklage(task: Task) -> dict[str, Any] | None:
-        """Ruecklage fuer diesen Zustand — oder None, wenn weiter gewartet wird.
+    def _result_for_state(task: Task) -> dict[str, Any] | None:
+        """The return for this state -- or None if we keep waiting.
 
-        `input-required` kehrt zurueck, obwohl is_terminal() es nicht als
-        terminal fuehrt: die Antwort kann nur vom Orchestrator kommen, und der
-        schlaeft in genau diesem Aufruf. Ohne diese Ruecklage wartete das Skript
-        auf etwas, das ohne es nie eintritt.
+        `input-required` returns even though is_terminal() does not call it
+        terminal: only the orchestrator can answer, and it is asleep inside this
+        very call. Without this return the script would wait for something that
+        cannot happen without it.
         """
-        nachricht = message_from(task, task.to_agent)
+        message = message_from(task, task.to_agent)
         if task.state == "completed":
-            ergebnis = _warte_ergebnis(
-                True, task.id, state=task.state, message=nachricht or ""
+            result = _await_result(
+                True, task.id, state=task.state, message=message or ""
             )
-            urteil = verdict(nachricht)
-            if urteil:
-                ergebnis["verdict"] = urteil
-            return ergebnis
+            ruling = verdict(message)
+            if ruling:
+                result["verdict"] = ruling
+            return result
         if task.state == "failed":
-            return _warte_ergebnis(
+            return _await_result(
                 False,
                 task.id,
                 state=task.state,
-                error=f"agent_failed: {nachricht or 'ohne Begruendung'}",
+                error=f"agent_failed: {message or 'no reason given'}",
             )
         if task.state == "canceled":
-            return _warte_ergebnis(False, task.id, state=task.state, error="task_canceled")
+            return _await_result(False, task.id, state=task.state, error="task_canceled")
         if task.state == "input-required":
-            return _warte_ergebnis(
+            return _await_result(
                 False,
                 task.id,
                 state=task.state,
                 error="input_required",
-                message=nachricht or "",
+                message=message or "",
             )
         return None
 
@@ -925,119 +971,119 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
         sleep: Callable[[float], None] = time.sleep,
         now: Callable[[], float] = time.monotonic,
     ) -> dict[str, Any]:
-        """Auf den Zustandswechsel warten, den der Arbeiter selbst setzt.
+        """Wait for the state change the worker sets itself.
 
-        Das Warten bleibt im Skript: keine CLI, keine Registrierung, kein
-        Modellschritt je Runde. Wirft nie; das Ergebnis traegt `ok`.
+        The waiting stays in the script: no CLI, no registration, no model step
+        per round. Never raises; the result carries `ok`.
         """
         name = agent_name(req.role, req.worktree)
-        frist = now() + req.timeout_ms / 1000.0
-        geklingelt = False
-        zustand = ""
+        deadline = now() + req.timeout_ms / 1000.0
+        has_rung = False
+        state = ""
         while True:
             try:
                 tasks = read_tasks(tasks_path)
             except TaskError as exc:
-                return _warte_ergebnis(
+                return _await_result(
                     False, req.task_id, error=f"tasks_unreadable: {exc}"
                 )
             task = find_task(tasks, req.task_id)
             if task is None:
-                # Der Orchestrator hat die Aufgabe VOR diesem Aufruf angelegt,
-                # und ctx_task benennt die fertige Datei um, bevor es antwortet
-                # (core/a2a/task.rs:213). Fehlt sie hier, ist die ID falsch —
-                # Warten aendert daran nichts.
-                return _warte_ergebnis(False, req.task_id, error="task_not_found")
-            zustand = task.state
-            fertig = _ruecklage(task)
-            if fertig is not None:
-                return fertig
-            if not geklingelt:
-                # Genau einmal, und ohne --wait: wer die erste Klingel
-                # verschlaeft, wacht von der zweiten auch nicht auf. Dafuer gibt
-                # es den Timeout.
+                # The orchestrator created the task BEFORE this call, and
+                # ctx_task renames the finished file into place before it
+                # answers (core/a2a/task.rs:213). Missing here means the id is
+                # wrong -- waiting will not change that.
+                return _await_result(False, req.task_id, error="task_not_found")
+            state = task.state
+            outcome = _result_for_state(task)
+            if outcome is not None:
+                return outcome
+            if not has_rung:
+                # Exactly once, and without --wait: whoever sleeps through the
+                # first ring will not wake for the second. That is what the
+                # timeout is for.
                 herdr.agent_prompt(
-                    name, KLINGEL.format(task_id=req.task_id), wait=False
+                    name, WAKE_PROMPT.format(task_id=req.task_id), wait=False
                 )
-                geklingelt = True
-            if now() >= frist:
+                has_rung = True
+            if now() >= deadline:
                 break
             sleep(interval_s)
 
-        # Kein Zustandswechsel bis zur Frist. Die Wahrheit steht in der
-        # Sitzungsablage, nicht im Lebenszyklus (H1): ein abgestuerzter Arbeiter
-        # laesst die Aufgabe auf `created` oder `working` liegen.
-        fehler = session_error(
+        # No state change before the deadline. The truth lives in the session
+        # store, not in the lifecycle (H1): a crashed worker leaves the task
+        # sitting on `created` or `working`.
+        error = session_error(
             req.kind, session_id_from_agent_list(herdr.agent_list(), name), root
         )
-        if fehler:
-            return _warte_ergebnis(
-                False, req.task_id, state=zustand, error=f"agent_error: {fehler}"
+        if error:
+            return _await_result(
+                False, req.task_id, state=state, error=f"agent_error: {error}"
             )
-        return _warte_ergebnis(False, req.task_id, state=zustand, error="no_reply")
+        return _await_result(False, req.task_id, state=state, error="no_reply")
 
 `build_parser()` und `main()` werden vollstaendig ersetzt:
 
     def build_parser() -> argparse.ArgumentParser:
         p = argparse.ArgumentParser(
-            prog="herdr-dispatch", description="Aufbauen oder warten — ein Aufruf."
+            prog="herdr-dispatch", description="Build or wait -- one call."
         )
         p.add_argument("role", help="builder | reviewer | orchestrator")
         p.add_argument("--kind", required=True, choices=("claude", "opencode"))
-        # `--await` ergaebe den dest `await` — ein Schluesselwort, das als
-        # args.await nicht ansprechbar waere. Der dest MUSS gesetzt werden.
+        # `--await` would yield the dest `await` -- a keyword, unreachable as
+        # args.await. The dest MUST be set.
         p.add_argument(
             "--await",
-            dest="warten",
+            dest="waiting",
             action="store_true",
-            help="auf den Abschluss einer Aufgabe warten statt aufzubauen",
+            help="wait for a task to finish instead of building a worker",
         )
-        p.add_argument("--task-id", default=None, help="Pflicht mit --await")
-        p.add_argument("--model", default=None, help="Pflicht im Aufbau-Modus")
+        p.add_argument("--task-id", default=None, help="required with --await")
+        p.add_argument("--model", default=None, help="required in build mode")
         p.add_argument(
-            "--role-file", default=None, type=Path, help="Pflicht im Aufbau-Modus"
-        )
-        p.add_argument(
-            "--worktree", default=None, help="Branch; der Pane laeuft in dessen Worktree"
+            "--role-file", default=None, type=Path, help="required in build mode"
         )
         p.add_argument(
-            "--profile", default=None, help="ueberschreibt die Voreinstellung der Rolle"
+            "--worktree", default=None, help="branch; the pane runs in its worktree"
         )
-        p.add_argument("--timeout-ms", type=int, default=300_000, help="nur mit --await")
+        p.add_argument(
+            "--profile", default=None, help="overrides the role's default profile"
+        )
+        p.add_argument("--timeout-ms", type=int, default=300_000, help="only with --await")
         return p
 
 
-    def fehlende_flags(args: argparse.Namespace) -> str | None:
-        """Modusabhaengige Pflichtfelder — bewusst NICHT ueber argparse.
+    def missing_flags(args: argparse.Namespace) -> str | None:
+        """Mode-dependent required flags -- deliberately NOT via argparse.
 
-        `required=True` beendet den Prozess mit Exit 2 und einer Zeile auf
-        stderr. Der Orchestrator liest `ok` auf stdout; ein Vertipper saehe fuer
-        ihn aus wie gar keine Ausgabe.
+        `required=True` ends the process with exit 2 and one line on stderr.
+        The orchestrator reads `ok` on stdout; a typo would look to it like no
+        output at all.
         """
-        if args.warten:
-            return None if args.task_id else "--await braucht --task-id"
-        fehlt = [
+        if args.waiting:
+            return None if args.task_id else "--await needs --task-id"
+        missing = [
             flag
-            for flag, wert in (("--model", args.model), ("--role-file", args.role_file))
-            if not wert
+            for flag, value in (("--model", args.model), ("--role-file", args.role_file))
+            if not value
         ]
-        return f"Aufbau-Modus braucht {' und '.join(fehlt)}" if fehlt else None
+        return f"build mode needs {' and '.join(missing)}" if missing else None
 
 
     def main(argv: list[str] | None = None) -> int:
-        """Ausgabe: eine JSON-Zeile auf stdout. Exit IMMER 0.
+        """Output: one JSON line on stdout. Exit ALWAYS 0.
 
-        Der Orchestrator liest `ok`, nicht den Exit-Code — damit ein Fehlschlag
-        nicht seinen Shell-Aufruf abbricht.
+        The orchestrator reads `ok`, not the exit code -- so a failure does not
+        abort its shell call.
         """
         args = build_parser().parse_args(argv)
-        ergebnis: dict[str, Any]
+        result: dict[str, Any]
         try:
-            fehlt = fehlende_flags(args)
-            if fehlt:
-                ergebnis = {"ok": False, "error": f"usage_error: {fehlt}"}
-            elif args.warten:
-                ergebnis = await_task(
+            missing = missing_flags(args)
+            if missing:
+                result = {"ok": False, "error": f"usage_error: {missing}"}
+            elif args.waiting:
+                result = await_task(
                     AwaitRequest(
                         role=args.role,
                         kind=args.kind,
@@ -1050,7 +1096,7 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
                 )
             else:
                 root = canonical_root()
-                ergebnis = dispatch(
+                result = dispatch(
                     DispatchRequest(
                         role=args.role,
                         kind=args.kind,
@@ -1063,9 +1109,9 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
                     root=root,
                     cwd=root,
                 )
-        except Exception as exc:  # noqa: BLE001 -- nie den Aufrufer abbrechen
-            ergebnis = {"ok": False, "error": f"dispatch_crashed: {exc}"}
-        sys.stdout.write(json.dumps(ergebnis, ensure_ascii=False) + "\n")
+        except Exception as exc:  # noqa: BLE001 -- never abort the caller
+            result = {"ok": False, "error": f"dispatch_crashed: {exc}"}
+        sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
         return 0
 
 `tests/test_dispatch_await.py` (neu):
@@ -1080,21 +1126,21 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
     from tests.doubles import FakeProc, which_stub
 
     ROOT = Path("/repo")
-    ARBEITER = "mcp-2018183-70c877bf"
+    WORKER = "mcp-2018183-70c877bf"
     TASK_ID = "task-1a05e34cd15-1cf3b885"
 
 
-    def nachricht(role: str, text: str) -> dict:
+    def message(role: str, text: str) -> dict:
         return {"role": role, "parts": [{"type": "text", "text": text}]}
 
 
-    def aufgabe(state: str = "Working", *, antwort: str | None = None) -> dict:
-        nachrichten = [nachricht("orch", "bau foo")]
-        if antwort is not None:
-            nachrichten.append(nachricht(ARBEITER, antwort))
+    def raw_task(state: str = "Working", *, reply: str | None = None) -> dict:
+        messages = [message("orch", "build foo")]
+        if reply is not None:
+            messages.append(message(WORKER, reply))
         return {
-            "id": TASK_ID, "from_agent": "orch", "to_agent": ARBEITER,
-            "state": state, "description": "bau foo", "messages": nachrichten,
+            "id": TASK_ID, "from_agent": "orch", "to_agent": WORKER,
+            "state": state, "description": "build foo", "messages": messages,
             "artifacts": [], "history": [], "metadata": {},
             "created_at": "2026-09-02T10:00:00Z", "updated_at": "2026-09-02T10:05:00Z",
         }
@@ -1108,97 +1154,97 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
         return Herdr(runner=proc), proc
 
 
-    def warten(herdr, tmp_path, *aufgaben, timeout_ms=300_000, role="builder", **rest):
-        pfad = tmp_path / "tasks.json"
-        pfad.write_text(
-            json.dumps({"tasks": list(aufgaben), "updated_at": ""}), encoding="utf-8"
+    def wait(herdr, tmp_path, *tasks, timeout_ms=300_000, role="builder", **rest):
+        path = tmp_path / "tasks.json"
+        path.write_text(
+            json.dumps({"tasks": list(tasks), "updated_at": ""}), encoding="utf-8"
         )
         h, _ = herdr
         return await_task(
             AwaitRequest(role=role, kind="claude", task_id=TASK_ID, timeout_ms=timeout_ms),
             herdr=h,
             root=ROOT,
-            tasks_path=pfad,
+            tasks_path=path,
             sleep=lambda _s: None,
             **rest,
         )
 
 
-    def test_completed_ist_erfolg_mit_der_abschlussnachricht(herdr, tmp_path):
-        ergebnis = warten(herdr, tmp_path, aufgabe("Completed", antwort="fertig, drei Tests gruen"))
-        assert ergebnis["ok"] is True
-        assert ergebnis["state"] == "completed"
-        assert ergebnis["message"] == "fertig, drei Tests gruen"
-        assert "verdict" not in ergebnis
+    def test_completed_is_success_with_the_closing_message(herdr, tmp_path):
+        result = wait(herdr, tmp_path, raw_task("Completed", reply="done, three tests green"))
+        assert result["ok"] is True
+        assert result["state"] == "completed"
+        assert result["message"] == "done, three tests green"
+        assert "verdict" not in result
 
 
-    def test_ein_bereits_terminaler_zustand_klingelt_gar_nicht(herdr, tmp_path):
-        """Der Orchestrator darf --await gefahrlos wiederholen."""
+    def test_an_already_terminal_state_does_not_ring_at_all(herdr, tmp_path):
+        """The orchestrator may repeat --await safely."""
         _, proc = herdr
-        warten(herdr, tmp_path, aufgabe("Completed", antwort="fertig"))
+        wait(herdr, tmp_path, raw_task("Completed", reply="done"))
         assert not proc.called_with("agent", "prompt")
 
 
-    def test_failed_traegt_die_begruendung_des_arbeiters(herdr, tmp_path):
-        ergebnis = warten(herdr, tmp_path, aufgabe("Failed", antwort="Test 4 laesst sich nicht fixen"))
-        assert ergebnis["ok"] is False
-        assert ergebnis["error"] == "agent_failed: Test 4 laesst sich nicht fixen"
+    def test_failed_carries_the_workers_reason(herdr, tmp_path):
+        result = wait(herdr, tmp_path, raw_task("Failed", reply="test 4 cannot be fixed"))
+        assert result["ok"] is False
+        assert result["error"] == "agent_failed: test 4 cannot be fixed"
 
 
-    def test_failed_ohne_begruendung_luegt_nicht(herdr, tmp_path):
-        """Die Beschreibung des Auftrags ist keine Begruendung des Arbeiters."""
-        ergebnis = warten(herdr, tmp_path, aufgabe("Failed"))
-        assert ergebnis["error"] == "agent_failed: ohne Begruendung"
+    def test_failed_without_a_reason_does_not_lie(herdr, tmp_path):
+        """The task description is not a reason given by the worker."""
+        result = wait(herdr, tmp_path, raw_task("Failed"))
+        assert result["error"] == "agent_failed: no reason given"
 
 
-    def test_canceled_ist_ein_eigener_code(herdr, tmp_path):
-        assert warten(herdr, tmp_path, aufgabe("Canceled"))["error"] == "task_canceled"
+    def test_canceled_has_its_own_code(herdr, tmp_path):
+        assert wait(herdr, tmp_path, raw_task("Canceled"))["error"] == "task_canceled"
 
 
-    def test_input_required_kehrt_mit_der_frage_zurueck(herdr, tmp_path):
-        """Die Antwort kann nur vom Orchestrator kommen — er muss geweckt werden."""
-        ergebnis = warten(
-            herdr, tmp_path, aufgabe("InputRequired", antwort="Soll ich main oder develop nehmen?")
+    def test_input_required_returns_with_the_question(herdr, tmp_path):
+        """Only the orchestrator can answer -- it has to be woken."""
+        result = wait(
+            herdr, tmp_path, raw_task("InputRequired", reply="main or develop?")
         )
-        assert ergebnis["ok"] is False
-        assert ergebnis["error"] == "input_required"
-        assert ergebnis["message"] == "Soll ich main oder develop nehmen?"
+        assert result["ok"] is False
+        assert result["error"] == "input_required"
+        assert result["message"] == "main or develop?"
 
 
-    def test_verdict_steht_nur_in_der_ersten_zeile():
-        assert verdict("VERDIKT: result\nalles gruen") == "result"
-        assert verdict("VERDIKT: reject\nbus.py:14 fehlt ein Test") == "reject"
-        assert verdict("alles gruen\nVERDIKT: result") is None, "nur die erste Zeile zaehlt"
-        assert verdict("Ich schreibe VERDIKT: result irgendwo") is None
+    def test_the_verdict_is_read_from_the_first_line_only():
+        assert verdict("VERDIKT: result\nall green") == "result"
+        assert verdict("VERDIKT: reject\nbus.py:14 lacks a test") == "reject"
+        assert verdict("all green\nVERDIKT: result") is None, "first line only"
+        assert verdict("I write VERDIKT: result somewhere") is None
         assert verdict(None) is None and verdict("") is None
 
 
-    def test_das_urteil_des_reviewers_kommt_maschinenlesbar_zurueck(herdr, tmp_path):
-        ergebnis = warten(
+    def test_the_reviewers_verdict_comes_back_machine_readable(herdr, tmp_path):
+        result = wait(
             herdr, tmp_path,
-            aufgabe("Completed", antwort="VERDIKT: reject\ntests/test_foo.py fehlt"),
+            raw_task("Completed", reply="VERDIKT: reject\ntests/test_foo.py is missing"),
             role="reviewer",
         )
-        assert ergebnis["ok"] is True, "der Reviewer hat geliefert — reject ist kein Scheitern"
-        assert ergebnis["verdict"] == "reject"
+        assert result["ok"] is True, "the reviewer delivered -- reject is not a failure"
+        assert result["verdict"] == "reject"
 
 
-    def test_offener_zustand_klingelt_genau_einmal_und_laeuft_in_den_timeout(herdr, tmp_path):
+    def test_an_open_state_rings_once_and_runs_into_the_timeout(herdr, tmp_path):
         _, proc = herdr
-        uhr = iter([0.0, 0.0, 5.0, 5.0, 20.0])
-        ergebnis = warten(
-            herdr, tmp_path, aufgabe("Working"), timeout_ms=10_000, now=lambda: next(uhr)
+        clock = iter([0.0, 0.0, 5.0, 5.0, 20.0])
+        result = wait(
+            herdr, tmp_path, raw_task("Working"), timeout_ms=10_000, now=lambda: next(clock)
         )
-        assert ergebnis["error"] == "no_reply"
-        assert ergebnis["state"] == "working"
-        klingeln = [c for c in proc.calls if c[1:3] == ["agent", "prompt"]]
-        assert len(klingeln) == 1, "genau eine Klingel je Warte-Aufruf"
-        assert "--wait" not in klingeln[0], "die Klingel wartet nicht — das Skript wartet"
-        assert TASK_ID in " ".join(klingeln[0])
+        assert result["error"] == "no_reply"
+        assert result["state"] == "working"
+        rings = [c for c in proc.calls if c[1:3] == ["agent", "prompt"]]
+        assert len(rings) == 1, "exactly one ring per wait call"
+        assert "--wait" not in rings[0], "the ring does not wait -- the script does"
+        assert TASK_ID in " ".join(rings[0])
 
 
-    def test_ein_abgestuerzter_arbeiter_wird_zu_agent_error(herdr, tmp_path, monkeypatch):
-        """Statt eines nichtssagenden no_reply die Ursache aus der Sitzungsablage (H1)."""
+    def test_a_crashed_worker_becomes_agent_error(herdr, tmp_path, monkeypatch):
+        """The cause from the session store instead of a meaningless no_reply (H1)."""
         h, proc = herdr
         proc.replies = {
             ("agent", "list"): {
@@ -1211,10 +1257,10 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
             }
         }
         monkeypatch.setenv("HOME", str(tmp_path))
-        ablage = tmp_path / ".claude" / "projects" / str(ROOT.resolve()).replace("/", "-")
-        ablage.mkdir(parents=True)
-        (ablage / "sid1.jsonl").write_text(
-            json.dumps({"role": "user", "content": "los"}) + "\n"
+        store = tmp_path / ".claude" / "projects" / str(ROOT.resolve()).replace("/", "-")
+        store.mkdir(parents=True)
+        (store / "sid1.jsonl").write_text(
+            json.dumps({"role": "user", "content": "go"}) + "\n"
             + json.dumps(
                 {
                     "role": "assistant",
@@ -1226,67 +1272,67 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
             ) + "\n",
             encoding="utf-8",
         )
-        uhr = iter([0.0, 0.0, 99.0])
-        ergebnis = warten(
-            (h, proc), tmp_path, aufgabe("Created"), timeout_ms=1_000, now=lambda: next(uhr)
+        clock = iter([0.0, 0.0, 99.0])
+        result = wait(
+            (h, proc), tmp_path, raw_task("Created"), timeout_ms=1_000, now=lambda: next(clock)
         )
-        assert ergebnis["error"] == "agent_error: APIError: User not found. (401)"
+        assert result["error"] == "agent_error: APIError: User not found. (401)"
 
 
-    def test_unlesbarer_store_ist_nie_erfolg_durch_schweigen(herdr, tmp_path):
-        pfad = tmp_path / "tasks.json"
-        pfad.write_text("{kaputt", encoding="utf-8")
+    def test_an_unreadable_store_is_never_success_by_silence(herdr, tmp_path):
+        path = tmp_path / "tasks.json"
+        path.write_text("{broken", encoding="utf-8")
         h, _ = herdr
-        ergebnis = await_task(
+        result = await_task(
             AwaitRequest(role="builder", kind="claude", task_id=TASK_ID),
-            herdr=h, root=ROOT, tasks_path=pfad, sleep=lambda _s: None,
+            herdr=h, root=ROOT, tasks_path=path, sleep=lambda _s: None,
         )
-        assert ergebnis["ok"] is False
-        assert ergebnis["error"].startswith("tasks_unreadable:")
+        assert result["ok"] is False
+        assert result["error"].startswith("tasks_unreadable:")
 
 
-    def test_unbekannte_task_id_wartet_nicht_und_klingelt_nicht(herdr, tmp_path):
-        """ctx_task hat die Datei fertig geschrieben, bevor es antwortete."""
+    def test_an_unknown_task_id_neither_waits_nor_rings(herdr, tmp_path):
+        """ctx_task finished writing the file before it answered."""
         _, proc = herdr
-        ergebnis = warten(herdr, tmp_path)
-        assert ergebnis["error"] == "task_not_found"
+        result = wait(herdr, tmp_path)
+        assert result["error"] == "task_not_found"
         assert not proc.called_with("agent", "prompt")
 
 
-    def test_ein_unbekannter_zustand_gilt_nie_als_erfolg(herdr, tmp_path):
-        """Ein Formatwechsel bei lean-ctx laeuft in den Timeout, nicht in ein ok."""
-        uhr = iter([0.0, 0.0, 99.0])
-        ergebnis = warten(
-            herdr, tmp_path, aufgabe("Verschollen"), timeout_ms=1_000, now=lambda: next(uhr)
+    def test_an_unknown_state_never_counts_as_success(herdr, tmp_path):
+        """A format change in lean-ctx runs into the timeout, not into an ok."""
+        clock = iter([0.0, 0.0, 99.0])
+        result = wait(
+            herdr, tmp_path, raw_task("Vanished"), timeout_ms=1_000, now=lambda: next(clock)
         )
-        assert ergebnis["ok"] is False and ergebnis["error"] == "no_reply"
+        assert result["ok"] is False and result["error"] == "no_reply"
 
 
-    def test_await_ohne_task_id_ist_ein_usage_error(capsys):
-        """Exit 0 und eine JSON-Zeile, auch beim Vertipper — sonst sieht der
-        Orchestrator gar nichts."""
+    def test_await_without_task_id_is_a_usage_error(capsys):
+        """Exit 0 and one JSON line, even on a typo -- otherwise the
+        orchestrator sees nothing at all."""
         code = main(["builder", "--kind", "claude", "--await"])
         assert code == 0
-        ergebnis = json.loads(capsys.readouterr().out.strip())
-        assert ergebnis["ok"] is False
-        assert ergebnis["error"] == "usage_error: --await braucht --task-id"
+        result = json.loads(capsys.readouterr().out.strip())
+        assert result["ok"] is False
+        assert result["error"] == "usage_error: --await needs --task-id"
 
 
-    def test_aufbau_ohne_model_ist_ein_usage_error(capsys):
+    def test_build_mode_without_model_is_a_usage_error(capsys):
         code = main(["builder", "--kind", "claude"])
         assert code == 0
-        ergebnis = json.loads(capsys.readouterr().out.strip())
-        assert ergebnis["error"].startswith("usage_error: Aufbau-Modus braucht --model")
+        result = json.loads(capsys.readouterr().out.strip())
+        assert result["error"].startswith("usage_error: build mode needs --model")
 
-@call tdd(-k input_required_kehrt_mit_der_frage_zurueck)
+@call tdd(-k input_required_returns_with_the_question)
 
-@call tdd(-k offener_zustand_klingelt_genau_einmal_und_laeuft_in_den_timeout)
+@call tdd(-k an_open_state_rings_once_and_runs_into_the_timeout)
 
-@call tdd(-k ein_unbekannter_zustand_gilt_nie_als_erfolg)
+@call tdd(-k an_unknown_state_never_counts_as_success)
 
-@call tdd(-k await_ohne_task_id_ist_ein_usage_error)
+@call tdd(-k await_without_task_id_is_a_usage_error)
 
-Run: `python -c "import lean_herdr.dispatch as d; p=d.build_parser(); a=p.parse_args(['builder','--kind','claude','--await','--task-id','t']); print(a.warten, a.task_id)"`
+Run: `python -c "import lean_herdr.dispatch as d; p=d.build_parser(); a=p.parse_args(['builder','--kind','claude','--await','--task-id','t']); print(a.waiting, a.task_id)"`
 — Expected: `True t` (belegt, dass der `dest` gesetzt ist und `args.await` nirgends gebraucht wird).
 
 ### Verify & Close
@@ -1294,8 +1340,8 @@ Run: `python -c "import lean_herdr.dispatch as d; p=d.build_parser(); a=p.parse_
 @call verify(lean_herdr/dispatch.py)
 @call review_change()
 @call gate(lean_herdr/dispatch.py tests/test_dispatch_await.py)
-@call commit("lean_herdr/dispatch.py tests/test_dispatch_await.py", "feat(dispatch): Warte-Modus pollt tasks.json statt den Bus")
-@call remember_decision("lean-herdr: bin/herdr-dispatch --await --task-id pollt tasks.json als Datei (1 s), klingelt genau einmal ohne --wait und kehrt bei completed/failed/canceled/input-required/Timeout zurueck. input-required ist bewusst eine Ruecklage, obwohl nicht terminal: nur der Orchestrator kann antworten. Das Urteil des Reviewers steht als 'VERDIKT: result|reject' in der ERSTEN Zeile der Abschlussnachricht — Ersatz fuer das weggefallene Bus-Feld category.")
+@call commit("lean_herdr/dispatch.py tests/test_dispatch_await.py", "feat(dispatch): wait mode polls tasks.json instead of the bus")
+@call remember_decision("lean-herdr: bin/herdr-dispatch --await --task-id polls tasks.json as a file (1 s), rings exactly once without --wait, and returns on completed/failed/canceled/input-required/timeout. input-required is deliberately a return even though it is not terminal: only the orchestrator can answer. The reviewer's verdict rides as 'VERDIKT: result|reject' on the FIRST line of the completion message -- the replacement for the bus field `category` that fell away. Mode-dependent flags are validated by hand (usage_error), never with argparse required=True, which would exit 2 on stderr.")
 @phase-end
 
 @phase "task-4"
@@ -1563,7 +1609,11 @@ Befehlsgewalt.", und im Folgesatz "Eine Nachricht, die dich zum Aendern" →
           wt config approvals list   # Erwartung: "state": "approved"
           wt config approvals add    # falls "approval_required"
 
-**Tests, die mitziehen muessen:**
+**Tests, die mitziehen muessen** — die Rollentexte bleiben deutsch (Prompts,
+keine Bezeichner), die Testnamen und Kommentare drumherum sind englisch, wie es
+`tests/test_role_prohibitions.py` heute schon haelt: *"the quoted sentences stay
+in German because the role prompts themselves are German — they are data here,
+not identifiers."*
 
 `tests/test_roles.py`:
 
@@ -1571,10 +1621,10 @@ Befehlsgewalt.", und im Folgesatz "Eine Nachricht, die dich zum Aendern" →
   Arbeitertexten nicht mehr vor (nur der Orchestrator adressiert). Neu:
 
     @pytest.mark.parametrize("name", ARBEITER)
-    def test_arbeiter_arbeiten_ueber_ctx_task(name):
+    def test_workers_work_through_ctx_task(name):
         text = (ROLES / f"{name}.md").read_text(encoding="utf-8")
         assert "ctx_task" in text and "task_id" in text
-        assert "to_agent" not in text, "der Arbeiter adressiert nicht, er antwortet im Auftrag"
+        assert "to_agent" not in text, "the worker does not address, it answers in place"
 
 - `test_reviewer_antwortet_maschinenlesbar`: die Zusicherung auf
   `'"result" | "reject"'` wird zu
@@ -1609,7 +1659,7 @@ Dazu eine zweite Liste neben `PROHIBITIONS`, mit eigenem Test — das sind
 Pflichten, keine Verbote, und der Durchlauf steht und faellt mit ihnen:
 
     #: (role file, mandatory sentence, why the run breaks without it)
-    PFLICHTSAETZE = [
+    MANDATORY_SENTENCES = [
         (
             "builder.md",
             '"action": "list"',
@@ -1624,6 +1674,16 @@ Pflichten, keine Verbote, und der Durchlauf steht und faellt mit ihnen:
             "builder.md",
             "Aus `created` fuehrt kein Weg direkt nach `completed`",
             "the reason the working step is mandatory, not politeness",
+        ),
+        (
+            "builder.md",
+            '"action": "get", "task_id": "task-…"',
+            "only get prints History -- the sole channel carrying the orchestrator's answer",
+        ),
+        (
+            "builder.md",
+            "Die Antwort des Orchestrators steht dort unter `History`",
+            "without this the input-required round trip silently never completes",
         ),
         (
             "reviewer.md",
@@ -1650,27 +1710,17 @@ Pflichten, keine Verbote, und der Durchlauf steht und faellt mit ihnen:
             'Nimm dafuer nicht `action: "message"`',
             "action=message writes into a store no ctx_task action ever prints",
         ),
-        (
-            "builder.md",
-            '"action": "get", "task_id": "task-…"',
-            "only get prints History — the sole channel carrying the orchestrator's answer",
-        ),
-        (
-            "builder.md",
-            "Die Antwort des Orchestrators steht dort unter `History`",
-            "without this the input-required round trip silently never completes",
-        ),
     ]
 
 
-    @pytest.mark.parametrize(("role_file", "sentence", "constraint"), PFLICHTSAETZE)
+    @pytest.mark.parametrize(("role_file", "sentence", "constraint"), MANDATORY_SENTENCES)
     def test_mandatory_sentence_is_present_verbatim(
         role_file: str, sentence: str, constraint: str
     ):
-        """The write path is untestable — these sentences ARE the implementation."""
+        """The write path is untestable -- these sentences ARE the implementation."""
         text = _normalized(role_file)
         assert " ".join(sentence.split()) in text, (
-            f"{role_file}: mandatory instruction missing or rephrased — {constraint}"
+            f"{role_file}: mandatory instruction missing or rephrased -- {constraint}"
         )
 
 `tests/test_config_files.py` — `test_readme_nennt_jede_laufzeit_abhaengigkeit`
@@ -1679,7 +1729,7 @@ bekommt zwei Pflichteintraege in die Liste: `"wt config approvals"` und
 
 @call tdd(-k mandatory_sentence_is_present_verbatim)
 
-@call tdd(-k arbeiter_arbeiten_ueber_ctx_task)
+@call tdd(-k workers_work_through_ctx_task)
 
 Run: `{{ test_cmd }} -k "role or readme"` — Expected: gruen, und
 `test_prohibition_is_present_verbatim` faengt weiterhin jede Umkehrung.
@@ -1688,8 +1738,8 @@ Run: `{{ test_cmd }} -k "role or readme"` — Expected: gruen, und
 
 @call verify(roles/builder.md)
 @call gate("roles README.md tests/test_roles.py tests/test_role_prohibitions.py tests/test_config_files.py")
-@call commit("roles README.md tests/", "feat(roles): Dreischritt-Sequenz ueber ctx_task, Urteil in der ersten Zeile")
-@call remember_decision("lean-herdr: der Arbeiter MUSS ctx_task update(state='working') setzen, bevor er abschliesst — can_transition_to erlaubt aus Created nur Working/Canceled/Failed (core/a2a/task.rs:46). Ohne diesen Schritt kommt beim Abschluss 'Error: invalid transition' und der Orchestrator laeuft in den Timeout. Der ausstehende README-Patch zu 'wt config approvals' aus Task 12 des Vorgaengerplans ist hier nachgeholt.")
+@call commit("roles README.md tests/", "feat(roles): three-step ctx_task sequence, verdict on the first line")
+@call remember_decision("lean-herdr: the worker MUST set ctx_task update(state='working') before completing -- can_transition_to allows only Working/Canceled/Failed out of Created (core/a2a/task.rs:46). Without that step the completion returns 'Error: invalid transition' and the orchestrator runs into the timeout. The answer to an input-required question travels in the `message` of update(state='working') and is read back with ctx_task get under History; action='message' writes into a store no ctx_task action ever prints. Role prompts stay German on purpose -- they are prompts, not identifiers. The pending README patch about `wt config approvals` from task 12 of the predecessor plan is discharged here.")
 @phase-end
 
 @phase "task-5"
@@ -1712,10 +1762,10 @@ sind die Rollentexte aus Task 4 das Material.
 
 `tests/test_tasks_integration.py` (neu):
 
-    """Echte lean-ctx-Aufrufe gegen einen isolierten TaskStore.
+    """Real lean-ctx calls against an isolated task store.
 
-    Laeuft nur mit `-m integration`. Jeder Test setzt LEAN_CTX_DATA_DIR auf
-    tmp_path — ohne das schriebe er in den echten Store des Betreibers.
+    Runs only under `-m integration`. Every test sets LEAN_CTX_DATA_DIR to
+    tmp_path -- without it they would write into the operator's real store.
     """
 
     from __future__ import annotations
@@ -1733,19 +1783,19 @@ sind die Rollentexte aus Task 4 das Material.
 
 
     @pytest.fixture
-    def isolierter_store(tmp_path, monkeypatch) -> Path:
+    def isolated_store(tmp_path, monkeypatch) -> Path:
         if shutil.which("lean-ctx") is None:
-            pytest.skip("lean-ctx nicht installiert")
+            pytest.skip("lean-ctx not installed")
         monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(tmp_path))
         return tmp_path
 
 
-    def ctx_task(argumente: dict, *, cwd: Path) -> str:
+    def ctx_task(arguments: dict, *, cwd: Path) -> str:
         proc = subprocess.run(
             [
                 "lean-ctx", "call", "ctx_task",
                 "--project-root", str(cwd),
-                "--json", json.dumps(argumente, separators=(",", ":")),
+                "--json", json.dumps(arguments, separators=(",", ":")),
             ],
             capture_output=True,
             text=True,
@@ -1755,42 +1805,42 @@ sind die Rollentexte aus Task 4 das Material.
         return (proc.stdout or "").strip()
 
 
-    def test_info_liefert_die_erwartete_form(isolierter_store):
-        """Ein frischer Store ist leer — und sagt es in einer festen Form."""
-        antwort = ctx_task({"action": "info"}, cwd=isolierter_store)
-        assert antwort.startswith("Task Store:"), antwort
-        assert "0 total" in antwort
+    def test_info_returns_the_expected_shape(isolated_store):
+        """A fresh store is empty -- and says so in a fixed shape."""
+        answer = ctx_task({"action": "info"}, cwd=isolated_store)
+        assert answer.startswith("Task Store:"), answer
+        assert "0 total" in answer
 
 
-    def test_create_ohne_registrierung_scheitert(isolierter_store):
-        """Der tragende Befund: Schreiben braucht Identitaet, ein CLI-Prozess hat keine.
+    def test_create_without_registration_is_refused(isolated_store):
+        """The load-bearing finding: writing needs identity, a CLI process has none.
 
-        `lean-ctx call` baut seinen ToolContext mit agent_id=None
-        (cli/call_cmd.rs:160 + ..Default::default()), und ctx_task lehnt jede
-        schreibende Aktion ohne Identitaet ab (tools/ctx_task.rs:12).
+        `lean-ctx call` builds its ToolContext with agent_id=None
+        (cli/call_cmd.rs:160 plus ..Default::default()), and ctx_task refuses
+        every writing action without identity (tools/ctx_task.rs:12).
         """
-        antwort = ctx_task(
-            {"action": "create", "to_agent": "irgendwer", "description": "x"},
-            cwd=isolierter_store,
+        answer = ctx_task(
+            {"action": "create", "to_agent": "someone", "description": "x"},
+            cwd=isolated_store,
         )
-        assert "agent must be registered first" in antwort, antwort
-        assert not (isolierter_store / "agents" / "tasks.json").exists(), (
-            "eine abgelehnte Anlage darf keinen Store hinterlassen"
+        assert "agent must be registered first" in answer, answer
+        assert not (isolated_store / "agents" / "tasks.json").exists(), (
+            "a refused creation must not leave a store behind"
         )
 
 
-    def test_list_laeuft_ohne_identitaet_und_findet_nichts(isolierter_store):
-        """Lesen braucht keine Identitaet — der Agent heisst dann 'unknown'."""
-        antwort = ctx_task({"action": "list"}, cwd=isolierter_store)
-        assert antwort == "No tasks found for this agent.", antwort
+    def test_list_runs_without_identity_and_finds_nothing(isolated_store):
+        """Reading needs no identity -- the agent is then called 'unknown'."""
+        answer = ctx_task({"action": "list"}, cwd=isolated_store)
+        assert answer == "No tasks found for this agent.", answer
 
 
-    def test_task_store_path_zeigt_auf_den_isolierten_store(isolierter_store):
-        """Der nachgebildete Pfad und der von lean-ctx benutzte sind derselbe."""
-        assert task_store_path() == isolierter_store / "agents" / "tasks.json"
-        assert read_tasks() == [], "vor der ersten Aufgabe existiert die Datei nicht"
+    def test_task_store_path_points_at_the_isolated_store(isolated_store):
+        """The path we rebuild and the one lean-ctx uses are the same one."""
+        assert task_store_path() == isolated_store / "agents" / "tasks.json"
+        assert read_tasks() == [], "before the first task the file does not exist"
 
-@call tdd(-k create_ohne_registrierung_scheitert)
+@call tdd(-k create_without_registration_is_refused)
 
 Run: `uv run pytest -q -m integration -k tasks_integration` — Expected: vier
 Tests gruen (oder uebersprungen, wenn `lean-ctx` fehlt).
@@ -1802,8 +1852,8 @@ Run: `{{ test_cmd }}` — Expected: die Integrationstests laufen NICHT mit
 
 @call verify(tests/test_tasks_integration.py)
 @call gate(tests/test_tasks_integration.py)
-@call commit("tests/test_tasks_integration.py", "test(tasks): Integrationstests gegen einen isolierten TaskStore")
-@call remember_decision("lean-herdr: Integrationstests gegen lean-ctx setzen LEAN_CTX_DATA_DIR auf tmp_path und bekommen einen vollstaendig isolierten Store (core/data_dir.rs:25). Gemessen und festgehalten: `lean-ctx call ctx_task action=create` scheitert immer mit 'agent must be registered first', `action=list` laeuft unter dem Agenten 'unknown'.")
+@call commit("tests/test_tasks_integration.py", "test(tasks): integration tests against an isolated task store")
+@call remember_decision("lean-herdr: integration tests against lean-ctx set LEAN_CTX_DATA_DIR to tmp_path and get a fully isolated store (core/data_dir.rs:25). Measured and pinned: `lean-ctx call ctx_task action=create` always fails with 'agent must be registered first', and action=list runs under the agent 'unknown'.")
 @phase-end
 
 @phase "task-6"
@@ -1830,13 +1880,14 @@ die Plugin-Handler — anderer Zweck, andere Lebensdauer.
 
 `lean_herdr/settings.py` (neu):
 
-    """`.config/lean-herdr.toml` → RoleSettings. Rangfolge: CLI > Datei > Vorgabe.
+    """`.config/lean-herdr.toml` -> RoleSettings. Precedence: CLI > file > default.
 
-    `tomllib` ist stdlib ab 3.11 — keine neue Laufzeit-Abhaengigkeit.
+    `tomllib` is stdlib since 3.11 -- no new runtime dependency.
 
-    Bewusst getrennt von config.py: die liest HERDR_*-Umgebung fuer die
-    Plugin-Handler. Ohne Datei laeuft das Projekt exakt wie ohne diese Datei;
-    eine vorhandene, aber falsche Datei ist dagegen ein Fehler und schweigt nie.
+    Deliberately separate from config.py, which reads the HERDR_* environment
+    for the plugin handlers: different purpose, different lifetime. Without the
+    file the project behaves exactly as it does without this module; a file that
+    IS there but is wrong is an error and never stays silent.
     """
 
     from __future__ import annotations
@@ -1846,27 +1897,27 @@ die Plugin-Handler — anderer Zweck, andere Lebensdauer.
     from pathlib import Path
     from typing import Any
 
-    #: RELATIV zum Repo-Root, nicht zum $PWD. Der Aufrufer haengt sie an
-    #: canonical_root() — sonst laedt die Konfiguration stillschweigend nicht,
-    #: sobald bin/herdr-dispatch aus einem Unterverzeichnis gerufen wird, und
-    #: die Zusicherung "eine falsche Datei schweigt nie" waere gebrochen.
+    #: RELATIVE to the repo root, not to $PWD. The caller joins it onto
+    #: canonical_root() -- otherwise the config silently fails to load as soon as
+    #: bin/herdr-dispatch runs from a subdirectory, and the promise "a wrong file
+    #: never stays silent" would be broken.
     SETTINGS_PATH = Path(".config") / "lean-herdr.toml"
 
-    #: Voreinstellung je Rolle — gemessene Fixkosten je Schritt:
-    #: minimal 2 711, standard 4 920, power 11 559 Token.
+    #: Per-role default -- measured fixed cost per step:
+    #: minimal 2,711 / standard 4,920 / power 11,559 tokens.
     PROFILE_BY_ROLE = {"orchestrator": "minimal"}
     DEFAULT_PROFILE = "standard"
 
-    #: `herdr pane split --direction` kennt genau diese beiden.
-    RICHTUNGEN = ("right", "down")
+    #: `herdr pane split --direction` knows exactly these two.
+    DIRECTIONS = ("right", "down")
 
 
     class SettingsError(RuntimeError):
-        """Die Konfiguration ist da, aber unbrauchbar.
+        """The config is present but unusable.
 
-        Wer `direction = "links"` schreibt und dafuer schweigend `right`
-        bekommt, sucht den Fehler an der falschen Stelle. Eine FEHLENDE Datei
-        ist dagegen in Ordnung — sie ist der Normalfall.
+        Whoever writes `direction = "links"` and silently gets `right` will hunt
+        the bug in the wrong place. A MISSING file is fine -- that is the normal
+        case.
         """
 
 
@@ -1875,12 +1926,12 @@ die Plugin-Handler — anderer Zweck, andere Lebensdauer.
         direction: str = "right"
         ratio: float | None = None
         focus: bool = False
-        name_template: str = "{rolle}-{branch}"
+        name_template: str = "{role}-{branch}"
         profile: str = DEFAULT_PROFILE
         ready_timeout_s: float = 45.0
 
 
-    _TYPEN: dict[str, Any] = {
+    _TYPES: dict[str, Any] = {
         "direction": str,
         "ratio": (float, int, type(None)),
         "focus": bool,
@@ -1889,105 +1940,105 @@ die Plugin-Handler — anderer Zweck, andere Lebensdauer.
         "ready_timeout_s": (float, int),
     }
 
-    ERLAUBT = frozenset(f.name for f in fields(RoleSettings))
+    ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
 
     def read_settings(path: str | Path | None = None) -> dict[str, Any]:
-        """Die Datei als rohes dict. Fehlt sie: {}. Ist sie kaputt: SettingsError."""
+        """The file as a raw dict. Missing: {}. Broken: SettingsError."""
         p = Path(path) if path is not None else SETTINGS_PATH
         try:
-            roh = p.read_bytes()
+            raw = p.read_bytes()
         except FileNotFoundError:
             return {}
         except OSError as exc:
             raise SettingsError(f"settings unreadable at {p}: {exc}") from exc
         try:
-            return tomllib.loads(roh.decode("utf-8"))
+            return tomllib.loads(raw.decode("utf-8"))
         except (tomllib.TOMLDecodeError, UnicodeDecodeError) as exc:
             raise SettingsError(f"settings malformed at {p}: {exc}") from exc
 
 
-    def _typen_pruefen(block: dict[str, Any], role: str) -> None:
-        unbekannt = sorted(set(block) - ERLAUBT)
-        if unbekannt:
+    def _check_types(block: dict[str, Any], role: str) -> None:
+        unknown = sorted(set(block) - ALLOWED)
+        if unknown:
             raise SettingsError(
-                f"{role}: unbekannte Schluessel {unbekannt}; erlaubt: {sorted(ERLAUBT)}"
+                f"{role}: unknown keys {unknown}; allowed: {sorted(ALLOWED)}"
             )
-        for schluessel, wert in block.items():
-            if not isinstance(wert, _TYPEN[schluessel]):
+        for key, value in block.items():
+            if not isinstance(value, _TYPES[key]):
                 raise SettingsError(
-                    f"{role}.{schluessel}: {wert!r} ist {type(wert).__name__}"
+                    f"{role}.{key}: {value!r} is {type(value).__name__}"
                 )
 
 
-    def _pruefen(werte: RoleSettings, role: str) -> None:
-        if werte.direction not in RICHTUNGEN:
+    def _validate(values: RoleSettings, role: str) -> None:
+        if values.direction not in DIRECTIONS:
             raise SettingsError(
-                f"{role}: direction={werte.direction!r}, erlaubt: {list(RICHTUNGEN)}"
+                f"{role}: direction={values.direction!r}, allowed: {list(DIRECTIONS)}"
             )
-        if werte.ratio is not None and not 0.0 < float(werte.ratio) < 1.0:
-            raise SettingsError(f"{role}: ratio={werte.ratio!r} liegt nicht zwischen 0 und 1")
-        if float(werte.ready_timeout_s) <= 0:
-            raise SettingsError(f"{role}: ready_timeout_s={werte.ready_timeout_s!r} <= 0")
-        # Der Wiederverwendungsschluessel ist (branch, rolle). Fehlt eines von
-        # beidem, trifft ein Reviewer-Dispatch den laufenden Builder desselben
-        # Branches — oder zwei Branches teilen sich einen Arbeiter.
-        if "{rolle}" not in werte.name_template or "{branch}" not in werte.name_template:
+        if values.ratio is not None and not 0.0 < float(values.ratio) < 1.0:
+            raise SettingsError(f"{role}: ratio={values.ratio!r} is not between 0 and 1")
+        if float(values.ready_timeout_s) <= 0:
+            raise SettingsError(f"{role}: ready_timeout_s={values.ready_timeout_s!r} <= 0")
+        # The reuse key is (branch, role). Drop either placeholder and a reviewer
+        # dispatch hits the running builder of that branch -- or two branches
+        # end up sharing one worker.
+        if "{role}" not in values.name_template or "{branch}" not in values.name_template:
             raise SettingsError(
-                f"{role}: name_template={werte.name_template!r} "
-                "muss {rolle} UND {branch} enthalten"
+                f"{role}: name_template={values.name_template!r} "
+                "must contain {role} AND {branch}"
             )
         try:
-            werte.name_template.format(rolle="r", branch="b")
+            values.name_template.format(role="r", branch="b")
         except (KeyError, IndexError, ValueError) as exc:
             raise SettingsError(
-                f"{role}: name_template={werte.name_template!r} ist nicht formatierbar: {exc}"
+                f"{role}: name_template={values.name_template!r} is not formattable: {exc}"
             ) from exc
 
 
-    def _ueberlagern(basis: RoleSettings, block: Any, role: str) -> RoleSettings:
+    def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
         if not isinstance(block, dict):
             raise SettingsError(
-                f"{role}: Abschnitt ist kein Tabellenblock, sondern {type(block).__name__}"
+                f"{role}: section is not a table, but {type(block).__name__}"
             )
-        _typen_pruefen(block, role)
-        neu = replace(basis, **block)
-        _pruefen(neu, role)
-        return neu
+        _check_types(block, role)
+        merged = replace(base, **block)
+        _validate(merged, role)
+        return merged
 
 
     def settings_for(role: str, data: dict[str, Any] | None = None) -> RoleSettings:
-        """Vorgabe → `[default]` → `[roles.<rolle>]`. Jede Stufe darf ueberschreiben.
+        """Default -> `[default]` -> `[roles.<role>]`. Each layer may override.
 
-        `[default]` in der Datei schlaegt auch die eingebaute Rollenvorgabe: wer
-        nur den Builder umstellen will, schreibt in `[roles.builder]`.
+        `[default]` in the file beats the built-in per-role default too: to
+        change only the builder, write it under `[roles.builder]`.
         """
-        daten = data or {}
-        werte = RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
-        for block in (daten.get("default"), (daten.get("roles") or {}).get(role)):
+        table = data or {}
+        values = RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
+        for block in (table.get("default"), (table.get("roles") or {}).get(role)):
             if block is not None:
-                werte = _ueberlagern(werte, block, role)
-        return werte
+                values = _overlay(values, block, role)
+        return values
 
 `.config/lean-herdr.toml` (neu) — **vollstaendig auskommentiert**. Die Datei
 liegt im Repo, damit jeder Knopf sichtbar ist; geparst ergibt sie `{}` und das
 Verhalten ist Zeichen fuer Zeichen dasselbe wie ohne Datei:
 
-    # Konfiguration von lean-herdr. Rangfolge: CLI-Flag > diese Datei > Vorgabe.
-    # Alles hier ist auskommentiert: so verhaelt sich das Projekt exakt wie ohne
-    # diese Datei. Kommentiere aus, was du aendern willst.
+    # lean-herdr configuration. Precedence: CLI flag > this file > built-in default.
+    # Everything here is commented out, so the project behaves exactly as it does
+    # without this file. Uncomment what you want to change.
     #
-    # [default] gilt fuer jede Rolle und schlaegt auch die eingebauten
-    # Rollenvorgaben (orchestrator = minimal). Wer nur eine Rolle aendern will,
-    # schreibt in [roles.<rolle>].
+    # [default] applies to every role and also beats the built-in per-role
+    # defaults (orchestrator = minimal). To change a single role, write it under
+    # [roles.<role>].
 
     # [default]
-    # direction = "right"          # right | down — herdr pane split --direction
-    # ratio = 0.5                  # 0 < r < 1 — herdr pane split --ratio
-    # focus = false                # true: der neue Pane bekommt den Fokus
-    # name_template = "{rolle}-{branch}"   # beide Platzhalter sind Pflicht
-    # profile = "standard"         # minimal 2711 / standard 4920 / power 11559 Token
-    # ready_timeout_s = 45.0       # wie lange auf den MCP-Server gewartet wird
+    # direction = "right"          # right | down -- herdr pane split --direction
+    # ratio = 0.5                  # 0 < r < 1 -- herdr pane split --ratio
+    # focus = false                # true: the new pane takes focus
+    # name_template = "{role}-{branch}"   # both placeholders are mandatory
+    # profile = "standard"         # minimal 2711 / standard 4920 / power 11559 tokens
+    # ready_timeout_s = 45.0       # how long to wait for the agent's MCP server
 
     # [roles.orchestrator]
     # profile = "minimal"
@@ -2013,98 +2064,98 @@ Verhalten ist Zeichen fuer Zeichen dasselbe wie ohne Datei:
     )
 
 
-    def test_ohne_datei_gilt_die_vorgabe(tmp_path):
-        """Die Konfiguration ist eine Moeglichkeit, keine Pflicht."""
-        assert read_settings(tmp_path / "gibt-es-nicht.toml") == {}
+    def test_without_a_file_the_defaults_apply(tmp_path):
+        """The config is an option, not an obligation."""
+        assert read_settings(tmp_path / "does-not-exist.toml") == {}
         assert settings_for("builder") == RoleSettings(profile="standard")
 
 
-    def test_das_profil_folgt_der_rolle(tmp_path):
+    def test_the_profile_follows_the_role():
         assert settings_for("orchestrator").profile == "minimal"
         assert settings_for("builder").profile == "standard"
         assert settings_for("reviewer").profile == "standard"
 
 
-    def test_default_ueberlagert_die_vorgabe_und_roles_den_default():
-        daten = {
+    def test_default_overlays_the_builtin_and_roles_overlays_default():
+        data = {
             "default": {"direction": "down", "ratio": 0.4},
             "roles": {"builder": {"ratio": 0.7}},
         }
-        builder = settings_for("builder", daten)
-        assert builder.direction == "down", "[default] gilt fuer jede Rolle"
-        assert builder.ratio == 0.7, "[roles.builder] schlaegt [default]"
-        assert settings_for("reviewer", daten).ratio == 0.4
+        builder = settings_for("builder", data)
+        assert builder.direction == "down", "[default] applies to every role"
+        assert builder.ratio == 0.7, "[roles.builder] beats [default]"
+        assert settings_for("reviewer", data).ratio == 0.4
 
 
-    def test_default_schlaegt_auch_die_eingebaute_rollenvorgabe():
-        daten = {"default": {"profile": "power"}}
-        assert settings_for("orchestrator", daten).profile == "power"
+    def test_default_also_beats_the_builtin_role_default():
+        data = {"default": {"profile": "power"}}
+        assert settings_for("orchestrator", data).profile == "power"
 
 
-    def test_kaputtes_toml_schweigt_nicht(tmp_path):
-        pfad = tmp_path / "lean-herdr.toml"
-        pfad.write_text("[default\n", encoding="utf-8")
+    def test_broken_toml_does_not_stay_silent(tmp_path):
+        path = tmp_path / "lean-herdr.toml"
+        path.write_text("[default\n", encoding="utf-8")
         with pytest.raises(SettingsError, match="malformed"):
-            read_settings(pfad)
+            read_settings(path)
 
 
-    def test_unbekannte_schluessel_schweigen_nicht():
-        """Ein Tippfehler, der schweigend verpufft, ist schlimmer als ein Absturz."""
+    def test_unknown_keys_do_not_stay_silent():
+        """A typo that quietly evaporates is worse than a crash."""
         with pytest.raises(SettingsError, match="direktion"):
             settings_for("builder", {"default": {"direktion": "down"}})
 
 
-    def test_falsche_richtung_schweigt_nicht():
+    def test_a_wrong_direction_does_not_stay_silent():
         with pytest.raises(SettingsError, match="direction"):
             settings_for("builder", {"default": {"direction": "links"}})
 
 
-    def test_falscher_typ_schweigt_nicht():
+    def test_a_wrong_type_does_not_stay_silent():
         with pytest.raises(SettingsError, match="ratio"):
-            settings_for("builder", {"default": {"ratio": "halb"}})
+            settings_for("builder", {"default": {"ratio": "half"}})
 
 
-    @pytest.mark.parametrize("wert", [0.0, 1.0, 1.5, -0.2])
-    def test_ratio_muss_zwischen_null_und_eins_liegen(wert):
+    @pytest.mark.parametrize("value", [0.0, 1.0, 1.5, -0.2])
+    def test_ratio_must_lie_between_zero_and_one(value):
         with pytest.raises(SettingsError, match="ratio"):
-            settings_for("builder", {"default": {"ratio": wert}})
+            settings_for("builder", {"default": {"ratio": value}})
 
 
-    def test_ready_timeout_muss_positiv_sein():
+    def test_ready_timeout_must_be_positive():
         with pytest.raises(SettingsError, match="ready_timeout_s"):
             settings_for("builder", {"default": {"ready_timeout_s": 0}})
 
 
     @pytest.mark.parametrize(
-        "vorlage", ["{branch}", "{rolle}", "arbeiter", "{rolle}-{zweig}"]
+        "template", ["{branch}", "{role}", "worker", "{role}-{twig}"]
     )
-    def test_name_template_ohne_beide_platzhalter_wird_abgelehnt(vorlage):
-        """Der Wiederverwendungsschluessel ist (branch, rolle) — sonst trifft ein
-        Reviewer-Dispatch den laufenden Builder desselben Branches."""
+    def test_a_name_template_missing_either_placeholder_is_rejected(template):
+        """The reuse key is (branch, role) -- otherwise a reviewer dispatch hits
+        the running builder of that branch."""
         with pytest.raises(SettingsError, match="name_template"):
-            settings_for("builder", {"default": {"name_template": vorlage}})
+            settings_for("builder", {"default": {"name_template": template}})
 
 
-    def test_die_ausgelieferte_vorlage_aendert_nichts():
-        """Die Datei im Repo ist vollstaendig auskommentiert — das ist ihr Zweck."""
-        # An den Repo-Root gehaengt, nicht relativ: SETTINGS_PATH ist relativ,
-        # und pytest darf aus jedem Verzeichnis gestartet werden.
-        daten = read_settings(Path(__file__).resolve().parents[1] / SETTINGS_PATH)
-        assert daten == {}, f"{SETTINGS_PATH} traegt aktive Werte: {sorted(daten)}"
-        assert settings_for("builder", daten) == RoleSettings(profile="standard")
+    def test_the_shipped_template_changes_nothing():
+        """The file in the repo is fully commented out -- that is its purpose."""
+        # Anchored on the repo root, not relative: SETTINGS_PATH is relative and
+        # pytest may be started from any directory.
+        data = read_settings(Path(__file__).resolve().parents[1] / SETTINGS_PATH)
+        assert data == {}, f"{SETTINGS_PATH} carries active values: {sorted(data)}"
+        assert settings_for("builder", data) == RoleSettings(profile="standard")
 
-@call tdd(-k unbekannte_schluessel_schweigen_nicht)
+@call tdd(-k unknown_keys_do_not_stay_silent)
 
-@call tdd(-k name_template_ohne_beide_platzhalter_wird_abgelehnt)
+@call tdd(-k a_name_template_missing_either_placeholder_is_rejected)
 
-@call tdd(-k die_ausgelieferte_vorlage_aendert_nichts)
+@call tdd(-k the_shipped_template_changes_nothing)
 
 ### Verify & Close
 
 @call verify(lean_herdr/settings.py)
 @call gate(lean_herdr/settings.py .config/lean-herdr.toml tests/test_settings.py)
-@call commit("lean_herdr/settings.py .config/lean-herdr.toml tests/test_settings.py", "feat(settings): .config/lean-herdr.toml mit strenger Pruefung")
-@call remember_decision("lean-herdr: .config/lean-herdr.toml liegt vollstaendig auskommentiert im Repo — ohne Datei und mit dieser Datei verhaelt sich das Projekt identisch. Eine vorhandene, aber falsche Datei wirft SettingsError statt still auf Vorgaben zurueckzufallen. name_template MUSS {rolle} UND {branch} tragen, weil der Wiederverwendungsschluessel (branch, rolle) ist.")
+@call commit("lean_herdr/settings.py .config/lean-herdr.toml tests/test_settings.py", "feat(settings): read .config/lean-herdr.toml with strict validation")
+@call remember_decision("lean-herdr: .config/lean-herdr.toml ships fully commented out -- with and without the file the project behaves identically. A file that IS present but wrong raises SettingsError instead of silently falling back to defaults. name_template MUST carry {role} AND {branch}, because the agent reuse key is (branch, role).")
 @phase-end
 
 @phase "task-7"
@@ -2145,34 +2196,34 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
     def profile_for(
         role: str, override: str | None = None, *, settings: RoleSettings | None = None
     ) -> str:
-        """CLI-Flag schlaegt Datei schlaegt Vorgabe."""
+        """CLI flag beats file beats built-in default."""
         return override or (settings or RoleSettings()).profile
 
 
     def agent_name(
         role: str, worktree: str | None = None, *, settings: RoleSettings | None = None
     ) -> str:
-        """Der Wiederverwendungsschluessel ist (branch, rolle), nicht der Branch allein.
+        """The reuse key is (branch, role), never the branch alone.
 
-        Ein Worktree traegt mehrere Arbeiter — Builder und Reviewer —, und ein
-        Reviewer-Dispatch auf denselben Branch darf niemals den laufenden Builder
-        treffen. Dass die Vorlage beide Platzhalter traegt, prueft settings.py
-        beim Laden; hier wird nur eingesetzt.
+        One worktree carries several workers -- builder and reviewer -- and a
+        reviewer dispatch onto the same branch must never hit the running
+        builder. That the template carries both placeholders is checked by
+        settings.py at load time; here they are only filled in.
         """
         if not worktree:
             return role
-        vorlage = (settings or RoleSettings()).name_template
+        template = (settings or RoleSettings()).name_template
         slug = re.sub(r"[^a-zA-Z0-9]+", "-", worktree).strip("-").lower()
-        return vorlage.format(rolle=role, branch=slug)
+        return template.format(role=role, branch=slug)
 
 - `dispatch()` bekommt `settings: RoleSettings | None = None` und benutzt es an
-  vier Stellen: `agent_name(req.role, req.worktree, settings=einst)`,
-  `profile_for(req.role, req.profile, settings=einst)`, im `pane_split()`-Aufruf
-  `direction=einst.direction, ratio=einst.ratio, focus=einst.focus`, und
-  `waiter(herdr, name, registry_path=registry_path, timeout_s=einst.ready_timeout_s)`.
+  vier Stellen: `agent_name(req.role, req.worktree, settings=cfg)`,
+  `profile_for(req.role, req.profile, settings=cfg)`, im `pane_split()`-Aufruf
+  `direction=cfg.direction, ratio=cfg.ratio, focus=cfg.focus`, und
+  `waiter(herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s)`.
   Erste Zeile des Rumpfs:
 
-        einst = settings or RoleSettings()
+        cfg = settings or RoleSettings()
 
 - `await_task()` bekommt denselben Parameter und reicht ihn an `agent_name()`
   durch — sonst klingelte der Warte-Modus bei einem anders benannten Agenten als
@@ -2181,21 +2232,22 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
   (`lean_herdr/dispatch.py:91`); nur der Aufruf aendert sich.
 - `main()` laedt die Datei genau einmal und reicht das Ergebnis in beide Modi:
 
-        wurzel = canonical_root()
-        einstellungen = settings_for(args.role, read_settings(wurzel / SETTINGS_PATH))
+        root = canonical_root()
+        settings = settings_for(args.role, read_settings(root / SETTINGS_PATH))
 
   **`SETTINGS_PATH` ist relativ und MUSS an `canonical_root()` gehaengt werden.**
   Ein blosses `read_settings()` laedt die Konfiguration stillschweigend nicht,
   sobald der Orchestrator `bin/herdr-dispatch` aus einem Unterverzeichnis oder
   aus einem Worktree ruft — genau das Schweigen, das die Global Constraints
-  ausschliessen. `wurzel` ersetzt zugleich den bisherigen `canonical_root()`-Aufruf
+  ausschliessen. `root` ersetzt zugleich den bisherigen `canonical_root()`-Aufruf
   in beiden Zweigen; er wird nur noch einmal gemacht.
 
   Ein `SettingsError` faellt in den bestehenden `except Exception`-Zweig und
   erscheint als `dispatch_crashed: <text>` in der JSON-Zeile — laut und mit
   Ursache, ohne den Aufrufer abzubrechen.
 
-`README.md` — neuer Abschnitt vor "## Entwicklung":
+`README.md` — neuer Abschnitt vor "## Entwicklung" (Betreiberdoku, bleibt
+deutsch):
 
     ## Konfiguration
 
@@ -2205,7 +2257,7 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
     `[roles.<rolle>]` schlaegt `[default]`.
 
     Ein unbekannter Schluessel, eine falsche Richtung oder ein `name_template`
-    ohne `{rolle}` und `{branch}` sind Fehler und werden gemeldet — nicht still
+    ohne `{role}` und `{branch}` sind Fehler und werden gemeldet — nicht still
     auf die Vorgabe zurueckgesetzt.
 
 **Tests:**
@@ -2213,38 +2265,41 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
 - `tests/test_dispatch.py` bekommt `from lean_herdr.settings import RoleSettings`
   dazu; `test_profil_folgt_der_rolle_und_laesst_sich_ueberschreiben` wandert nach
   `tests/test_settings.py` (dort steht es bereits als
-  `test_das_profil_folgt_der_rolle`); hier bleibt nur
+  `test_the_profile_follows_the_role`); hier bleibt nur
 
-    def test_das_cli_flag_schlaegt_die_datei():
-        einst = RoleSettings(profile="power")
-        assert profile_for("builder", None, settings=einst) == "power"
-        assert profile_for("builder", "minimal", settings=einst) == "minimal"
-
-
-    def test_agentenname_folgt_der_vorlage():
-        einst = RoleSettings(name_template="{branch}--{rolle}")
-        assert agent_name("builder", "feat/auth", settings=einst) == "feat-auth--builder"
-        assert agent_name("builder", None, settings=einst) == "builder"
+    def test_the_cli_flag_beats_the_file():
+        cfg = RoleSettings(profile="power")
+        assert profile_for("builder", None, settings=cfg) == "power"
+        assert profile_for("builder", "minimal", settings=cfg) == "minimal"
 
 
-    def test_agentenname_ist_branch_UND_rolle():
-        """Ein Reviewer-Dispatch darf nie den laufenden Builder desselben Branches treffen."""
+    def test_agent_name_follows_the_template():
+        cfg = RoleSettings(name_template="{branch}--{role}")
+        assert agent_name("builder", "feat/auth", settings=cfg) == "feat-auth--builder"
+        assert agent_name("builder", None, settings=cfg) == "builder"
+
+
+    def test_agent_name_is_branch_AND_role():
+        """A reviewer dispatch must never hit the running builder of that branch."""
         assert agent_name("builder", "feat/auth") == "builder-feat-auth"
         assert agent_name("builder", "feat/auth") != agent_name("reviewer", "feat/auth")
 
 
-    def test_layout_aus_der_konfiguration_erreicht_herdr(welt):
-        h_proc, _, _ = welt
-        lauf(welt, reg=registry(), settings=RoleSettings(direction="down", ratio=0.3))
+    def test_layout_from_the_config_reaches_herdr(world):
+        h_proc, _, _ = world
+        run_dispatch(
+            world, reg=registry(), settings=RoleSettings(direction="down", ratio=0.3)
+        )
         split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
         assert "--direction" in split and split[split.index("--direction") + 1] == "down"
         assert "--ratio" in split and split[split.index("--ratio") + 1] == "0.3"
 
-  (`lauf()` reicht `**kwargs` bereits an `dispatch()` durch.)
+  (`run_dispatch()` reicht `**kwargs` bereits an `dispatch()` durch.)
 
 - `tests/test_herdr.py`: ein Test, dass `--ratio` nur erscheint, wenn gesetzt:
 
-    def test_ratio_erscheint_nur_wenn_gesetzt():
+    def test_ratio_appears_only_when_set(monkeypatch):
+        monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
         fake = FakeProc()
         h = Herdr(runner=fake)
         h.pane_split("/repo")
@@ -2252,14 +2307,11 @@ Die `focus`-Behandlung bleibt unveraendert (`--no-focus`, wenn nicht gefokussier
         h.pane_split("/repo", ratio=0.25)
         assert fake.calls[1][fake.calls[1].index("--ratio") + 1] == "0.25"
 
-  (davor `monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))`
-  wie in den uebrigen Tests der Datei.)
+@call tdd(-k layout_from_the_config_reaches_herdr)
 
-@call tdd(-k layout_aus_der_konfiguration_erreicht_herdr)
+@call tdd(-k agent_name_follows_the_template)
 
-@call tdd(-k agentenname_folgt_der_vorlage)
-
-@call tdd(-k ratio_erscheint_nur_wenn_gesetzt)
+@call tdd(-k ratio_appears_only_when_set)
 
 Run: `herdr pane split --help` — Expected: `--ratio <FLOAT>` und
 `--direction <DIRECTION> [possible values: right, down]` sind gelistet.
@@ -2272,6 +2324,6 @@ Run: `{{ test_cmd }}` — Expected: alles gruen, und mit der ausgelieferten
 @call verify(lean_herdr/dispatch.py)
 @call review_change()
 @call gate(lean_herdr/dispatch.py lean_herdr/herdr.py README.md tests/test_dispatch.py tests/test_herdr.py tests/test_settings.py)
-@call commit("lean_herdr/ README.md tests/", "feat(settings): Layout, Namensvorlage und Profil aus der Konfiguration")
-@call remember_decision("lean-herdr: dispatch() und await_task() nehmen ein RoleSettings entgegen; main() laedt es einmal ueber settings_for(rolle, read_settings()). agent_name() rendert name_template — await_task() MUSS dieselben Settings bekommen wie dispatch(), sonst klingelt der Warte-Modus bei einem anders benannten Agenten. herdr pane split kennt --ratio <FLOAT>.")
+@call commit("lean_herdr/ README.md tests/", "feat(settings): drive layout, name template and profile from config")
+@call remember_decision("lean-herdr: dispatch() and await_task() both take a RoleSettings; main() loads it once via settings_for(role, read_settings(canonical_root() / SETTINGS_PATH)). SETTINGS_PATH is relative and MUST be anchored on canonical_root(), otherwise the config silently fails to load from any cwd but the repo root. agent_name() renders name_template with {role} and {branch} -- await_task() MUST get the same settings as dispatch(), or the wait mode rings a differently named agent. herdr pane split supports --ratio <FLOAT>.")
 @phase-end
