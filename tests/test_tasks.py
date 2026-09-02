@@ -195,3 +195,51 @@ def test_an_empty_legacy_directory_does_not_count(tmp_path, monkeypatch):
     assert task_store_path() == (
         tmp_path / "data" / "lean-ctx" / "agents" / "tasks.json"
     )
+
+
+def test_an_empty_marker_file_does_not_count(tmp_path, monkeypatch):
+    """core/data_dir.rs:104-114 (GL #623/#625) -- an empty marker file must not split the store."""
+    monkeypatch.delenv("LEAN_CTX_DATA_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    (tmp_path / ".lean-ctx").mkdir()
+    (tmp_path / ".lean-ctx" / "stats.json").write_text("", encoding="utf-8")
+    assert task_store_path() == (
+        tmp_path / "data" / "lean-ctx" / "agents" / "tasks.json"
+    )
+
+
+def test_an_empty_marker_directory_does_not_count(tmp_path, monkeypatch):
+    """core/data_dir.rs:104-114 (GL #623/#625) -- an empty marker directory must not split the store."""
+    monkeypatch.delenv("LEAN_CTX_DATA_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    (tmp_path / ".lean-ctx" / "sessions").mkdir(parents=True)
+    assert task_store_path() == (
+        tmp_path / "data" / "lean-ctx" / "agents" / "tasks.json"
+    )
+
+
+def test_a_non_empty_marker_file_still_selects_legacy(tmp_path, monkeypatch):
+    """Guards against over-correcting _has_data() into 'never legacy'."""
+    monkeypatch.delenv("LEAN_CTX_DATA_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    (tmp_path / ".lean-ctx").mkdir()
+    (tmp_path / ".lean-ctx" / "stats.json").write_text("{}", encoding="utf-8")
+    assert task_store_path() == tmp_path / ".lean-ctx" / "agents" / "tasks.json"
+
+
+def test_a_non_empty_marker_directory_still_selects_legacy(tmp_path, monkeypatch):
+    """Guards against over-correcting _has_data() into 'never legacy'."""
+    monkeypatch.delenv("LEAN_CTX_DATA_DIR", raising=False)
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    sessions = tmp_path / ".lean-ctx" / "sessions"
+    sessions.mkdir(parents=True)
+    (sessions / "s1.json").write_text("{}", encoding="utf-8")
+    assert task_store_path() == tmp_path / ".lean-ctx" / "agents" / "tasks.json"

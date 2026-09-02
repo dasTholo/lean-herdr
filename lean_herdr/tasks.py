@@ -88,12 +88,26 @@ class Task:
 
 
 def _has_data(directory: Path) -> bool:
-    """An EMPTY legacy directory does not count (core/data_dir.rs:22).
+    """A marker counts only when it carries data (core/data_dir.rs:104-114, GL #623/#625).
 
-    Otherwise an empty ~/.lean-ctx created by setup would split the store:
-    lean-ctx would write to XDG while we read next to it.
+    An empty legacy directory does not count. Concretely: an empty marker
+    FILE (size 0) does not count, and a marker DIRECTORY with no entries
+    does not count either. Otherwise an empty ~/.lean-ctx created by setup
+    would split the store: lean-ctx would write to XDG while we read next
+    to it. A missing or unreadable marker does not count and does not stop
+    the scan of the remaining markers.
     """
-    return any((directory / marker).exists() for marker in _DATA_MARKERS)
+    for marker in _DATA_MARKERS:
+        path = directory / marker
+        try:
+            if path.is_dir():
+                if next(path.iterdir(), None) is not None:
+                    return True
+            elif path.stat().st_size > 0:
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def _data_dir() -> Path:
