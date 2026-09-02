@@ -902,7 +902,8 @@ entfernten Importen.
 **Files:** Modify `lean_herdr/dispatch.py`. Create `tests/test_dispatch_await.py`.
 **Interfaces:** Produces `AwaitRequest(role, kind, task_id, worktree, timeout_ms)`,
 `verdict(message) -> str | None`, `await_task(req, *, herdr, root, tasks_path,
-interval_s, sleep, now) -> dict`, `fehlende_flags(args) -> str | None`.
+interval_s, sleep, now) -> dict`, `missing_flags(args) -> str | None`,
+`UsageError`.
 **Consumes:** `lean_herdr.tasks.{read_tasks, find_task, message_from, TaskError,
 Task}` (Task 1), `lean_herdr.dispatch.agent_name` (Task 2),
 `lean_herdr.export.{session_error, session_id_from_agent_list}`.
@@ -926,10 +927,17 @@ Fuenf Ruecklagen (Spec §5), dazu drei Fehlercodes:
 `usage_error` steht nicht in der Spec und ist trotzdem Pflicht: modusabhaengige
 Flags koennen nicht ueber `argparse required=True` laufen, weil das den Prozess
 mit Exit 2 und einer Zeile auf **stderr** beendet — der Orchestrator liest aber
-`ok` auf stdout und saehe einen Vertipper als gar keine Ausgabe.
+`ok` auf stdout und saehe einen Vertipper als gar keine Ausgabe. Aus genau
+demselben Grund wird `ArgumentParser.error()` selbst umgeleitet: ein fehlendes
+`--kind`, ein fehlendes `role`, eine ungueltige `choices`-Angabe und ein
+unbekanntes Argument laufen alle durch diese eine Methode. So bekommt jeder
+Bedienfehler dieselbe Form — eine JSON-Zeile auf stdout, Exit 0 —, und `--help`
+bleibt unberuehrt, weil es ueber `exit()` laeuft, nicht ueber `error()`.
 
-Ergaenze in `lean_herdr/dispatch.py` die in Task 2 entfernten Importe wieder und
-nimm die neuen dazu:
+Ergaenze in `lean_herdr/dispatch.py` die in Task 2 entfernten Importe wieder,
+nimm die neuen dazu und erweitere `from typing import Any` um `NoReturn`:
+
+    from typing import Any, NoReturn
 
     from lean_herdr.export import session_error, session_id_from_agent_list
     from lean_herdr.tasks import (
@@ -1084,10 +1092,29 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
             )
         return _await_result(False, req.task_id, state=state, error="no_reply")
 
-`build_parser()` und `main()` werden vollstaendig ersetzt:
+`build_parser()` und `main()` werden vollstaendig ersetzt; davor stehen die
+beiden Klassen, die den Parser-Fehler auf stdout holen:
+
+    class UsageError(Exception):
+        """A parser complaint -- raised instead of ending the process."""
+
+
+    class _Parser(argparse.ArgumentParser):
+        """argparse ends a usage error with exit 2 and one line on stderr.
+
+        Same reason as missing_flags(): the orchestrator reads `ok` on stdout and
+        would see no output at all. A missing `--kind`, a missing `role`, an
+        invalid choice and an unknown flag all run through error(), so redirecting
+        it alone gives every operator error one shape. `--help` goes through
+        exit(), not error(), and stays untouched.
+        """
+
+        def error(self, message: str) -> NoReturn:
+            raise UsageError(message)
+
 
     def build_parser() -> argparse.ArgumentParser:
-        p = argparse.ArgumentParser(
+        p = _Parser(
             prog="herdr-dispatch", description="Build or wait -- one call."
         )
         p.add_argument("role", help="builder | reviewer | orchestrator")
@@ -1138,9 +1165,9 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
         The orchestrator reads `ok`, not the exit code -- so a failure does not
         abort its shell call.
         """
-        args = build_parser().parse_args(argv)
         result: dict[str, Any]
         try:
+            args = build_parser().parse_args(argv)
             missing = missing_flags(args)
             if missing:
                 result = {"ok": False, "error": f"usage_error: {missing}"}
@@ -1171,6 +1198,8 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
                     root=root,
                     cwd=root,
                 )
+        except UsageError as exc:
+            result = {"ok": False, "error": f"usage_error: {exc}"}
         except Exception as exc:  # noqa: BLE001 -- never abort the caller
             result = {"ok": False, "error": f"dispatch_crashed: {exc}"}
         sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
@@ -1385,6 +1414,38 @@ Neuer Code, ans Ende des Moduls vor `build_parser()`:
         assert code == 0
         result = json.loads(capsys.readouterr().out.strip())
         assert result["error"].startswith("usage_error: build mode needs --model")
+
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            pytest.param(["builder"], id="kind missing"),
+            pytest.param(["--kind", "claude", "--await", "--task-id", TASK_ID], id="role missing"),
+            pytest.param(["builder", "--kind", "cursor"], id="kind unknown"),
+            pytest.param(["builder", "--kind", "claude", "--nope"], id="flag unknown"),
+        ],
+    )
+    def test_argparse_failures_land_on_stdout_like_every_other_error(argv, capsys):
+        """argparse would end the process with exit 2 and one line on STDERR.
+
+        The orchestrator reads `ok` on stdout and would see no output at all --
+        so the parser error takes the same shape as missing_flags().
+        """
+        code = main(argv)
+        assert code == 0
+        captured = capsys.readouterr()
+        assert captured.err == "", "argparse must not write the usage line to stderr"
+        result = json.loads(captured.out.strip())
+        assert result["ok"] is False
+        assert result["error"].startswith("usage_error: ")
+
+
+    def test_help_keeps_working(capsys):
+        """Only the error path is redirected -- --help still prints and exits 0."""
+        with pytest.raises(SystemExit) as exit_info:
+            main(["--help"])
+        assert exit_info.value.code == 0
+        assert "herdr-dispatch" in capsys.readouterr().out
 
 @call tdd(-k input_required_returns_with_the_question)
 
