@@ -62,7 +62,7 @@ def test_readme_nennt_jede_laufzeit_abhaengigkeit():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     for pflicht in (
         "uv", "worktrunk", "herdr-worktrunk", "fzf", "jq",
-        "lean-ctx allow herdr", "lean-ctx allow wt", "warning:",
-        "<ORCHESTRATOR_AGENT_ID>",
+        "lean-ctx allow herdr", "lean-ctx allow wt", "wt config approvals",
+        "warning:", "ctx_task", "<ORCHESTRATOR_AGENT_ID>",
     ):
         assert pflicht in text, f"README nennt {pflicht!r} nicht"

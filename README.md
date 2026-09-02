@@ -1,51 +1,59 @@
 # lean-herdr
 
-Ein Workspace, in dem ein billiger Orchestrator-Agent Aufgaben an staerkere
-Arbeiter-Agenten verteilt: Inhalt ueber den lean-ctx-Agentenbus, Takt ueber
-Herdr, Isolation ueber Git-Worktrees.
+A workspace in which a cheap orchestrator agent hands out tasks to stronger
+worker agents: orders over the lean-ctx task store (`ctx_task`), findings over
+the agent bus, timing over Herdr, isolation over Git worktrees.
 
-Entwurf und Messungen: `docs/specs/2026-09-01-lean-herdr-design.md`.
+Design and measurements: `docs/specs/2026-09-01-lean-herdr-design.md`,
+`docs/specs/2026-09-01-lean-herdr-ctx-task-design.md`.
 
-## Laufzeit-Abhaengigkeiten
+## Runtime dependencies
 
-Herdr installiert keine Toolchains — diese Dinge muessen vorhanden sein:
+Herdr installs no toolchains — these things must be present:
 
-| Was | Wofuer | Installation |
+| What | What for | Installation |
 |---|---|---|
-| `herdr` >= 0.8.2 | Panes, Agenten, Workspaces | siehe Herdr-Projekt |
-| `lean-ctx` >= 3.10.1 | Agentenbus, Projektgedaechtnis | `cargo install lean-ctx` |
-| `uv` | Laufzeit der Python-Skripte und -Handler | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| `worktrunk` (`wt`) >= 0.75.0 | Worktree je Branch, Merge, Cleanup | `cargo install worktrunk` |
-| Herdr-Plugin `devashish2203/herdr-worktrunk` | bindet Worktrees an Workspaces; braucht `fzf` und `jq` | `herdr plugin install devashish2203/herdr-worktrunk` |
-| `opencode` >= 1.18.25 | Orchestrator und Reviewer | siehe opencode-Projekt |
-| Claude Code >= 2.1.252 | Builder | siehe Claude-Code-Projekt |
+| `herdr` >= 0.8.2 | panes, agents, workspaces | see the Herdr project |
+| `lean-ctx` >= 3.10.1 | task store, agent bus, project memory | `cargo install lean-ctx` |
+| `uv` | runtime of the Python scripts and handlers | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
+| `worktrunk` (`wt`) >= 0.75.0 | one worktree per branch, merge, cleanup | `cargo install worktrunk` |
+| Herdr plugin `devashish2203/herdr-worktrunk` | binds worktrees to workspaces; needs `fzf` and `jq` | `herdr plugin install devashish2203/herdr-worktrunk` |
+| `opencode` >= 1.18.25 | orchestrator and reviewer | see the opencode project |
+| Claude Code >= 2.1.252 | builder | see the Claude Code project |
 
-Zwei Freigaben in lean-ctx, ohne die ein Agent unter Shell-Gating weder Herdr
-noch worktrunk steuern kann:
+Two approvals in lean-ctx, without which an agent under shell gating can steer
+neither Herdr nor worktrunk:
 
     lean-ctx allow herdr
     lean-ctx allow wt
 
-Danach pruefen — Herdr lehnt unbekannte Plugin-Events nicht ab, es warnt nur:
+Plus one approval in worktrunk. Without it `wt` skips the project hooks from
+`.config/wt.toml` **silently** and reports success — the pre-merge test gate
+would then not run at all:
 
-    herdr plugin list        # Erwartung: keine Zeile mit `warning:`
+    wt config approvals list   # expectation: "state": "approved"
+    wt config approvals add    # if "approval_required"
+
+Then check — Herdr does not reject unknown plugin events, it only warns:
+
+    herdr plugin list        # expectation: no line with `warning:`
 
 ## Bootstrap
 
-Der Orchestrator startet sich nicht selbst. Einmal je Workspace:
+The orchestrator does not start itself. Once per workspace:
 
     herdr pane split --current --direction right --cwd "$PWD" --no-focus \
       --env LEAN_CTX_TOOL_PROFILE=minimal --env LEAN_CTX_ROLE=orchestrator
     herdr agent start orch --kind opencode --pane <id> -- --agent orchestrator
 
-Danach die lean-ctx-agent_id des Orchestrators aufloesen und in
-`roles/builder.md` und `roles/reviewer.md` an der Stelle
-`<ORCHESTRATOR_AGENT_ID>` eintragen — das ist das Vertrauensmodell: eine
-Bus-Nachricht kann nicht behaupten, der Orchestrator zu sein.
+Then resolve the orchestrator's lean-ctx agent_id and enter it in
+`roles/builder.md` and `roles/reviewer.md` at the place
+`<ORCHESTRATOR_AGENT_ID>` — that is the trust model: a task cannot claim to
+come from the orchestrator.
 
-## Entwicklung
+## Development
 
     uv sync --dev
     uv run pytest -q
 
-Tests mit `-m integration` brauchen echte Binaries und laufen nicht in CI.
+Tests with `-m integration` need real binaries and do not run in CI.
