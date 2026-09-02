@@ -41,6 +41,7 @@ from lean_herdr.tasks import (
     find_task,
     message_from,
     read_tasks,
+    task_store_path,
 )
 from lean_herdr.worktree import (
     WorktreeOpenFailed,
@@ -118,6 +119,19 @@ def agent_args(kind: str, model: str, role_file: Path) -> list[str]:
     raise ValueError(f"unknown kind: {kind}")
 
 
+def default_registry_path() -> Path:
+    """The registry NEXT TO the task store -- same install, same resolution.
+
+    `bus.REGISTRY_PATH` is the hardcoded XDG default, while
+    `tasks.task_store_path()` honours `LEAN_CTX_DATA_DIR`, a legacy
+    `~/.lean-ctx` and `XDG_*`. Both name the SAME `agents/` directory, so
+    without this the build mode read an absent registry -- a full
+    `ready_timeout_s` stall ending in `no_agent_id` -- exactly where the wait
+    mode read the right store.
+    """
+    return task_store_path().parent / "registry.json"
+
+
 def wait_for_agent_id(
     herdr: Herdr,
     name: str,
@@ -132,6 +146,7 @@ def wait_for_agent_id(
 
     Blocks in the shell call, not in the model -- that is the cheap part.
     """
+    path = registry_path if registry_path is not None else default_registry_path()
     deadline = now() + timeout_s
     while True:
         agents = herdr.agent_list()
@@ -139,7 +154,7 @@ def wait_for_agent_id(
         if pane:
             info = herdr.pane_process_info(str(pane))
             try:
-                registry = read_registry(registry_path)
+                registry = read_registry(path)
             except BusError:
                 registry = {}
             agent_id = resolve_agent_id(

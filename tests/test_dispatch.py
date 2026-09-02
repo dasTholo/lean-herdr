@@ -173,6 +173,41 @@ def test_an_existing_agent_is_reused_and_cleared(world):
     assert "--wait" not in clear, "/clear without --wait (H4)"
 
 
+def test_the_build_mode_reads_the_registry_the_task_store_points_at(
+    monkeypatch, tmp_path
+):
+    """Both halves of one dispatch must read the SAME lean-ctx install.
+
+    `bus.REGISTRY_PATH` is the hardcoded XDG default, while
+    `tasks.task_store_path()` honours `LEAN_CTX_DATA_DIR`, a legacy
+    `~/.lean-ctx` and `XDG_*` -- for the same `agents/` directory. Reading
+    the hardcoded one let the build mode stall into `no_agent_id` on every
+    non-default install, while the wait mode read the right store.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    # The hardcoded default is deliberately absent here: only the resolution
+    # via the task store can still find the agent.
+    monkeypatch.setattr("lean_herdr.bus.REGISTRY_PATH", tmp_path / "nowhere.json")
+    data = tmp_path / "data"
+    (data / "agents").mkdir(parents=True)
+    (data / "agents" / "registry.json").write_text(
+        json.dumps({"agents": [{"agent_id": AGENT_ID, "pid": 4242}]}), encoding="utf-8"
+    )
+    monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(data))
+
+    h_proc = FakeProc()
+    h_proc.replies = {
+        ("agent", "list"): {
+            "result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}
+        },
+        ("pane", "process-info"): {"result": {"process_info": {"shell_pid": 4242}}},
+    }
+
+    result = dispatch(req(), herdr=Herdr(runner=h_proc), root=ROOT)
+
+    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
+
+
 def test_without_an_agent_id_the_script_reports_an_error(world):
     assert run_dispatch(world, reg=registry(), agent_id=None)["error"] == "no_agent_id"
 
