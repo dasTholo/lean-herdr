@@ -17,9 +17,3 @@ dist/
 # LMD skills are installed artefacts, reproducible via:
 #   lean-md skill install <name> --local
 .claude/skills/
-
-# lean-ctx project state is local -- but lean-herdr's own files live
-# under it and belong in the repository. Git cannot re-include a path
-# below an excluded DIRECTORY, so the parent must be a glob.
-.lean-ctx/*
-!.lean-ctx/lean-herdr/
