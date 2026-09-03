@@ -13,7 +13,7 @@ Herdr installs no toolchains — these things must be present:
 
 | What | What for | Installation |
 |---|---|---|
-| `herdr` >= 0.8.0 | panes, agents, workspaces | see the Herdr project |
+| `herdr` >= 0.8.0 (measured on 0.8.2 in this tree) | panes, agents, workspaces | see the Herdr project |
 | `lean-ctx` >= 3.10.1 | agent bus, project memory, tool profiles | `cargo install lean-ctx` |
 | `uv` | development: test runner and dev dependencies | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | `python3` | runtime of the plugin handlers and both CLIs | your distribution |
@@ -68,8 +68,10 @@ that a run broke off; `cancel` closes it.
   pane and workspace, carries it across server restarts, and offers the
   one-keystroke orchestrator bootstrap. Register it with `herdr plugin link`.
 - `.opencode/plugins/lean-ctx-policy.js` — the policy adapter that runs the
-  Claude-Code hooks from `$LEAN_HERDR_HOOKS_DIR` (default `~/.claude/hooks`)
-  inside opencode, so both agent runtimes obey the same tool discipline.
+  Claude-Code hooks inside opencode, so both agent runtimes obey the same
+  tool discipline. It searches the project's own `.claude/hooks` first,
+  then `~/.claude/hooks`; `$LEAN_HERDR_HOOKS_DIR`, when set, overrides
+  both and searches only that one directory.
 
 ## Bootstrap
 
@@ -81,10 +83,14 @@ server-wide, not per workspace:
       --env LEAN_CTX_TOOL_PROFILE=minimal --env LEAN_CTX_ROLE=orchestrator
     herdr agent start orch --kind opencode --pane <id> -- --agent orchestrator
 
-`orch` is the trust anchor: `bin/herdr-dispatch order` stamps that name as
-the sender, and `roles/builder.md` and `roles/reviewer.md` carry the line
-`ORCHESTRATOR = orch`. Start the pane under another name and both role files
-have to name it too — nothing resolves it for you.
+`orch` is the trust anchor: `bin/herdr-dispatch order`, `answer` and
+`cancel` stamp that name as the sender from the constant
+`ORCHESTRATOR_AGENT` — never from the pane name — and `roles/builder.md`
+and `roles/reviewer.md` carry the line `ORCHESTRATOR = orch`. Start the
+pane under another name and the constant still stamps `orch`: pass
+`--from <name>` on every `order`, `answer` and `cancel` call, and set
+`ORCHESTRATOR = <name>` in both role files. The two must agree, or every
+order is refused.
 
 Unlike the `ctx_task` path this replaced, the name is a claim, not a proof:
 the log stamps what the writer passes. The rule catches a stray order, not a

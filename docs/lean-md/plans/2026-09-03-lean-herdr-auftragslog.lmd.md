@@ -3843,7 +3843,7 @@ Ohne den Nachtrag endet dieser Task rot. Die Liste nennt kuenftig, was der READM
     def test_readme_names_every_runtime_dependency():
         text = (ROOT / "README.md").read_text(encoding="utf-8")
         for requirement in (
-            "uv", "worktrunk", "herdr-worktrunk", "fzf", "jq",
+            "uv", "python3", "worktrunk", "herdr-worktrunk", "fzf", "jq",
             "lean-ctx allow herdr", "lean-ctx allow wt",
             "lean-ctx allow bin/herdr-report",
             "wt config approvals", "warning:",
@@ -3930,8 +3930,10 @@ nirgends:
       pane and workspace, carries it across server restarts, and offers the
       one-keystroke orchestrator bootstrap. Register it with `herdr plugin link`.
     - `.opencode/plugins/lean-ctx-policy.js` — the policy adapter that runs the
-      Claude-Code hooks from `$LEAN_HERDR_HOOKS_DIR` (default `~/.claude/hooks`)
-      inside opencode, so both agent runtimes obey the same tool discipline.
+      Claude-Code hooks inside opencode, so both agent runtimes obey the same
+      tool discipline. It searches the project's own `.claude/hooks` first,
+      then `~/.claude/hooks`; `$LEAN_HERDR_HOOKS_DIR`, when set, overrides
+      both and searches only that one directory.
 
 Und der Bootstrap-Abschnitt — `README:41` (I11) und der Vertrauensanker, den
 Task 7 vom `mcp-…`-Id auf den Agentennamen umgestellt hat:
@@ -3944,10 +3946,14 @@ Task 7 vom `mcp-…`-Id auf den Agentennamen umgestellt hat:
           --env LEAN_CTX_TOOL_PROFILE=minimal --env LEAN_CTX_ROLE=orchestrator
         herdr agent start orch --kind opencode --pane <id> -- --agent orchestrator
 
-    `orch` is the trust anchor: `bin/herdr-dispatch order` stamps that name as
-    the sender, and `roles/builder.md` and `roles/reviewer.md` carry the line
-    `ORCHESTRATOR = orch`. Start the pane under another name and both role files
-    have to name it too — nothing resolves it for you.
+    `orch` is the trust anchor: `bin/herdr-dispatch order`, `answer` and
+    `cancel` stamp that name as the sender from the constant
+    `ORCHESTRATOR_AGENT` — never from the pane name — and `roles/builder.md`
+    and `roles/reviewer.md` carry the line `ORCHESTRATOR = orch`. Start the
+    pane under another name and the constant still stamps `orch`: pass
+    `--from <name>` on every `order`, `answer` and `cancel` call, and set
+    `ORCHESTRATOR = <name>` in both role files. The two must agree, or every
+    order is refused.
 
     Unlike the `ctx_task` path this replaced, the name is a claim, not a proof:
     the log stamps what the writer passes. The rule catches a stray order, not a
@@ -3963,16 +3969,18 @@ Kopfvermerk und Statusrichtigstellung. Die Statuszeile sagt bis heute
 
     # lean-herdr: Auftragsweg auf `ctx_task` — Design v1.0
 
-    > **Ueberholt am 2026-09-03.** Die Abschnitte 3 bis 6 sind durch
+    > **Ueberholt am 2026-09-03.** Die Abschnitte 2 bis 7 sind durch
     > `2026-09-03-lean-herdr-auftragslog-design.md` ersetzt: der Auftragsweg
     > laeuft nicht mehr ueber `ctx_task`, sondern ueber ein eigenes
-    > Ereignis-Log. Abschnitt 1 (die Befunde B-1 bis B-4) und Abschnitt 8
+    > Ereignis-Log — auch die Entscheidung in Abschnitt 2 ist damit
+    > zurueckgenommen. Abschnitt 1 (die Befunde B-1 bis B-4) und Abschnitt 8
     > (Stand des Plans) bleiben gueltig.
 
     **Status:** implementiert und abgenommen (Plan
     `docs/lean-md/plans/2026-09-02-lean-herdr-ctx-task.lmd.md`, alle sieben
-    Tasks, zuletzt fortgeschrieben in `a631ab4`) — der Auftragsweg daraus ist
-    seit dem 2026-09-03 ersetzt.
+    Tasks, zuletzt fortgeschrieben in `baf25f6`; Abschnitt 8 dieser Spec zuletzt
+    in `a631ab4` fortgeschrieben) — der Auftragsweg daraus ist seit dem
+    2026-09-03 ersetzt.
     **Ersetzt:** den Bus-basierten Auftragsweg aus `2026-09-01-lean-herdr-design.md`
     (Tasks 6, 7, 9, 11, 12 des Implementierungsplans)
     **Anlass:** Stufe 3 (Task 11) hat den geplanten Weg im Betrieb widerlegt.

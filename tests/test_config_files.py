@@ -61,7 +61,7 @@ def test_wt_toml_has_the_pre_merge_gate_and_a_fixed_schema():
 def test_readme_names_every_runtime_dependency():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     for requirement in (
-        "uv", "worktrunk", "herdr-worktrunk", "fzf", "jq",
+        "uv", "python3", "worktrunk", "herdr-worktrunk", "fzf", "jq",
         "lean-ctx allow herdr", "lean-ctx allow wt",
         "lean-ctx allow bin/herdr-report",
         "wt config approvals", "warning:",
