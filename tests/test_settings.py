@@ -180,3 +180,42 @@ def test_the_shipped_template_changes_nothing(tmp_path):
     assert settings_for("builder", data) == RoleSettings(profile="standard")
     assert settings_for("reviewer", data) == RoleSettings(profile="standard")
     assert settings_for("orchestrator", data) == RoleSettings(profile="minimal")
+
+
+def test_the_llm_section_is_read_and_defaults_to_empty():
+    from lean_herdr.settings import LlmSettings, llm_settings
+
+    assert llm_settings({}) == LlmSettings()
+    assert llm_settings({"llm": {"model": "a/b"}}).model == "a/b"
+    assert llm_settings({"llm": {"prereview_effort": "medium"}}).effort == ""
+
+
+def test_the_llm_section_no_longer_breaks_the_whole_file():
+    """Before this task `[llm]` made EVERY herdr-dispatch call fail."""
+    from lean_herdr.settings import settings_for
+
+    assert settings_for("builder", {"llm": {"model": "a/b"}}).profile == "standard"
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"modell": "a/b"},
+        {"model": 5},
+        {"effort": "mininal"},
+        {"prereview_effort": "enormous"},
+    ],
+    ids=["unknown-key", "wrong-type", "typo-in-effort", "unknown-effort"],
+)
+def test_a_wrong_llm_value_is_loud(block):
+    from lean_herdr.settings import SettingsError, llm_settings
+
+    with pytest.raises(SettingsError):
+        llm_settings({"llm": block})
+
+
+def test_the_llm_section_must_be_a_table():
+    from lean_herdr.settings import SettingsError, llm_settings
+
+    with pytest.raises(SettingsError, match="not a table"):
+        llm_settings({"llm": "a/b"})

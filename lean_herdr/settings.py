@@ -67,8 +67,8 @@ _NO_BOOL = ("ratio", "ready_timeout_s")
 
 ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
-#: The only two keys the top level of the file may carry.
-ROOT_KEYS = ("default", "roles")
+#: The only three keys the top level of the file may carry.
+ROOT_KEYS = ("default", "roles", "llm")
 
 
 def read_settings(path: str | Path | None = None) -> dict[str, Any]:
@@ -137,7 +137,7 @@ def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
 
 
 def _check_root(table: Any) -> dict[str, Any]:
-    """Top level: only `[default]` and `[roles]`, and both must be tables.
+    """Top level: only `[default]`, `[roles]` and `[llm]`; `roles` a table.
 
     Reading just the two known sections would let `[defaults]`, `[role.x]` or
     a key without any section header evaporate in silence -- the operator gets
@@ -172,4 +172,76 @@ def settings_for(role: str, data: dict[str, Any] | None = None) -> RoleSettings:
     for block in (table.get("default"), (table.get("roles") or {}).get(role)):
         if block is not None:
             values = _overlay(values, block, role)
+    return values
+
+
+#: OpenRouter's reasoning levels. A typo would otherwise reach the
+#: endpoint verbatim, come back as an HTTP error, and be swallowed into
+#: a fallback commit message -- a wrong value that looks exactly like a
+#: missing key.
+EFFORTS = ("minimal", "low", "medium", "high")
+
+
+@dataclass(frozen=True)
+class LlmSettings:
+    """`[llm]` -- the commit generator and the pre-review judge.
+
+    Deliberately NOT part of RoleSettings. Those describe how a pane is
+    split and what a worker is called, and dispatch.py reads every one
+    of them. These four are read by llm.py alone -- and by a process
+    worktrunk starts in repositories this project does not own.
+
+    The empty string means "not set", so the resolution chain in llm.py
+    stays a plain first-non-empty. `None` would need a second spelling
+    for the same state and a second check at every level.
+    """
+
+    model: str = ""
+    prereview_model: str = ""
+    effort: str = ""
+    prereview_effort: str = ""
+
+
+LLM_ALLOWED = frozenset(f.name for f in fields(LlmSettings))
+
+
+def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
+    """`[llm]` out of the settings file. No section: every default.
+
+    Same strictness as settings_for(): an unknown key, a wrong type or
+    an effort level OpenRouter does not know is a SettingsError, never a
+    silent fallback. Whoever writes `effort = "mininal"` must not go
+    hunting for the bug in the model.
+
+    Note who catches it, because the two consumers differ on purpose:
+    `llm.file_settings()` swallows this and takes the defaults -- it
+    serves `bin/herdr-llm generate`, where a raise would abort the
+    commit worktrunk is in the middle of. `dispatch.main()` calls this
+    function directly and lets it through as `config_error:` -- there
+    the orchestrator reads the complaint. Without that second call site
+    a typo in `[llm]` would be silent everywhere.
+    """
+    table = _check_root({} if data is None else data)
+    block = table.get("llm")
+    if block is None:
+        return LlmSettings()
+    if not isinstance(block, dict):
+        raise SettingsError(
+            f"llm: section is not a table, but {type(block).__name__}"
+        )
+    unknown = sorted(set(block) - LLM_ALLOWED)
+    if unknown:
+        raise SettingsError(
+            f"llm: unknown keys {unknown}; allowed: {sorted(LLM_ALLOWED)}"
+        )
+    for key, value in block.items():
+        if not isinstance(value, str):
+            raise SettingsError(
+                f"llm.{key}: {value!r} is {type(value).__name__}, not str"
+            )
+    values = LlmSettings(**block)
+    for key in ("effort", "prereview_effort"):
+        level = getattr(values, key)
+        if level and level not in EFFORTS:
+            raise SettingsError(f"llm.{key}={level!r}, allowed: {list(EFFORTS)}")
     return values
