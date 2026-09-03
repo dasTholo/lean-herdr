@@ -102,8 +102,21 @@ state.
        `open_workspace_id`. Do not pipe the answer through another program.
        Nothing but `herdr`, `wt`, `git` and `bin/herdr-dispatch` is allowed
        to you.
-    3. herdr workspace close <workspace_id>
-    4. wt -C <path> merge main --yes
+    3. wt -C <path> step squash --stage none --yes
+    4. herdr workspace close <workspace_id>
+    5. wt -C <path> merge main --yes --no-commit
+
+**`--no-commit` skips the commit AND the squash.** That is why step 3 is not
+a luxury: it is the only place the squash still happens, and the squashed
+message is the one that lands in `main`. What `--no-commit` buys is step 5's
+refusal: if anything unfinished is left in the worktree, the merge stops
+before `main` moves at all.
+
+**If step 3 fails, the teardown ends there.** You close NO workspace and you
+merge NOT AT ALL — you escalate with `wt`'s own error text. This is the
+first step of the teardown that can fail before anything irreversible has
+happened, and the open workspace is wanted: it is exactly the state in which
+a human can look at what the squash would not take.
 
 **`-C <path>` is not optional, it is the safeguard.** `wt merge <X>` merges
 the CURRENT worktree INTO X. You stand in the main checkout: without `-C` you
@@ -137,7 +150,13 @@ useful ones. The history is in the order log; it does not belong here.
 ## Escalation
 
 Escalate on: twice `reject`, `agent_error` (no retry — a 401 is a 401 the
-second time too), a second `no_reply`, a failed `pre-merge` hook.
+second time too), a second `no_reply`, a failed `pre-merge` hook, a failed
+`wt step squash`, and `✗ Cannot merge with --no-commit`.
+
+`Cannot merge with --no-commit` means unfinished work is lying in the
+worktree. That is a finding for the human, not a mess to tidy away: you
+remove nothing, you commit nothing on the worker's behalf, and you name the
+file the message points at.
 
 First set the workspace token, then stop:
 
