@@ -6,6 +6,8 @@ exists.
 """
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -71,6 +73,38 @@ class SpyRunner:
             raise self.raises
         out = "" if self.reply is None else json.dumps(self.reply)
         return Completed(returncode=self.returncode, stdout=out)
+
+
+#: What CPython raises when `text=True` meets a byte that is not UTF-8:
+#: a ValueError, which is neither an OSError nor a SubprocessError. Built
+#: by hand here so it can be injected; that a real subprocess raises
+#: exactly this shape is measured in the test right below the class.
+DECODE_ERROR = UnicodeDecodeError(
+    "utf-8", b"caf\xe9", 3, 4, "invalid continuation byte"
+)
+
+
+class DecodingRunner:
+    """A `subprocess.run` double that decodes the way the real one does.
+
+    `text=True` hands the child's bytes to a decoder, and the CALLER's
+    `errors=` decides what a foreign byte costs: the default `strict`
+    raises, `replace` yields `�`. Recording `errors` is the whole
+    point of the double -- it is the keyword the production code has to
+    send, and a `**kwargs`-swallowing double could not tell whether it did.
+    """
+
+    def __init__(self, raw: bytes, returncode: int = 0):
+        self.raw = raw
+        self.returncode = returncode
+        self.errors: list[str | None] = []
+
+    def __call__(self, cmd, **kwargs):
+        self.errors.append(kwargs.get("errors"))
+        return Completed(
+            returncode=self.returncode,
+            stdout=self.raw.decode("utf-8", kwargs.get("errors") or "strict"),
+        )
 
 
 class _Stdin:
@@ -444,8 +478,14 @@ def test_a_verdict_further_down_does_not_count(no_store):
         ),
         ("diff", SpyRunner(raises=OSError("no curl")), "no_answer"),
         ("diff", SpyRunner(answer("I have no opinion")), "unparsable_answer"),
+        # A ValueError, and neither an OSError nor a SubprocessError: it
+        # walked through both handlers and left this layer as a raise --
+        # which the wait mode reported as `dispatch_crashed` on a task
+        # that had completed, and the manual CLI as exit 1, the code that
+        # is supposed to mean the model rejected.
+        ("diff", SpyRunner(raises=DECODE_ERROR), "no_answer"),
     ],
-    ids=["empty", "too-large", "no-curl", "unparsable"],
+    ids=["empty", "too-large", "no-curl", "unparsable", "undecodable"],
 )
 def test_prereview_never_rejects_when_its_own_machinery_fails(diff, spy, reason, no_store):
     ruling, note = llm.prereview(
@@ -679,6 +719,88 @@ def test_a_failing_wt_diff_says_so_and_judges_nothing(monkeypatch, capsys):
     captured = capsys.readouterr()
     assert captured.out == "skipped\ndiff_failed\n"
     assert "step diff` failed" in captured.err
+
+
+def test_a_strict_decode_raises_a_value_error_no_handler_here_names():
+    """Not a double -- the premise, measured on a real subprocess.
+
+    `wt step diff` carries untracked files, so one latin-1 file lying in
+    the tree puts a foreign byte on that stdout. Under `text=True` alone
+    CPython raises UnicodeDecodeError, and that is a ValueError: it walks
+    straight through `except (OSError, subprocess.SubprocessError)`.
+    """
+    cmd = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'a\\xe9b')"]
+    with pytest.raises(ValueError) as excinfo:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
+    raised = excinfo.value
+    assert not isinstance(raised, OSError)
+    assert not isinstance(raised, subprocess.SubprocessError)
+    proc = subprocess.run(
+        cmd, capture_output=True, text=True, errors="replace", timeout=30,
+        check=False,
+    )
+    assert proc.stdout == "a�b", "errors=replace is what keeps the bytes coming"
+
+
+def test_the_diff_is_fetched_with_a_lenient_decode():
+    """A foreign byte in the branch may not cost the branch its ruling."""
+    spy = DecodingRunner(b"diff --git a/x b/x\n+caf\xe9\n")
+    assert llm.wt_diff("/w", runner=spy) == "diff --git a/x b/x\n+caf�\n"
+    assert spy.errors == ["replace"]
+
+
+def test_the_model_call_is_made_with_a_lenient_decode(no_store):
+    """`curl -sS` mixes its own stderr in, and that is not UTF-8 by promise."""
+    spy = DecodingRunner(json.dumps(answer("feat(x): y")).encode("utf-8"))
+    got = llm.complete(
+        "prompt", effort="minimal", runner=spy,
+        env={llm.KEY_ENV: "k"}, auth_path=no_store,
+    )
+    assert got == "feat(x): y"
+    assert spy.errors == ["replace"]
+
+
+def test_a_foreign_byte_in_the_diff_is_judged_and_not_crashed_on(no_store):
+    """The finding end to end: a `�` in the prompt, and a real ruling out.
+
+    Before this, the UnicodeDecodeError left `wt_diff()`, ran through
+    `prereview_result()` into the wait mode's collecting `except`, and
+    turned a task that had actually completed into `dispatch_crashed`.
+    """
+    sent = []
+
+    def runner(cmd, **kwargs):
+        errors = kwargs.get("errors")
+        if cmd[:1] == ["wt"]:
+            raw = b"diff --git a/x b/x\n+caf\xe9\n"
+            return Completed(stdout=raw.decode("utf-8", errors or "strict"))
+        body = Path(cmd[cmd.index("--data-binary") + 1].removeprefix("@"))
+        sent.append(body.read_text(encoding="utf-8"))
+        return Completed(stdout=json.dumps(answer("PREREVIEW: reject\nno test")))
+
+    got = llm.prereview_result(
+        "an order", branch="feat/x",
+        worktree_list=worktrees({"branch": "feat/x", "path": "/w"}),
+        runner=runner, settings=NO_FILE, env={llm.KEY_ENV: "k"},
+        auth_path=no_store,
+    )
+    assert got == {"prereview": "reject", "prereview_note": "no test"}
+    assert "caf�" in json.loads(sent[0])["messages"][0]["content"]
+
+
+def test_a_decode_error_the_replacement_missed_is_skipped_not_a_crash(no_store):
+    """The belt beside the braces of `errors="replace"`.
+
+    Whatever else this layer can raise, it owes its callers `skipped` --
+    never a rejection and never a traceback. The wait mode would report
+    the traceback as a crashed dispatch, the CLI as exit 1, and exit 1
+    means one thing only: the model rejected the branch.
+    """
+    assert llm.wt_diff("/x", runner=SpyRunner(raises=DECODE_ERROR)) is None
+    assert llm.complete(
+        "prompt", effort="minimal", runner=SpyRunner(raises=DECODE_ERROR),
+        env={llm.KEY_ENV: "k"}, auth_path=no_store,
+    ) is None
 
 
 @pytest.mark.integration

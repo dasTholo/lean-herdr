@@ -567,9 +567,17 @@ this codebase keeps catching.
                 ["curl", "-sS", "--config", str(config), "--data-binary", f"@{payload}"],
                 capture_output=True,
                 text=True,
+                # `text=True` dekodiert per Vorgabe STRIKT, und `-sS` mischt
+                # curls eigene Fehlerzeile in das, was wir lesen. Ein einziges
+                # Byte, das kein UTF-8 ist, wuerde UnicodeDecodeError aus einer
+                # Funktion werfen, deren ganzer Vertrag "wirft nie" lautet.
+                errors="replace",
                 timeout=timeout_s,
             )
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, ValueError):
+            # ValueError ist der Guertel: UnicodeDecodeError ist einer, und er
+            # ist weder OSError noch SubprocessError -- mit diesen beiden
+            # allein lief er hier heraus, und aus `main()` als exit 1.
             return None
         finally:
             for path in (config, payload):
@@ -1705,15 +1713,29 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         since branching (committed, staged, unstaged, untracked)" -- exactly
         the set `wt merge` would take. `git diff` alone would miss the
         committed part, `git diff main...` the untracked one.
+
+        Untracked is also why the decode is lenient: a single latin-1 file
+        lying in the tree puts a byte on this stdout that `text=True` alone
+        refuses, and refusing is the one answer this layer may never give.
         """
         try:
             proc = runner(
                 ["wt", "-C", str(path), "step", "diff"],
                 capture_output=True,
                 text=True,
+                # Ein fremdes Byte wird `�` und wird mit dem Rest beurteilt.
+                # Striktes Dekodieren wuerde stattdessen hier
+                # UnicodeDecodeError werfen -- ein ValueError, der durch den
+                # Handler darunter hindurchlief und den Wartemodus als
+                # `dispatch_crashed` erreichte, auf einem Auftrag, der
+                # `completed` war.
+                errors="replace",
                 timeout=timeout_s,
             )
-        except (OSError, subprocess.SubprocessError):
+        except (OSError, subprocess.SubprocessError, ValueError):
+            # ValueError fuer alles, was `errors="replace"` nicht abfaengt:
+            # ein Fehler dieser Maschinerie schuldet dem Aufrufer `skipped`,
+            # nie eine Ablehnung und nie einen Traceback.
             return None
         return proc.stdout if proc.returncode == 0 else None
 

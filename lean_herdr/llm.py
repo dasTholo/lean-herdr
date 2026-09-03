@@ -309,9 +309,17 @@ def complete(
             ["curl", "-sS", "--config", str(config), "--data-binary", f"@{payload}"],
             capture_output=True,
             text=True,
+            # `text=True` decodes STRICTLY by default, and `-sS` mixes
+            # curl's own error line into what we read. One byte that is
+            # not UTF-8 would raise UnicodeDecodeError out of a function
+            # whose whole contract is "never raises".
+            errors="replace",
             timeout=timeout_s,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # ValueError is the belt: UnicodeDecodeError is one, and it is
+        # neither an OSError nor a SubprocessError -- with those two
+        # alone it walked out of here, and out of `main()`, as exit 1.
         return None
     finally:
         for path in (config, payload):
@@ -451,15 +459,28 @@ def wt_diff(
     since branching (committed, staged, unstaged, untracked)" -- exactly
     the set `wt merge` would take. `git diff` alone would miss the
     committed part, `git diff main...` the untracked one.
+
+    Untracked is also why the decode is lenient: a single latin-1 file
+    lying in the tree puts a byte on this stdout that `text=True` alone
+    refuses, and refusing is the one answer this layer may never give.
     """
     try:
         proc = runner(
             ["wt", "-C", str(path), "step", "diff"],
             capture_output=True,
             text=True,
+            # A foreign byte becomes `�` and gets judged with the
+            # rest. Strict decoding would raise UnicodeDecodeError here
+            # instead -- a ValueError, so it passed through the handler
+            # below and reached the wait mode as `dispatch_crashed` on a
+            # task that had completed.
+            errors="replace",
             timeout=timeout_s,
         )
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
+        # ValueError for whatever `errors="replace"` does not cover: a
+        # failure of this machinery owes the caller `skipped`, never a
+        # rejection and never a traceback.
         return None
     return proc.stdout if proc.returncode == 0 else None
 
