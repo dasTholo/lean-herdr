@@ -139,7 +139,7 @@ def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
 def _check_root(table: Any) -> dict[str, Any]:
     """Top level: only `[default]`, `[roles]` and `[llm]`; `roles` a table.
 
-    Reading just the two known sections would let `[defaults]`, `[role.x]` or
+    Reading just the known sections would let `[defaults]`, `[role.x]` or
     a key without any section header evaporate in silence -- the operator gets
     plain defaults and never learns that the file did nothing. The type check
     keeps a wrong `roles` an error the caller can catch, not an AttributeError.
