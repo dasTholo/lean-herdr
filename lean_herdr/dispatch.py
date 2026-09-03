@@ -30,7 +30,9 @@ from lean_herdr.herdr import Herdr
 from lean_herdr.join import resolve_agent_id
 from lean_herdr.leanctx import LeanCtx
 
-# The write path lives next door since dispatch.py crossed 800 LOC (plan 3g).
+# The write path lives next door since this file grew past comfort (plan 3g).
+# Not because it crossed the 800-production-LOC ceiling -- it never has; the
+# split happened at 371 production LOC and the file has been readable since.
 # `order_result` went with it -- both sides need that result shape, and
 # keeping it here would have made the import circular. Public, not
 # `_await_result`: a name imported across a module boundary must not claim

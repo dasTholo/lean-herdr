@@ -151,10 +151,20 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
   Repository in `sh: not found` (exit 127) — und das ist nach 2.3 fatal. Der
   Generator ist repo-agnostisch, er formatiert nur, was auf stdin ankommt.
 - **Dateigröße:** kein `lean_herdr/`-Modul über 800 produktive LOC (Ziel 600).
-  `dispatch.py` steht bei **762**; Task 6 misst nach und meldet das Ergebnis,
-  statt es zu schätzen. Reißt die Grenze, wandert **nicht** die Grenze, sondern
-  `build_parser()` / `missing_flags()` / `main()` nach `lean_herdr/dispatchcli.py`
-  — derselbe Schnitt, den `ordercmd.py` schon einmal bekommen hat.
+  `dispatch.py` steht bei **762 physischen** Zeilen — das ist NICHT das Maß der
+  Regel. Task 6 misst nach und meldet das Ergebnis, statt es zu schätzen.
+  Reißt die Grenze, wandert **nicht** die Grenze, sondern `build_parser()` /
+  `missing_flags()` / `main()` nach `lean_herdr/dispatchcli.py` — derselbe
+  Schnitt, den `ordercmd.py` schon einmal bekommen hat.
+
+  **Betreiber-Entscheidung vom 2026-09-03, nachdem Task 6 gemessen hat:**
+  produktive LOC sind das Maß (physische Zeilen minus Leerzeilen, Kommentare,
+  Docstrings) — so, wie AGENTS.md es immer gemeint hat. Gemessen: `dispatch.py`
+  815 physisch / **537 produktiv**, `llm.py` 648 / **334**. Beide liegen unter
+  dem Ziel von 600; **der Schnitt nach `dispatchcli.py` entfällt.** Zur
+  Einordnung: der historische `ordercmd.py`-Schnitt geschah bei 574 physisch /
+  371 produktiv — `dispatch.py` hat 800 nach keinem der beiden Maße je
+  überschritten, anders als sein eigener Kommentar behauptete.
 - **Non-Goals** (Ablehnungsgrund im Review, kein Versäumnis): kein eigenes
   Commit-Template (worktrunk rendert, wir hängen nur `template-append` an); kein
   blockierendes Modell-Urteil vor dem Merge (der pre-merge-Hook bleibt das Tor);

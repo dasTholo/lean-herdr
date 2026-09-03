@@ -7,7 +7,11 @@
 
 
 - **No Brief-/Report-Files**: ctx_session
-- **File size — no `lean_herdr/` file above 800 *production* LOC** (600 is the target)
+- **File size — no `lean_herdr/` file above 800 *production* LOC** (600 is the target).
+  Production LOC = physical lines minus blank, comment and docstring lines. Measure it,
+  never `wc -l`: the two diverge widely in this tree — on 2026-09-03 `dispatch.py` stood
+  at 815 physical against 537 production, `llm.py` at 648 against 334. The rule has
+  always meant the second number.
 
 ## Language
 
