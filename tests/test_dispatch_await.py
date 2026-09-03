@@ -16,7 +16,7 @@ from lean_herdr.dispatch import (
     verdict,
 )
 from lean_herdr.herdr import Herdr
-from lean_herdr.orderlog import append, read_events
+from lean_herdr.orderlog import append, read_events, state_dir
 from lean_herdr.orders import fold, message_from
 from tests.doubles import FakeProc, which_stub
 
@@ -314,6 +314,23 @@ def test_an_unknown_task_id_neither_waits_nor_rings(herdr, tmp_path):
     assert not proc.called_with("agent", "prompt")
 
 
+def test_await_surfaces_a_broken_state_dir_before_the_loop(monkeypatch, tmp_path, herdr):
+    """`state_dir(root)` is resolved ONCE, before the loop (dispatch.py:396) --
+    its own OrderLogError (a second clone under the same basename, the way
+    test_orderlog.py's test_a_second_clone_under_the_same_name_is_an_error_
+    not_a_dodge triggers it) must surface as the await result, never as a
+    crash and never as a silent no_reply."""
+    monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(tmp_path / "data"))
+    state_dir(tmp_path / "one" / "repo")
+    h, _ = herdr
+    result = await_task(
+        AwaitRequest(role="builder", kind="claude", task_id=TASK_ID, timeout_ms=1000),
+        herdr=h, root=tmp_path / "two" / "repo", sleep=lambda _s: None,
+    )
+    assert result["ok"] is False
+    assert result["error"].startswith("state_root_mismatch")
+
+
 def test_an_unknown_state_never_counts_as_success(herdr, tmp_path):
     """A format change in the log runs into the timeout, not into an ok."""
     clock = iter([0.0, 0.0, 99.0])
@@ -569,3 +586,143 @@ def test_the_modes_do_not_take_each_others_flags(argv, expected, capsys):
     answer = json.loads(capsys.readouterr().out)
     assert answer["ok"] is False
     assert expected in answer["error"]
+
+
+def test_answer_of_an_unknown_order_is_not_found(tmp_path):
+    """cancel_order's twin (test_cancel_of_an_unknown_order_is_not_found)
+    was already covered; answer_order's own task_not_found branch
+    (ordercmd.py:115) was not."""
+    result = answer_order("o-nope", "x", root=ROOT, orders_dir=tmp_path)
+    assert result["ok"] is False
+    assert result["error"] == "task_not_found"
+
+
+def test_create_order_refuses_a_predecessor_with_a_broken_chain(tmp_path):
+    """A tampered `--after` log must come back as the documented error line
+    -- never as task_not_found and never as a crash. `read_events(req.after,
+    ...)` raises before create_order() ever reaches its own append()."""
+    log(tmp_path, created(), ("working", WORKER, {}))
+    first, _second = sorted(
+        p for p in (tmp_path / TASK_ID / "events").iterdir() if p.suffix == ".json"
+    )
+    first.unlink()
+    result = create_order(
+        OrderRequest(to_agent=WORKER, message="b", after=TASK_ID),
+        root=ROOT, orders_dir=tmp_path,
+    )
+    assert result["ok"] is False
+    assert result["error"].startswith("chain_broken")
+
+
+def test_answer_order_surfaces_a_broken_chain(tmp_path):
+    """A destroyed log must not look like 'nothing to do' -- the write
+    path's own twin of test_a_broken_chain_is_never_success_by_silence."""
+    log(
+        tmp_path, created(), ("working", WORKER, {}),
+        ("input-required", WORKER, {"message": "which branch?"}),
+    )
+    first, *_rest = sorted(
+        p for p in (tmp_path / TASK_ID / "events").iterdir() if p.suffix == ".json"
+    )
+    first.unlink()
+    result = answer_order(TASK_ID, "reply", root=ROOT, orders_dir=tmp_path)
+    assert result["ok"] is False
+    assert result["error"].startswith("chain_broken")
+
+
+def test_cancel_order_surfaces_a_broken_chain(tmp_path):
+    log(tmp_path, created(), ("working", WORKER, {}))
+    first, _second = sorted(
+        p for p in (tmp_path / TASK_ID / "events").iterdir() if p.suffix == ".json"
+    )
+    first.unlink()
+    result = cancel_order(TASK_ID, "abort", root=ROOT, orders_dir=tmp_path)
+    assert result["ok"] is False
+    assert result["error"].startswith("chain_broken")
+
+
+@pytest.fixture
+def main_root(tmp_path, monkeypatch):
+    """Isolate main()'s own state_dir() resolution under tmp_path.
+
+    main() never takes an `orders_dir` -- create_order/answer_order/
+    cancel_order fall back to `state_dir(root)`, which layers
+    `lean_ctx_data_dir()` under `canonical_root()`. Pinning both, the same
+    way test_the_build_mode_reads_the_registry_the_data_dir_points_at pins
+    the data dir, is the only way to drive main() end to end without ever
+    touching the real lean-ctx install.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    return root
+
+
+def _one_json_line(capsys) -> dict:
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    return json.loads(lines[0])
+
+
+def test_main_routes_order_into_create_order(main_root, capsys):
+    """The headline capability, driven through main() end to end: no test
+    exercised dispatch.py's routing into create_order()/answer_order()/
+    cancel_order() before (dispatch.py:635/645/649) -- every prior main()
+    test stopped inside missing_flags(). This one writes a real event and
+    reads it back the way the orchestrator would."""
+    code = main(["order", "--to", WORKER, "--message", "build the thing"])
+    assert code == 0
+    result = _one_json_line(capsys)
+    assert result["ok"] is True
+    order = fold(read_events(result["task_id"], orders=state_dir(main_root)))
+    assert order.to_agent == WORKER
+    assert order.from_agent == ORCHESTRATOR_AGENT
+    assert order.description == "build the thing"
+
+
+def test_main_routes_from_and_after_through_to_the_event(main_root, capsys):
+    """`--from` and `--after` are the two order-only flags the headline
+    test above does not touch -- both must reach the written event."""
+    main(["order", "--to", WORKER, "--message", "a"])
+    first = _one_json_line(capsys)["task_id"]
+
+    code = main([
+        "order", "--to", WORKER, "--message", "b",
+        "--after", first, "--from", "reviewer-feat-x",
+    ])
+    assert code == 0
+    result = _one_json_line(capsys)
+    order = fold(read_events(result["task_id"], orders=state_dir(main_root)))
+    assert order.from_agent == "reviewer-feat-x"
+    assert order.after == first
+
+
+def test_main_routes_answer_into_answer_order(main_root, capsys):
+    main(["order", "--to", WORKER, "--message", "a"])
+    task = _one_json_line(capsys)["task_id"]
+    append(
+        task, "input-required", WORKER, {"message": "which branch?"},
+        orders=state_dir(main_root),
+    )
+
+    code = main(["answer", "--task-id", task, "--message", "feat/x, off main"])
+    assert code == 0
+    result = _one_json_line(capsys)
+    assert result["ok"] is True
+    order = fold(read_events(task, orders=state_dir(main_root)))
+    assert order.state == "working"
+    assert message_from(order, ORCHESTRATOR_AGENT) == "feat/x, off main"
+
+
+def test_main_routes_cancel_into_cancel_order(main_root, capsys):
+    main(["order", "--to", WORKER, "--message", "a"])
+    task = _one_json_line(capsys)["task_id"]
+
+    code = main(["cancel", "--task-id", task, "--message", "run broke off"])
+    assert code == 0
+    result = _one_json_line(capsys)
+    assert result["ok"] is True
+    order = fold(read_events(task, orders=state_dir(main_root)))
+    assert order.state == "canceled"
+    assert message_from(order, ORCHESTRATOR_AGENT) == "run broke off"

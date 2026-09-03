@@ -1270,8 +1270,8 @@ new_task_id, append, read_events}`, `lean_herdr.orders.{Order, fold, is_terminal
 message_from}`.
 **Interfaces:** Produces `LOG_COMMANDS`, `OrderRequest(to_agent, message, after,
 actor)`, `create_order(req, *, root, orders_dir=None, task_id=None) -> dict`,
-`answer_order(task_id, message, *, root, orders_dir=None, actor="orchestrator") -> dict`,
-`cancel_order(task_id, message, *, root, orders_dir=None, actor="orchestrator") -> dict`.
+`answer_order(task_id, message, *, root, orders_dir=None, actor=ORCHESTRATOR_AGENT) -> dict`,
+`cancel_order(task_id, message, *, root, orders_dir=None, actor=ORCHESTRATOR_AGENT) -> dict`.
 Der Aufbau-Modus gibt zusaetzlich `agent` zurueck. `await_task` tauscht
 `tasks_path=` gegen `orders_dir=`. Entfernt den Import aus `lean_herdr.tasks` und
 den Fehlercode `tasks_unreadable`.
@@ -1906,7 +1906,7 @@ Neu — der Schreibpfad, der bisher nicht testbar war:
         assert result["task_id"].startswith("o-")
         order = fold(read_events(result["task_id"], orders=tmp_path))
         assert order.to_agent == WORKER
-        assert order.from_agent == "orchestrator"
+        assert order.from_agent == ORCHESTRATOR_AGENT
         assert order.description == "build the order log"
         assert order.state == "created"
 
@@ -1941,7 +1941,7 @@ Neu — der Schreibpfad, der bisher nicht testbar war:
         assert result["ok"] is True
         order = fold(read_events(task, orders=tmp_path))
         assert order.state == "working", "the order returns to working on its own"
-        assert message_from(order, "orchestrator") == "feat/x, off main"
+        assert message_from(order, ORCHESTRATOR_AGENT) == "feat/x, off main"
 
 
     def test_an_answer_to_a_question_nobody_asked_is_refused(tmp_path):
@@ -2081,6 +2081,91 @@ deckt den Pfad mit ab:
             Herdr(runner=proc), "builder",
             registry_path=broken, timeout_s=0, interval_s=0, sleep=lambda _s: None,
         ) is None
+
+Nachtrag aus der Zwei-Verdikt-Review von Task 3: main()s Routing in
+`create_order`/`answer_order`/`cancel_order` (dispatch.py:635/645/649) war
+ungetestet — jeder bisherige `main()`-Fall blieb innerhalb von
+`missing_flags()` stecken (I1). Und jedes `except OrderLogError` des
+Schreibpfads war es ebenso, bis auf `cancel_order`s bereits getestetes
+Zwilling `task_not_found` (I2). Beide schliessen in
+`tests/test_dispatch_await.py`, mit denselben Werkzeugen wie oben: `log()`
+und ein geloeschtes Ereignis fuer eine gebrochene Kette, `state_dir()` fuer
+den einzigen Fall, den kein `orders_dir=tmp_path` erreicht.
+
+    def test_await_surfaces_a_broken_state_dir_before_the_loop(monkeypatch, tmp_path, herdr):
+        """`state_dir(root)` is resolved ONCE, before the loop (dispatch.py:396) --
+        its own OrderLogError (a second clone under the same basename, the way
+        test_orderlog.py's test_a_second_clone_under_the_same_name_is_an_error_
+        not_a_dodge triggers it) must surface as the await result, never as a
+        crash and never as a silent no_reply."""
+        monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(tmp_path / "data"))
+        state_dir(tmp_path / "one" / "repo")
+        h, _ = herdr
+        result = await_task(
+            AwaitRequest(role="builder", kind="claude", task_id=TASK_ID, timeout_ms=1000),
+            herdr=h, root=tmp_path / "two" / "repo", sleep=lambda _s: None,
+        )
+        assert result["ok"] is False
+        assert result["error"].startswith("state_root_mismatch")
+
+
+    def test_answer_of_an_unknown_order_is_not_found(tmp_path):
+        result = answer_order("o-nope", "x", root=ROOT, orders_dir=tmp_path)
+        assert result["ok"] is False
+        assert result["error"] == "task_not_found"
+
+
+    def test_create_order_refuses_a_predecessor_with_a_broken_chain(tmp_path):
+        """A tampered `--after` log must come back as the documented error line
+        -- never as task_not_found and never as a crash."""
+        log(tmp_path, created(), ("working", WORKER, {}))
+        first, _second = sorted(
+            p for p in (tmp_path / TASK_ID / "events").iterdir() if p.suffix == ".json"
+        )
+        first.unlink()
+        result = create_order(
+            OrderRequest(to_agent=WORKER, message="b", after=TASK_ID),
+            root=ROOT, orders_dir=tmp_path,
+        )
+        assert result["ok"] is False
+        assert result["error"].startswith("chain_broken")
+
+Die gleiche Zeile fuer `answer_order` und `cancel_order`, jedes an seiner
+eigenen Kette (`ordercmd.py:129` und `:167`) -- im Aufbau identisch zu
+`test_a_broken_chain_is_never_success_by_silence` oben.
+
+Und der Kern von I1, `main()` einmal ganz durchgetrieben statt an
+`missing_flags()` gestoppt -- mit `LEAN_CTX_DATA_DIR` und
+`dispatch.canonical_root` gepinnt, denn `main()` reicht `orders_dir` nirgends
+durch:
+
+    @pytest.fixture
+    def main_root(tmp_path, monkeypatch):
+        """Isolate main()'s own state_dir() resolution under tmp_path."""
+        root = tmp_path / "repo"
+        root.mkdir()
+        monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(tmp_path / "data"))
+        monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+        return root
+
+
+    def test_main_routes_order_into_create_order(main_root, capsys):
+        code = main(["order", "--to", WORKER, "--message", "build the thing"])
+        assert code == 0
+        lines = capsys.readouterr().out.strip().splitlines()
+        assert len(lines) == 1
+        result = json.loads(lines[0])
+        assert result["ok"] is True
+        order = fold(read_events(result["task_id"], orders=state_dir(main_root)))
+        assert order.to_agent == WORKER
+        assert order.from_agent == ORCHESTRATOR_AGENT
+        assert order.description == "build the thing"
+
+`--from` und `--after` desselben Kommandos, `--task-id`/`--message` bei
+`answer` und `cancel` -- je ein weiterer Fall `test_main_routes_…`, byte-genau
+wie oben implementiert, liest das Ergebnis ueber `state_dir(main_root)`
+zurueck und deckt so die komplette Verdrahtung `main()` → dataclass →
+Ereignis ab, statt sie nur an `create_order()` direkt zu pruefen.
 
 ### 3g — die Dateigroesse messen, nicht schaetzen
 
