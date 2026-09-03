@@ -234,6 +234,24 @@ def test_a_directory_that_is_no_repository_costs_the_defaults(tmp_path, capsys):
     assert "ignoring the settings file" in capsys.readouterr().err
 
 
+def test_an_undecodable_repo_root_costs_the_defaults_not_the_run(monkeypatch, capsys):
+    """The last stretch of the same path F1 closed one layer further in.
+
+    `canonical_root()` runs `git rev-parse` with `text=True` and no
+    `errors=`, so a non-UTF-8 byte in the repository PATH decodes strictly
+    and raises UnicodeDecodeError -- a ValueError, which neither OSError
+    nor SubprocessError names. Uncaught it leaves `bin/herdr-llm
+    prereview` as a traceback and exit 1, and exit 1 is this CLI's word
+    for "the model rejected".
+    """
+    def boom(*_a, **_kw):
+        raise UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid start byte")
+
+    monkeypatch.setattr(llm, "canonical_root", boom)
+    assert llm.file_settings() == LlmSettings()
+    assert "ignoring the settings file" in capsys.readouterr().err
+
+
 def test_a_missing_file_is_the_normal_case_and_says_nothing(tmp_path, capsys):
     assert llm.file_settings(tmp_path) == LlmSettings()
     assert capsys.readouterr().err == "", "an absent file is not a complaint"
