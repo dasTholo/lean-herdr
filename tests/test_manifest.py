@@ -93,6 +93,7 @@ def test_the_package_parses_on_the_python3_the_manifest_may_meet():
         *sorted((ROOT / "lean_herdr").glob("*.py")),
         ROOT / "bin" / "herdr-dispatch",
         ROOT / "bin" / "herdr-report",
+        ROOT / "bin" / "herdr-llm",
     ]
     offenders = []
     for path in sources:

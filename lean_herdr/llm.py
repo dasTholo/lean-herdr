@@ -17,6 +17,7 @@ a CLI, not a plugin handler.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from typing import Any
 
 from lean_herdr.bus import BusError, canonical_root
 from lean_herdr.settings import (
+    EFFORTS,
     SETTINGS_PATH,
     LlmSettings,
     SettingsError,
@@ -345,3 +347,68 @@ def generate(
         auth_path=auth_path,
     )
     return answer or fallback_message(prompt)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        prog="herdr-llm",
+        description="Commit messages from a small model -- worktrunk's generator.",
+    )
+    p.add_argument("mode", choices=("generate",))
+    p.add_argument(
+        "--model", default=None,
+        help="beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
+             ".config/lean-herdr.toml, then the built-in default",
+    )
+    p.add_argument(
+        # EFFORTS, not a second spelling of the same four words: the
+        # settings validator rejects anything outside it, and two lists
+        # would disagree the day a fifth level shows up.
+        "--effort", default=None, choices=EFFORTS,
+        help="beats [llm].effort, then the built-in default; "
+             "no environment level exists",
+    )
+    p.add_argument("--timeout", type=float, default=None, help="seconds")
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    """`generate` reads stdin, writes stdout and ALWAYS exits 0.
+
+    Always, including on an unexpected exception: worktrunk treats a
+    failing `commit.generation.command` as fatal and does not commit
+    (spec 2.3). The one thing that may still end this process with a
+    non-zero code is argparse's own usage error -- a typo in the
+    operator's user config, which is a state that SHOULD be loud, and
+    which shows up on the very first commit.
+    """
+    args = build_parser().parse_args(argv)
+    if args.mode == "generate":
+        prompt = ""
+        try:
+            if not api_key():
+                print(
+                    f"herdr-llm: no ${KEY_ENV} and no opencode key store -- "
+                    "falling back to the file names",
+                    file=sys.stderr,
+                )
+            prompt = sys.stdin.read()
+            # `None` for model and effort, not the constants: generate()
+            # owns the precedence, and passing a constant here would put
+            # the CLI's silence ABOVE the settings file.
+            message = generate(
+                prompt,
+                model=args.model,
+                effort=args.effort,
+                timeout_s=args.timeout or GENERATE_TIMEOUT_S,
+            )
+        except Exception as exc:  # noqa: BLE001 -- a failure would abort the commit
+            print(f"herdr-llm: {exc}", file=sys.stderr)
+            message = fallback_message(prompt)
+        sys.stdout.write(message.rstrip("\n") + "\n")
+        return 0
+    # Unreachable while `choices` names one mode -- and a placeholder:
+    # task 7 replaces exactly this line with the prereview branch. Until
+    # then it is a raise rather than a fall-through, so a second mode
+    # added without a branch cannot exit 0 with an empty stdout.
+    raise AssertionError(f"unhandled mode: {args.mode}")

@@ -71,6 +71,16 @@ class SpyRunner:
         return Completed(returncode=self.returncode, stdout=out)
 
 
+class _Stdin:
+    """A stdin double -- `monkeypatch.setattr(sys, "stdin", ...)`."""
+
+    def __init__(self, text: str):
+        self._text = text
+
+    def read(self) -> str:
+        return self._text
+
+
 @pytest.fixture
 def no_store(tmp_path):
     """An auth.json that does not exist -- the empty-machine case."""
@@ -287,3 +297,39 @@ def test_generate_passes_the_measured_effort_by_default(no_store):
         settings=NO_FILE,
     )
     assert json.loads(spy.bodies[0])["reasoning"] == {"effort": "minimal"}
+
+
+def test_generate_writes_one_line_and_exits_zero(monkeypatch, capsys, tmp_path):
+    store = tmp_path / "auth.json"
+    store.write_text(json.dumps({"openrouter": {"key": "k"}}))
+    monkeypatch.setattr(llm, "AUTH_PATH", store)
+    monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
+    monkeypatch.setattr(
+        llm, "generate", lambda *a, **kw: "feat(llm): add the generator"
+    )
+    assert llm.main(["generate"]) == 0
+    assert capsys.readouterr().out == "feat(llm): add the generator\n"
+
+
+def test_generate_exits_zero_even_when_everything_breaks(monkeypatch, capsys, tmp_path):
+    """The contract worktrunk forces on us: text out, exit 0, always."""
+    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
+
+    def boom(*_a, **_kw):
+        raise RuntimeError("the network is on fire")
+
+    monkeypatch.setattr(llm, "generate", boom)
+    assert llm.main(["generate"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "Changes to lean_herdr/llm.py, tests/test_llm.py\n"
+    assert "the network is on fire" in captured.err
+
+
+def test_a_missing_key_says_so_on_stderr(monkeypatch, capsys, tmp_path):
+    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(llm.os, "environ", {})
+    monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
+    monkeypatch.setattr(llm, "generate", lambda *a, **kw: "x")
+    assert llm.main(["generate"]) == 0
+    assert "falling back to the file names" in capsys.readouterr().err
