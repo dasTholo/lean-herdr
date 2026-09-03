@@ -76,6 +76,11 @@ def llm_runner(verdict_line: str, monkeypatch, tmp_path):
     store = tmp_path / "auth.json"
     store.write_text(json.dumps({"openrouter": {"key": "k"}}))
     monkeypatch.setattr("lean_herdr.llm.AUTH_PATH", store)
+    # Empty, so the store decides. Left alone, these tests read the real
+    # $OPENROUTER_API_KEY of whatever machine runs them -- and one holding
+    # a `"`, a backslash or a newline makes complete() refuse the key, which
+    # would turn both rulings into `skipped` on that machine alone.
+    monkeypatch.setattr("lean_herdr.llm.os.environ", {})
 
     def runner(cmd, **_kw):
         if cmd[:1] == ["wt"]:

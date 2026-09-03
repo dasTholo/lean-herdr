@@ -445,6 +445,32 @@ def test_a_broken_config_is_a_config_error_in_await_mode_too(
     assert "direction" in result["error"], result["error"]
 
 
+def test_a_broken_llm_block_is_a_config_error_too(monkeypatch, tmp_path, capsys):
+    """`[llm]` is validated in main() beside `[default]`, for EVERY command.
+
+    The commit generator swallows a broken file -- there a wrong value must
+    not cost a commit. Here it has a reader, so it stays loud, and the
+    operator learns of the typo on the next dispatch rather than through a
+    pre-review that is silently `skipped` forever.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, '[llm]\neffort = "enormous"\n')
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+
+    code = main(
+        ["builder", "--kind", "claude", "--model", "sonnet",
+         "--role-file", "roles/builder.md"]
+    )
+
+    assert code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    result = json.loads(lines[0])
+    assert result["ok"] is False
+    assert result["error"].startswith("config_error:"), result["error"]
+    assert "effort" in result["error"], result["error"]
+
+
 def test_a_usage_error_still_wins_over_a_broken_config(monkeypatch, tmp_path, capsys):
     """Ordering must not shift: missing flags are validated BEFORE the config
     is even loaded, so a broken config never masks a usage error."""

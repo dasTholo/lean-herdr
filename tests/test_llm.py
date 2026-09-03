@@ -558,6 +558,23 @@ def test_an_unresolvable_worktree_is_skipped_not_rejected():
     )["prereview_note"] == "no_branch"
 
 
+def test_an_empty_order_is_skipped_not_rejected():
+    """An order log whose first event is not `created` leaves description "".
+
+    The prompt lists "changes the order does not cover" as a ground for
+    rejection, so an empty <order> block invites exactly the false reject
+    the whole module is built to avoid.
+    """
+    def runner(*_a, **_kw):
+        raise AssertionError("nothing may run without an order to judge")
+
+    assert llm.prereview_result(
+        "", branch="feat/x",
+        worktree_list=worktrees({"branch": "feat/x", "path": "/w"}),
+        runner=runner,
+    ) == {"prereview": "skipped", "prereview_note": "no_order"}
+
+
 def test_wt_diff_carries_its_own_timeout():
     """A lost timeout here hangs the wait mode on a wedged `wt`."""
     spy = SpyRunner()

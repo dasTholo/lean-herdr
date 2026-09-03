@@ -542,9 +542,17 @@ def prereview_result(
     ruling instead of a false one.
 
     This function lives here and not in dispatch.py for a second
-    reason: dispatch.py stands at 762 lines against an 800-line
-    ceiling.
+    reason: dispatch.py carries the wait mode already, and the judge is
+    a job of its own -- the module that owns the model call owns this
+    too.
     """
+    if not order:
+        # A log whose first event is not `created` leaves `description`
+        # empty (orders.py:74). The prompt lists "changes the order does
+        # not cover" as a ground for rejection, so an empty <order> block
+        # would invite a reject on a branch nobody described -- the false
+        # ruling this whole module refuses to produce.
+        return _skip("no_order")
     if not branch:
         return _skip("no_branch")
     try:
