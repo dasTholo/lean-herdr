@@ -683,8 +683,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     diff = wt_diff(args.path, timeout_s=args.timeout or DIFF_TIMEOUT_S)
     if diff is None:
+        # `skipped`, exactly as prereview_result() answers the same cause
+        # on the --await path: one failure, one ruling, whichever entry
+        # point asked. Loud on stderr for the human who mistyped `-C`,
+        # but exit 0 -- so exit 1 keeps meaning one thing only, that the
+        # model rejected the branch.
         print(f"herdr-llm: `wt -C {args.path} step diff` failed", file=sys.stderr)
-        return 1
+        sys.stdout.write("skipped\ndiff_failed\n")
+        return 0
     # No `settings=`: prereview() resolves the file itself, from the
     # repository the operator is standing in. `--model`/`--effort` stay
     # None when unset, so the file keeps its place in the chain.
@@ -698,6 +704,8 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.write(ruling + "\n")
     if note:
         sys.stdout.write(note + "\n")
-    # Exit 1 on a rejection, so the mode is usable in a shell chain.
-    # `skipped` is 0: a withheld ruling is not a finding.
+    # Exit 1 on a rejection and on nothing else, so the mode is usable in
+    # a shell chain: `skipped` is 0 wherever it comes from -- a withheld
+    # ruling is not a finding, and neither is a machine that could not
+    # look.
     return 1 if ruling == "reject" else 0

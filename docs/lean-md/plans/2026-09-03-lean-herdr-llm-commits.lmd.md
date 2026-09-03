@@ -2375,8 +2375,14 @@ samt ihrem Kommentar. Der `generate`-Zweig darüber bleibt unangetastet:
 
         diff = wt_diff(args.path, timeout_s=args.timeout or DIFF_TIMEOUT_S)
         if diff is None:
+            # `skipped`, genau wie prereview_result() dieselbe Ursache auf dem
+            # --await-Pfad beantwortet: ein Fehler, ein Urteil, egal welcher
+            # Einstieg fragt. Laut auf stderr fuer den Menschen, der sich bei
+            # `-C` vertippt hat, aber exit 0 -- damit exit 1 genau eine Sache
+            # bedeutet: das Modell hat abgelehnt.
             print(f"herdr-llm: `wt -C {args.path} step diff` failed", file=sys.stderr)
-            return 1
+            sys.stdout.write("skipped\ndiff_failed\n")
+            return 0
         # No `settings=`: prereview() resolves the file itself, from the
         # repository the operator is standing in. `--model`/`--effort` stay
         # None when unset, so the file keeps its place in the chain.
@@ -2390,8 +2396,10 @@ samt ihrem Kommentar. Der `generate`-Zweig darüber bleibt unangetastet:
         sys.stdout.write(ruling + "\n")
         if note:
             sys.stdout.write(note + "\n")
-        # Exit 1 on a rejection, so the mode is usable in a shell chain.
-        # `skipped` is 0: a withheld ruling is not a finding.
+        # Exit 1 on a rejection and on nothing else, so the mode is usable in
+        # a shell chain: `skipped` is 0 wherever it comes from -- a withheld
+        # ruling is not a finding, and neither is a machine that could not
+        # look.
         return 1 if ruling == "reject" else 0
 
 Die Docstring-Zeile von `main()` bekommt den Zusatz, den Task 2 schon
@@ -2530,7 +2538,10 @@ Im Abschnitt `The work-order path`, hinter der Aufzählung der Kommandos:
 
         bin/herdr-llm prereview -C <worktree> --order "<what it was supposed to do>"
 
-    Exit 1 on a rejection, 0 on `pass` and on `skipped`.
+    Exit 1 on a rejection, and on nothing else -- 0 on `pass` and on `skipped`,
+    including the `skipped` a failure of its own machinery produces. Leave
+    `--order` out and it declines to judge at all: an empty order would invite a
+    rejection on a branch nobody described.
 
 ### Verify & Close
 

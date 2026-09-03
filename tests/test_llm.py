@@ -663,13 +663,22 @@ def test_the_cli_passes_and_skips_with_exit_zero(monkeypatch, capsys):
 
 
 def test_a_failing_wt_diff_says_so_and_judges_nothing(monkeypatch, capsys):
+    """One cause, one answer: the same `skipped` the --await path gives.
+
+    Exit 1 then means exactly one thing -- the model rejected. A machine
+    that could not fetch the diff has found nothing, and a withheld ruling
+    is not a finding. The stderr line stays, for the human who typed the
+    wrong `-C`.
+    """
     monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: None)
     monkeypatch.setattr(
         llm, "prereview",
         lambda *a, **kw: pytest.fail("nothing may be judged without a diff"),
     )
-    assert llm.main(["prereview", "-C", "/gone"]) == 1
-    assert "step diff` failed" in capsys.readouterr().err
+    assert llm.main(["prereview", "-C", "/gone"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "skipped\ndiff_failed\n"
+    assert "step diff` failed" in captured.err
 
 
 @pytest.mark.integration

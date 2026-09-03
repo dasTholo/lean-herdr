@@ -168,7 +168,10 @@ The same judgement by hand, without creating an order:
 
     bin/herdr-llm prereview -C <worktree> --order "<what it was supposed to do>"
 
-Exit 1 on a rejection, 0 on `pass` and on `skipped`.
+Exit 1 on a rejection, and on nothing else -- 0 on `pass` and on `skipped`,
+including the `skipped` a failure of its own machinery produces. Leave
+`--order` out and it declines to judge at all: an empty order would invite a
+rejection on a branch nobody described.
 
 ## What else ships here
 
