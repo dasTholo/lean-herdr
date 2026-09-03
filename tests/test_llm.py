@@ -299,7 +299,7 @@ def test_generate_passes_the_measured_effort_by_default(no_store):
     assert json.loads(spy.bodies[0])["reasoning"] == {"effort": "minimal"}
 
 
-def test_generate_writes_one_line_and_exits_zero(monkeypatch, capsys, tmp_path):
+def test_generate_writes_the_message_and_exits_zero(monkeypatch, capsys, tmp_path):
     store = tmp_path / "auth.json"
     store.write_text(json.dumps({"openrouter": {"key": "k"}}))
     monkeypatch.setattr(llm, "AUTH_PATH", store)
@@ -354,6 +354,29 @@ def test_the_absent_flags_stay_none_so_generate_owns_the_precedence(
     assert seen["model"] is None
     assert seen["effort"] is None
     assert seen["timeout_s"] == llm.GENERATE_TIMEOUT_S
+
+
+def test_a_sub_second_timeout_survives_into_curls_config(no_store):
+    """`max-time = 0` is curl for NO limit -- the one value this must never write.
+
+    curl takes fractional seconds, so the float goes in as it stands. An
+    int() here turned every timeout under a second into an unbounded call,
+    which is exactly the hang the generator may never impose on a commit.
+    """
+    spy = SpyRunner(answer("fix(x): y"))
+    llm.complete(
+        "prompt", effort="minimal", model="vendor/m", timeout_s=0.5,
+        runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store,
+    )
+    assert "max-time = 0.5\n" in spy.config_texts[0]
+
+
+def test_a_timeout_that_is_not_positive_is_a_usage_error(capsys):
+    """Loud, like every other typo in the operator's worktrunk config."""
+    with pytest.raises(SystemExit) as excinfo:
+        llm.build_parser().parse_args(["generate", "--timeout", "0"])
+    assert excinfo.value.code == 2
+    assert "must be greater than 0" in capsys.readouterr().err
 
 
 def test_generate_exits_zero_even_when_everything_breaks(monkeypatch, capsys, tmp_path):

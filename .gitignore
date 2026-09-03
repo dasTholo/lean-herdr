@@ -17,6 +17,3 @@ dist/
 # LMD skills are installed artefacts, reproducible via:
 #   lean-md skill install <name> --local
 .claude/skills/
-
-# lean-ctx project state (local)
-.lean-ctx/

@@ -546,7 +546,10 @@ this codebase keeps catching.
                 f'url = "{ENDPOINT}"\n'
                 f'header = "Authorization: Bearer {key}"\n'
                 'header = "Content-Type: application/json"\n'
-                f"max-time = {int(timeout_s)}\n"
+                # Der float, wie er ist: curl nimmt Bruchteile von Sekunden,
+                # und `max-time = 0` -- was int() aus allem unter einer
+                # Sekunde macht -- heisst bei curl GAR KEIN Limit.
+                f"max-time = {timeout_s}\n"
             )
             payload = _tempfile(body)
             proc = runner(
@@ -1104,7 +1107,9 @@ Ans Ende von `lean_herdr/llm.py` anhängen:
             help="beats [llm].effort, then the built-in default; "
                  "no environment level exists",
         )
-        p.add_argument("--timeout", type=float, default=None, help="seconds")
+        p.add_argument(
+            "--timeout", type=_positive_seconds, default=None, help="seconds"
+        )
         return p
 
 
@@ -1155,7 +1160,7 @@ worktrunk-User-Config: das Skript findet sein Paket über den eigenen Dateipfad,
 nicht über `$PWD`.
 
     #!/usr/bin/env python3
-    """Commit messages for worktrunk. Output: one line on stdout, exit 0."""
+    """Commit messages for worktrunk. Output: text on stdout, exit 0."""
 
     import sys
     from pathlib import Path
@@ -1185,7 +1190,7 @@ Die Liste bekommt eine dritte Zeile:
 
 An `tests/test_llm.py` anhängen:
 
-    def test_generate_writes_one_line_and_exits_zero(monkeypatch, capsys, tmp_path):
+    def test_generate_writes_the_message_and_exits_zero(monkeypatch, capsys, tmp_path):
         store = tmp_path / "auth.json"
         store.write_text(json.dumps({"openrouter": {"key": "k"}}))
         monkeypatch.setattr(llm, "AUTH_PATH", store)

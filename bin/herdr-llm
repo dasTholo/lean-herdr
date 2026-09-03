@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Commit messages for worktrunk. Output: one line on stdout, exit 0."""
+"""Commit messages for worktrunk. Output: text on stdout, exit 0."""
 
 import sys
 from pathlib import Path

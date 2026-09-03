@@ -220,7 +220,10 @@ def complete(
             f'url = "{ENDPOINT}"\n'
             f'header = "Authorization: Bearer {key}"\n'
             'header = "Content-Type: application/json"\n'
-            f"max-time = {int(timeout_s)}\n"
+            # The float as it stands: curl takes fractional seconds, and
+            # `max-time = 0` -- what int() makes of anything under a second
+            # -- is curl for NO limit at all.
+            f"max-time = {timeout_s}\n"
         )
         payload = _tempfile(body)
         proc = runner(
@@ -353,6 +356,18 @@ def generate(
     return answer or fallback_message(prompt)
 
 
+def _positive_seconds(text: str) -> float:
+    """A timeout of zero would be curl's `max-time 0`: no limit at all.
+
+    Loud rather than corrected, like every other typo in the operator's
+    worktrunk config -- argparse's exit 2 shows up on the first commit.
+    """
+    value = float(text)
+    if value <= 0:
+        raise argparse.ArgumentTypeError(f"must be greater than 0, not {text}")
+    return value
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="herdr-llm",
@@ -372,7 +387,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="beats [llm].effort, then the built-in default; "
              "no environment level exists",
     )
-    p.add_argument("--timeout", type=float, default=None, help="seconds")
+    p.add_argument(
+        "--timeout", type=_positive_seconds, default=None, help="seconds"
+    )
     return p
 
 
@@ -404,7 +421,7 @@ def main(argv: list[str] | None = None) -> int:
                 prompt,
                 model=args.model,
                 effort=args.effort,
-                timeout_s=args.timeout or GENERATE_TIMEOUT_S,
+                timeout_s=args.timeout or GENERATE_TIMEOUT_S,  # 0 is refused
             )
         except Exception as exc:  # noqa: BLE001 -- a failure would abort the commit
             print(f"herdr-llm: {exc}", file=sys.stderr)
