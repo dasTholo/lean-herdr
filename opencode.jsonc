@@ -36,6 +36,26 @@
         }
       }
     },
+    // The worker's order path is a CLI now, so both workers need a shell
+    // permission they never had -- granted per subcommand, because
+    // "bin/herdr-report *" would let through anything behind the program name.
+    "builder": {
+      "description": "Writes code against one work order at a time.",
+      "mode": "primary",
+      "prompt": "{file:./roles/builder.md}",
+      "steps": 60,
+      "permission": {
+        "bash": {
+          "*": "deny",
+          "bin/herdr-report next": "allow",
+          "bin/herdr-report show *": "allow",
+          "bin/herdr-report start *": "allow",
+          "bin/herdr-report done *": "allow",
+          "bin/herdr-report fail *": "allow",
+          "bin/herdr-report ask *": "allow"
+        }
+      }
+    },
     "reviewer": {
       "description": "Reviews the builder's work. Answers with a verdict of result or reject.",
       "mode": "primary",
@@ -46,6 +66,12 @@
         "write": "deny",
         "bash": {
           "*": "deny",
+          "bin/herdr-report next": "allow",
+          "bin/herdr-report show *": "allow",
+          "bin/herdr-report start *": "allow",
+          "bin/herdr-report done *": "allow",
+          "bin/herdr-report fail *": "allow",
+          "bin/herdr-report ask *": "allow",
           "git diff*": "allow",
           "git log*": "allow",
           "git show*": "allow",

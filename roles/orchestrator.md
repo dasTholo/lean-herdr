@@ -14,26 +14,28 @@ other way.
       --role-file roles/<role>.md [--worktree <branch>] [--profile <p>]
 
 The output is one JSON line. Read `ok`, never the exit code. On success it
-carries `pane` and `agent_id`.
+carries `pane`, `agent_id` and `agent`.
 
 ### 2. Create the order
 
-    ctx_call(name="ctx_task", arguments={
-      "action": "create",
-      "to_agent": "<the agent_id from step 1>",
-      "description": "<the whole order, as detailed as it needs to be>"})
+    bin/herdr-dispatch order --to <the `agent` from step 1> \
+      [--after o-…] --message "<the whole order, as detailed as it needs to be>"
 
-**`to_agent` MUST be the `agent_id`, never a friendly name.** lean-ctx
-compares exactly as a string; a name never finds the task, and the worker
-never sees it.
+**`--to` MUST be the `agent` value step 1 returned**, never a name you
+assembled yourself: the worker resolves that very string out of its own
+environment, and anything else reaches nobody.
 
-The answer starts with `Task created: task-…`. That id is your handle on the
-task — remember it, it appears in every further step.
+`--after o-…` names the order this one follows. Use it instead of retelling
+the predecessor in the description: the worker then gets that order's own
+closing words, verbatim and at no extra cost.
+
+The answer carries `task_id`. That id is your handle on the order — remember
+it, it appears in every further step.
 
 ### 3. Let it wait
 
     bin/herdr-dispatch <role> --await --kind <claude|opencode> \
-      --task-id task-… [--worktree <branch>] [--timeout-ms 300000]
+      --task-id o-… [--worktree <branch>] [--timeout-ms 300000]
 
 This call rings the worker and then waits inside the script, not inside you.
 It costs you one model step, however long the work takes.
@@ -63,31 +65,28 @@ Never take the same model as for the builder.
 ### When the worker asks back
 
 `error: input_required` means: it needs a decision from you. The question is
-in `message`. Answer in ONE call — your answer belongs in the `message` of the
-state change, nowhere else:
+in `message`. Answer with one call:
 
-    ctx_call(name="ctx_task", arguments={
-      "action": "update", "task_id": "task-…", "state": "working",
-      "message": "<your answer>"})
+    bin/herdr-dispatch answer --task-id o-… --message "<your answer>"
 
-**Do not use `action: "message"` for this.** That drops your answer into a
-message store which not a single `ctx_task` call ever prints: `list` shows
-only state and description, `get` only the COUNT of messages. The worker would
-never see your answer and would run into the timeout. The `message` of an
-`update`, by contrast, lands in the history as the reason for the transition,
-and `get` prints that history in full.
+Your answer becomes an event of its own, and the worker sees it in
+`bin/herdr-report show`. The order goes back to `working` on its own — there
+is no second step.
 
 Then step 3 again. That is the only place where the loop comes back to you —
 with a concrete cause, so it is not polling.
 
-### Tasks left hanging
+### Orders left hanging
 
-Nobody cleans up here, and that is intended: a task left sitting on `working`
-is the evidence that a run broke off. Terminal tasks lean-ctx clears away by
-itself after 72 hours. Only you can close them, because only the creator may:
+Nobody cleans up here, and that is intended: an order left sitting on
+`working` is the evidence that a run broke off. Nothing removes a terminal
+order either — the log stays until a human deletes it.
 
-    ctx_call(name="ctx_task", arguments={
-      "action": "cancel", "task_id": "task-…", "message": "<why>"})
+    bin/herdr-dispatch cancel --task-id o-… --message "<why>"
+
+`ctx_task` allowed only the creator to cancel. The log enforces nothing of the
+kind, so it is a rule instead of a guarantee: **nobody but you closes an
+order.**
 
 ## Teardown and merge — this order, not another
 
@@ -98,8 +97,11 @@ state.
     1. Check: verdict=result, not reject
     2. Resolve path and workspace WHILE the worktree still exists:
          herdr worktree list --cwd <repo_root>
-           → .result.worktrees[] | select(.branch=="<branch>")
-               | {path, open_workspace_id}
+       Read the JSON answer yourself: under `result.worktrees`, find the
+       entry whose `branch` is your branch and take its `path` and its
+       `open_workspace_id`. Do not pipe the answer through another program.
+       Nothing but `herdr`, `wt`, `git` and `bin/herdr-dispatch` is allowed
+       to you.
     3. herdr workspace close <workspace_id>
     4. wt -C <path> merge main --yes
 
@@ -119,6 +121,18 @@ After a finished task: **stop and report.** Do not write yourself a follow-up
 task. Do not ask the task store "whether something new is there" — every look
 costs a full model step (~20 000 token), even when nothing is there. New work
 comes from the human, not from a loop.
+
+## When the branch is done
+
+Write exactly ONE entry into the project memory — for the whole branch, never
+one per order:
+
+    bin/herdr-dispatch remember --key lean-herdr/<branch> \
+      --message "<one to two sentences: what the branch achieved, and which decision outlives it>"
+
+One to two sentences is the rule, not a matter of taste. The memory cap is
+global across every project on this machine, and a long entry crowds out more
+useful ones. The history is in the order log; it does not belong here.
 
 ## Escalation
 
