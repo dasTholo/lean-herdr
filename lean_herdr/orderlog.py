@@ -279,6 +279,14 @@ def read_events(task_id: str, *, orders: str | Path | None = None) -> list[Event
     the END -- an append-only log that lost its last file is still
     internally consistent. That is honest, and the wait mode runs into its
     timeout there rather than reporting a wrong state.
+
+    Every `chain_broken` names the ORDER and the event that broke it --
+    `chain_broken: o-1a05e34cd15-1cf3b885 @ 3: not linked to its
+    predecessor`. It has to: nothing ever deletes an order and
+    `report._folded()` folds every one of them, so a single corrupted log
+    blocks `herdr-report next` for every worker until a human clears it.
+    The failure stays hard on purpose -- a broken log is an error, never a
+    'nothing to do' -- and naming the order is what makes it fixable.
     """
     directory = _events_dir(task_id, orders)
     try:
@@ -298,7 +306,8 @@ def read_events(task_id: str, *, orders: str | Path | None = None) -> list[Event
         seq_text, _, prefix = path.stem.partition("-")
         if prefix != digest[:DIGEST_PREFIX_LEN]:
             raise OrderLogError(
-                f"chain_broken: {path.name} does not hash to the digest in its name"
+                f"chain_broken: {task_id} @ {path.name}: "
+                "does not hash to the digest in its name"
             )
         try:
             body = json.loads(blob.decode("utf-8"))
@@ -317,9 +326,11 @@ def read_events(task_id: str, *, orders: str | Path | None = None) -> list[Event
         if body.get("sequence") != expected_seq or seq_text != (
             f"{expected_seq:0{SEQUENCE_DIGITS}d}"
         ):
-            raise OrderLogError(f"chain_broken: {expected_seq}")
+            raise OrderLogError(f"chain_broken: {task_id} @ {expected_seq}: out of sequence")
         if body.get("previous_digest") != (f"sha256:{events[-1].digest}" if events else None):
-            raise OrderLogError(f"chain_broken: {expected_seq}")
+            raise OrderLogError(
+                f"chain_broken: {task_id} @ {expected_seq}: not linked to its predecessor"
+            )
         events.append(_event_from(body, digest))
     return events
 

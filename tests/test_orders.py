@@ -1,3 +1,5 @@
+from dataclasses import FrozenInstanceError
+
 import pytest
 
 from lean_herdr.orderlog import Event
@@ -124,6 +126,21 @@ def test_newest_open_takes_the_first_open_order_for_this_agent():
     mine_open = Order(id="o-3", to_agent=WORKER, state="created")
     assert newest_open([mine_open, theirs, mine_done], WORKER).id == "o-3"
     assert newest_open([mine_done, theirs], WORKER) is None
+
+
+def test_an_order_is_immutable():
+    """`frozen=True` is load-bearing, and nothing pinned it.
+
+    fold() REPLACES: `_apply()` builds a new Order per event and never
+    writes a field. The moment one of them is assignable, a caller can edit
+    a folded order in place -- and the state would stop being the fold of
+    the log and become a field again, which is the one thing this design
+    rules out. test_tasks.py::test_task_is_immutable guarded the store this
+    replaced; it had no successor until here.
+    """
+    order = fold([created()])
+    with pytest.raises(FrozenInstanceError):
+        order.state = "completed"
 
 
 def test_every_kind_of_the_design_is_known():

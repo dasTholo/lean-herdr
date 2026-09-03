@@ -1,11 +1,13 @@
 import hashlib
 import json
+from dataclasses import FrozenInstanceError
 
 import pytest
 
 from lean_herdr.orderlog import (
     DIGEST_PREFIX_LEN,
     SCHEMA_VERSION,
+    SEQUENCE_DIGITS,
     OrderLogError,
     append,
     lean_ctx_data_dir,
@@ -57,6 +59,19 @@ def test_the_body_carries_the_schema_version(tmp_path):
     assert json.loads(path.read_text(encoding="utf-8"))["schema_version"] == SCHEMA_VERSION
 
 
+def test_an_event_is_immutable(tmp_path):
+    """`frozen=True` on Event is load-bearing, and nothing pinned it.
+
+    An Event's `digest` is the sha256 of the file it was read from, and the
+    next event's `previous_digest` is compared against it. An assignable
+    field would let a caller re-point the chain in memory -- the very
+    forgery read_events() exists to catch, done after the read.
+    """
+    event = append(TASK, "created", "orchestrator", orders=tmp_path)
+    with pytest.raises(FrozenInstanceError):
+        event.digest = "0" * 64
+
+
 def test_a_missing_log_is_empty_and_not_an_error(tmp_path):
     """Before the first event the directory simply does not exist."""
     assert read_events(TASK, orders=tmp_path) == []
@@ -79,7 +94,9 @@ def test_a_gap_in_the_sequence_breaks_the_chain(tmp_path):
     append(TASK, "completed", "builder-feat-x", orders=tmp_path)
     first, second, _third = files(tmp_path)
     second.unlink()
-    with pytest.raises(OrderLogError, match="chain_broken: 2"):
+    with pytest.raises(
+        OrderLogError, match=rf"chain_broken: {TASK} @ 2: out of sequence"
+    ):
         read_events(TASK, orders=tmp_path)
     assert first.exists()
 
@@ -98,6 +115,34 @@ def test_a_duplicate_sequence_breaks_the_chain(tmp_path):
     digest = hashlib.sha256(blob).hexdigest()
     path.with_name(f"{'0' * 15}1-{digest[:DIGEST_PREFIX_LEN]}.json").write_bytes(blob)
     with pytest.raises(OrderLogError, match="chain_broken"):
+        read_events(TASK, orders=tmp_path)
+
+
+def test_a_relinked_event_breaks_the_chain(tmp_path):
+    """The `previous_digest` comparison -- the check nothing else reaches.
+
+    This forgery is the one neither of the other two checks can see: event 3
+    keeps its own sequence AND hashes to the digest in its own file name, so
+    the name check and the running count both wave it through. Only its
+    `previous_digest` lies -- it points back at event 1, cutting event 2 out
+    of the chain. Disable the comparison in read_events() and every other
+    test in this file stays green.
+    """
+    first = append(TASK, "created", "orchestrator", orders=tmp_path)
+    append(TASK, "working", "builder-feat-x", orders=tmp_path)
+    append(TASK, "input-required", "builder-feat-x", {"message": "?"}, orders=tmp_path)
+    *_earlier, third = files(tmp_path)
+    body = json.loads(third.read_text(encoding="utf-8"))
+    body["previous_digest"] = f"sha256:{first.digest}"
+    blob = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
+    digest = hashlib.sha256(blob).hexdigest()
+    third.unlink()
+    third.with_name(
+        f"{3:0{SEQUENCE_DIGITS}d}-{digest[:DIGEST_PREFIX_LEN]}.json"
+    ).write_bytes(blob)
+    with pytest.raises(OrderLogError, match=rf"chain_broken: {TASK} @ 3: not linked"):
         read_events(TASK, orders=tmp_path)
 
 

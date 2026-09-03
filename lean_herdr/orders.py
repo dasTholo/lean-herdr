@@ -52,11 +52,19 @@ class Order:
     on it: "exactly one sender may give you work" cannot be checked without
     naming the sender.
 
-    `messages` keeps (actor, kind, text) for every event that carried one.
-    The order TEXT is not in there -- it rides in `description`, off the
+    `messages` keeps (actor, text) for every event that carried one. The
+    order TEXT is not in there -- it rides in `description`, off the
     `created` event. That is the quiet win over the task store, where the
     first message carried the creator's role and blindly taking the last
     one handed our own order back as the worker's answer.
+
+    The event KIND is deliberately not kept beside them. It had no reader:
+    `message_from()` is the only consumer and asks by actor, and the one
+    place that could have used it -- `dispatch._result_for_state()` -- is
+    frozen verbatim by the design's five reserves. A third slot nobody
+    reads only invites the misreading that the closing message is filtered
+    by kind. `show_order()` prints every event with its kind straight off
+    `read_events()`, so nothing is lost.
     """
 
     id: str
@@ -65,7 +73,7 @@ class Order:
     state: str = ""
     description: str = ""
     after: str | None = None
-    messages: tuple[tuple[str, str, str], ...] = ()
+    messages: tuple[tuple[str, str], ...] = ()
 
     @property
     def is_open(self) -> bool:
@@ -91,7 +99,7 @@ def _apply(order: Order, event: Event) -> Order:
     messages = order.messages
     text = event.message.strip()
     if text:
-        messages = (*messages, (event.actor, event.kind, text))
+        messages = (*messages, (event.actor, text))
     if event.kind == "created":
         after: Any = event.payload.get("after")
         return replace(
@@ -114,7 +122,7 @@ def _apply(order: Order, event: Event) -> Order:
 
 def message_from(order: Order, actor: str) -> str | None:
     """Newest message from that actor -- otherwise None."""
-    for who, _kind, text in reversed(order.messages):
+    for who, text in reversed(order.messages):
         if who == actor:
             return text
     return None

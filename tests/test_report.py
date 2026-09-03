@@ -216,6 +216,10 @@ def test_next_never_reads_a_broken_log_as_no_open_order(main_root, capsys):
     assert result["ok"] is False
     assert result["error"].startswith("chain_broken")
     assert result != {"ok": True, "agent": ME, "task_id": None, "text": "no open order"}
+    # `next` folds EVERY order in the log, so the one that broke has to be
+    # named -- nothing ever deletes an order, and without the id the
+    # operator cannot tell which of them is blocking every worker.
+    assert "o-a-1" in result["error"], result["error"]
 
 
 def test_done_never_reads_a_broken_log_as_task_not_found(main_root, capsys):
@@ -232,3 +236,4 @@ def test_done_never_reads_a_broken_log_as_task_not_found(main_root, capsys):
     assert result["ok"] is False
     assert result["error"].startswith("chain_broken")
     assert result != {"ok": False, "task_id": "o-a-1", "error": "task_not_found"}
+    assert "o-a-1" in result["error"], result["error"]
