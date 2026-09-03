@@ -135,7 +135,8 @@ Gemessene Grundlagen dieses Plans (Spec §3, alle am 2026-09-03 gegen
   `missing_flags()`.
 - **Genau eine Klingel je Warte-Aufruf**, ohne `--wait`. Unveraendert.
 - **Fehlercodes.** Neu: `state_root_mismatch`, `no_role`,
-  `log_unreadable:<pfad>`, `chain_broken:<seq>`, `bad_task_id`. Entfaellt:
+  `log_unreadable:<pfad>`, `chain_broken:<task_id> @ <seq|datei>: <grund>`,
+  `bad_task_id`. Entfaellt:
   `tasks_unreadable`. Bleibt: `task_not_found`, `pane_split_failed`,
   `no_agent_id`, `agent_error:<text>`, `worktrunk_missing`,
   `worktree_open_failed:<msg>`, `no_anchor_pane`, `dispatch_crashed`,
@@ -535,6 +536,14 @@ uebrige Task bleibt woertlich stehen. Halte das Ergebnis in
         the END -- an append-only log that lost its last file is still
         internally consistent. That is honest, and the wait mode runs into its
         timeout there rather than reporting a wrong state.
+
+        Every `chain_broken` names the ORDER and the event that broke it --
+        `chain_broken: o-1a05e34cd15-1cf3b885 @ 3: not linked to its
+        predecessor`. It has to: nothing ever deletes an order and
+        `report._folded()` folds every one of them, so a single corrupted log
+        blocks `herdr-report next` for every worker until a human clears it.
+        The failure stays hard on purpose -- a broken log is an error, never a
+        'nothing to do' -- and naming the order is what makes it fixable.
         """
         directory = _events_dir(task_id, orders)
         try:
@@ -554,7 +563,8 @@ uebrige Task bleibt woertlich stehen. Halte das Ergebnis in
             seq_text, _, prefix = path.stem.partition("-")
             if prefix != digest[:DIGEST_PREFIX_LEN]:
                 raise OrderLogError(
-                    f"chain_broken: {path.name} does not hash to the digest in its name"
+                    f"chain_broken: {task_id} @ {path.name}: "
+                    "does not hash to the digest in its name"
                 )
             try:
                 body = json.loads(blob.decode("utf-8"))
@@ -573,11 +583,13 @@ uebrige Task bleibt woertlich stehen. Halte das Ergebnis in
             if body.get("sequence") != expected_seq or seq_text != (
                 f"{expected_seq:0{SEQUENCE_DIGITS}d}"
             ):
-                raise OrderLogError(f"chain_broken: {expected_seq}")
+                raise OrderLogError(f"chain_broken: {task_id} @ {expected_seq}: out of sequence")
             if body.get("previous_digest") != (
                 f"sha256:{events[-1].digest}" if events else None
             ):
-                raise OrderLogError(f"chain_broken: {expected_seq}")
+                raise OrderLogError(
+                    f"chain_broken: {task_id} @ {expected_seq}: not linked to its predecessor"
+                )
             events.append(_event_from(body, digest))
         return events
 
@@ -729,7 +741,9 @@ uebrige Task bleibt woertlich stehen. Halte das Ergebnis in
         append(TASK, "completed", "builder-feat-x", orders=tmp_path)
         first, second, _third = files(tmp_path)
         second.unlink()
-        with pytest.raises(OrderLogError, match="chain_broken: 2"):
+        with pytest.raises(
+            OrderLogError, match=rf"chain_broken: {TASK} @ 2: out of sequence"
+        ):
             read_events(TASK, orders=tmp_path)
         assert first.exists()
 
@@ -799,6 +813,60 @@ uebrige Task bleibt woertlich stehen. Halte das Ergebnis in
         """The atomic rename must leave nothing behind."""
         append(TASK, "created", "orchestrator", orders=tmp_path)
         assert not [p for p in (tmp_path / TASK / "events").iterdir() if p.name.startswith(".tmp")]
+
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch.** Zwei Luecken,
+beide mutationsbelegt. (1) Die Kettenglied-Pruefung — der
+`previous_digest`-Vergleich — war ueberhaupt nicht getestet: sie zu
+deaktivieren liess die Suite gruen. Der Duplikat-Test oben zielt bewusst auf
+die Sequenzpruefung, damit verlor die Verlinkung ihren letzten
+Beinah-Waechter. Der neue Test schmiedet genau das, was die beiden anderen
+Pruefungen nicht sehen koennen: Ereignis 3 behaelt seine Sequenz **und**
+hasht auf den Namen seiner eigenen Datei, nur sein `previous_digest` zeigt
+an Ereignis 2 vorbei. Die drei `chain_broken`-Meldungen tragen deshalb jetzt
+je einen eigenen Zusatz — der Test kann sagen, welche Pruefung gegriffen hat.
+(2) `Event` ist `frozen=True`, aber nichts pinnte das; `frozen=True` zu
+entfernen liess die Suite ebenfalls gruen.
+`tests/test_tasks.py::test_task_is_immutable` hatte keinen Nachfolger.
+
+    def test_an_event_is_immutable(tmp_path):
+        """`frozen=True` on Event is load-bearing, and nothing pinned it.
+
+        An Event's `digest` is the sha256 of the file it was read from, and the
+        next event's `previous_digest` is compared against it. An assignable
+        field would let a caller re-point the chain in memory -- the very
+        forgery read_events() exists to catch, done after the read.
+        """
+        event = append(TASK, "created", "orchestrator", orders=tmp_path)
+        with pytest.raises(FrozenInstanceError):
+            event.digest = "0" * 64
+
+
+    def test_a_relinked_event_breaks_the_chain(tmp_path):
+        """The `previous_digest` comparison -- the check nothing else reaches.
+
+        This forgery is the one neither of the other two checks can see: event 3
+        keeps its own sequence AND hashes to the digest in its own file name, so
+        the name check and the running count both wave it through. Only its
+        `previous_digest` lies -- it points back at event 1, cutting event 2 out
+        of the chain. Disable the comparison in read_events() and every other
+        test in this file stays green.
+        """
+        first = append(TASK, "created", "orchestrator", orders=tmp_path)
+        append(TASK, "working", "builder-feat-x", orders=tmp_path)
+        append(TASK, "input-required", "builder-feat-x", {"message": "?"}, orders=tmp_path)
+        *_earlier, third = files(tmp_path)
+        body = json.loads(third.read_text(encoding="utf-8"))
+        body["previous_digest"] = f"sha256:{first.digest}"
+        blob = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+            "utf-8"
+        )
+        digest = hashlib.sha256(blob).hexdigest()
+        third.unlink()
+        third.with_name(
+            f"{3:0{SEQUENCE_DIGITS}d}-{digest[:DIGEST_PREFIX_LEN]}.json"
+        ).write_bytes(blob)
+        with pytest.raises(OrderLogError, match=rf"chain_broken: {TASK} @ 3: not linked"):
+            read_events(TASK, orders=tmp_path)
 
 `state_dir()` und die Datenverzeichnis-Praezedenz — dieselben Faelle, die
 `tests/test_tasks.py` heute fuer `task_store_path()` fuehrt, gegen den neuen Pfad
@@ -1027,11 +1095,19 @@ testbar. Abschnitt 6 der Vorgaengerspec musste das Gegenteil einraeumen.
         on it: "exactly one sender may give you work" cannot be checked without
         naming the sender.
 
-        `messages` keeps (actor, kind, text) for every event that carried one.
-        The order TEXT is not in there -- it rides in `description`, off the
+        `messages` keeps (actor, text) for every event that carried one. The
+        order TEXT is not in there -- it rides in `description`, off the
         `created` event. That is the quiet win over the task store, where the
         first message carried the creator's role and blindly taking the last
         one handed our own order back as the worker's answer.
+
+        The event KIND is deliberately not kept beside them. It had no reader:
+        `message_from()` is the only consumer and asks by actor, and the one
+        place that could have used it -- `dispatch._result_for_state()` -- is
+        frozen verbatim by the design's five reserves. A third slot nobody
+        reads only invites the misreading that the closing message is filtered
+        by kind. `show_order()` prints every event with its kind straight off
+        `read_events()`, so nothing is lost.
         """
 
         id: str
@@ -1040,7 +1116,7 @@ testbar. Abschnitt 6 der Vorgaengerspec musste das Gegenteil einraeumen.
         state: str = ""
         description: str = ""
         after: str | None = None
-        messages: tuple[tuple[str, str, str], ...] = ()
+        messages: tuple[tuple[str, str], ...] = ()
 
         @property
         def is_open(self) -> bool:
@@ -1066,7 +1142,7 @@ testbar. Abschnitt 6 der Vorgaengerspec musste das Gegenteil einraeumen.
         messages = order.messages
         text = event.message.strip()
         if text:
-            messages = (*messages, (event.actor, event.kind, text))
+            messages = (*messages, (event.actor, text))
         if event.kind == "created":
             after: Any = event.payload.get("after")
             return replace(
@@ -1089,7 +1165,7 @@ testbar. Abschnitt 6 der Vorgaengerspec musste das Gegenteil einraeumen.
 
     def message_from(order: Order, actor: str) -> str | None:
         """Newest message from that actor -- otherwise None."""
-        for who, _kind, text in reversed(order.messages):
+        for who, text in reversed(order.messages):
             if who == actor:
                 return text
         return None
@@ -1236,11 +1312,38 @@ testbar. Abschnitt 6 der Vorgaengerspec musste das Gegenteil einraeumen.
         assert newest_open([mine_done, theirs], WORKER) is None
 
 
+    def test_an_order_is_immutable():
+        """`frozen=True` is load-bearing, and nothing pinned it.
+
+        fold() REPLACES: `_apply()` builds a new Order per event and never
+        writes a field. The moment one of them is assignable, a caller can edit
+        a folded order in place -- and the state would stop being the fold of
+        the log and become a field again, which is the one thing this design
+        rules out. test_tasks.py::test_task_is_immutable guarded the store this
+        replaced; it had no successor until here.
+        """
+        order = fold([created()])
+        with pytest.raises(FrozenInstanceError):
+            order.state = "completed"
+
+
     def test_every_kind_of_the_design_is_known():
         assert set(EVENT_KINDS) == {
             "created", "working", "input-required", "answered",
             "completed", "failed", "canceled",
         }
+
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch.** Zweierlei.
+(1) `Order.messages` trug ein `kind`, das nichts las — `message_from()` ist
+der einzige Verbraucher und fragt nach dem Akteur, und die einzige Stelle,
+die das `kind` haette lesen koennen (`dispatch._result_for_state`), ist
+durch die Global Constraint „die fuenf Ruecklagen bleiben woertlich"
+eingefroren. Ein dritter Platz, den niemand liest, legt genau die
+Fehllesung nahe, die der Reviewer machte. Er faellt weg; `show_order()`
+druckt ohnehin jedes Ereignis mit seiner Art direkt aus `read_events()`.
+(2) `Order` ist `frozen=True`, aber nichts pinnte das — `frozen=True` zu
+entfernen liess die Suite gruen (mutationsbelegt, wie bei `Event` in
+Task 1).
 
 @call tdd(-k answered_is_the_only_kind_that_is_not_its_own_state)
 
@@ -1282,7 +1385,9 @@ Der Bestand, bevor etwas angefasst wird:
 
 Unveraendert bleiben: `DispatchRequest`, `profile_for`, `agent_name`,
 `agent_args`, `wait_for_agent_id`, `_result`, `AwaitRequest`, `verdict`,
-`VERDICT_RE`, `_worker_root`, `_await_result`, `UsageError`, `_Parser`,
+`VERDICT_RE`, `_worker_root`, `order_result` (frueher `_await_result`; der
+Abschluss-Review benannte ihn um, weil ein privater Name nicht ueber eine
+Modulgrenze importiert werden soll), `UsageError`, `_Parser`,
 `_given`. `wait_for_agent_id` behaelt seinen Rumpf; nur seine Rolle aendert sich
 (Bereitschaftsbeleg statt Adressaufloeser), und der `BusError`-Zweig
 (`dispatch.py:167-168`, I9) wird in diesem Task erstmals getestet.
@@ -1367,19 +1472,33 @@ Quelle — `task_store_path()` gibt es nicht mehr:
 ### 3b — der Aufbau-Modus gibt den Namen heraus
 
 Zwei Aenderungen in `dispatch()`. Erstens die Umgebung des neuen Panes — der
-Arbeiter darf seinen Namen nicht raten muessen:
+Arbeiter darf seinen Namen nicht raten muessen. Die beiden Variablennamen
+sind Modulkonstanten, keine Literale: `report.py` importiert genau diese
+Namen, statt die Zeichenketten ein zweites Mal zu schreiben (M3 — der
+Abschluss-Review belegte, dass ein Umbenennen der report-Seite die ganze
+Suite gruen liess und trotzdem jeden Auftrag ins Leere laufen liess):
+
+    #: The two variables the build mode stamps on the pane it splits and
+    #: `herdr-report` reads back out of its environment. ONE definition each
+    #: (M3): report.py IMPORTS these names rather than spelling the strings a
+    #: second time, and the `env=` dict of the pane split below is built from
+    #: them. A second spelling on either side is silent in the worst way --
+    #: the pane carries one variable, the worker reads another, every order
+    #: runs into the void and the wait mode reports `no_reply`.
+    AGENT_ENV = "LEAN_HERDR_AGENT"
+    ROLE_ENV = "LEAN_CTX_ROLE"
 
     env={
         "LEAN_CTX_TOOL_PROFILE": profile_for(
             req.role, req.profile, settings=cfg
         ),
-        "LEAN_CTX_ROLE": req.role,
+        ROLE_ENV: req.role,
         # The worker's own name, so `herdr-report` does not have to derive
         # it. Derivation from role plus branch disagrees with this side
         # whenever the dispatch carried no `--worktree`: here the agent is
         # `builder`, there it would be `builder-feat-x`, and an order under
         # the wrong name reaches nobody.
-        "LEAN_HERDR_AGENT": name,
+        AGENT_ENV: name,
     },
 
 Zweitens der Rueckgabewert. Der Kommentar am Ende von `dispatch()` — der heute
@@ -1475,10 +1594,10 @@ Neu, hinter `verdict()`:
             directory = orders_dir if orders_dir is not None else state_dir(root)
             events = read_events(task_id, orders=directory)
             if not events:
-                return _await_result(False, task_id, error="task_not_found")
+                return order_result(False, task_id, error="task_not_found")
             order = fold(events)
             if order.state != "input-required":
-                return _await_result(
+                return order_result(
                     False,
                     task_id,
                     state=order.state,
@@ -1489,8 +1608,8 @@ Neu, hinter `verdict()`:
                 )
             append(task_id, "answered", actor, {"message": message}, orders=directory)
         except OrderLogError as exc:
-            return _await_result(False, task_id, error=str(exc))
-        return _await_result(True, task_id, state="working", message=message)
+            return order_result(False, task_id, error=str(exc))
+        return order_result(True, task_id, state="working", message=message)
 
 
     def cancel_order(
@@ -1516,10 +1635,10 @@ Neu, hinter `verdict()`:
             directory = orders_dir if orders_dir is not None else state_dir(root)
             events = read_events(task_id, orders=directory)
             if not events:
-                return _await_result(False, task_id, error="task_not_found")
+                return order_result(False, task_id, error="task_not_found")
             order = fold(events)
             if is_terminal(order.state):
-                return _await_result(
+                return order_result(
                     False,
                     task_id,
                     state=order.state,
@@ -1527,8 +1646,8 @@ Neu, hinter `verdict()`:
                 )
             append(task_id, "canceled", actor, {"message": message}, orders=directory)
         except OrderLogError as exc:
-            return _await_result(False, task_id, error=str(exc))
-        return _await_result(True, task_id, state="canceled", message=message)
+            return order_result(False, task_id, error=str(exc))
+        return order_result(True, task_id, state="canceled", message=message)
 
 ### 3d — der Warte-Modus liest das Log
 
@@ -1545,7 +1664,7 @@ seine Quelle wechselt:
         """
         message = message_from(order, order.to_agent)
         if order.state == "completed":
-            result = _await_result(
+            result = order_result(
                 True, order.id, state=order.state, message=message or ""
             )
             ruling = verdict(message)
@@ -1553,16 +1672,16 @@ seine Quelle wechselt:
                 result["verdict"] = ruling
             return result
         if order.state == "failed":
-            return _await_result(
+            return order_result(
                 False,
                 order.id,
                 state=order.state,
                 error=f"agent_failed: {message or 'no reason given'}",
             )
         if order.state == "canceled":
-            return _await_result(False, order.id, state=order.state, error="task_canceled")
+            return order_result(False, order.id, state=order.state, error="task_canceled")
         if order.state == "input-required":
-            return _await_result(
+            return order_result(
                 False,
                 order.id,
                 state=order.state,
@@ -1590,17 +1709,26 @@ wie heute (`has_rung`, `deadline`, `session_error`, `no_reply`):
         The waiting stays in the script: no CLI, no registration, no model step
         per round. Never raises; the result carries `ok`.
 
-        `settings` MUST be the same one the build mode got -- it decides the
-        agent's name, and a ring under a different name reaches nobody.
+        The bell rings `order.to_agent` -- the name the order is actually
+        addressed to, never one derived a second time here. `settings` and
+        `--worktree` decide what `agent_name()` produces, and a `--await` call
+        that spells either differently than the build call did would ring
+        `builder` while the worker is `builder-feat-x`. `Herdr.run()` swallows
+        every error and returns {} (herdr.py:52-70), so that miss is SILENT:
+        the full timeout, then `no_reply`. One truth, not two (M3).
+
+        The derivation stays as the fallback for the one moment no order names
+        a worker yet -- a log whose first event is not `created`.
         """
-        name = agent_name(req.role, req.worktree, settings=settings)
+        derived = agent_name(req.role, req.worktree, settings=settings)
+        name = derived
         try:
             # ONCE, before the loop. state_dir() resolves canonical_root()
             # through git; inside the loop that would be a subprocess per poll
             # round -- exactly the cost the wait mode exists to avoid.
             directory = orders_dir if orders_dir is not None else state_dir(root)
         except OrderLogError as exc:
-            return _await_result(False, req.task_id, error=str(exc))
+            return order_result(False, req.task_id, error=str(exc))
         deadline = now() + req.timeout_ms / 1000.0
         has_rung = False
         state = ""
@@ -1608,15 +1736,16 @@ wie heute (`has_rung`, `deadline`, `session_error`, `no_reply`):
             try:
                 events = read_events(req.task_id, orders=directory)
             except OrderLogError as exc:
-                return _await_result(False, req.task_id, error=str(exc))
+                return order_result(False, req.task_id, error=str(exc))
             if not events:
                 # The orchestrator wrote the `created` event BEFORE this call,
                 # and append() renames the finished file into place before it
                 # returns. Nothing here means the id is wrong -- waiting will
                 # not change that.
-                return _await_result(False, req.task_id, error="task_not_found")
+                return order_result(False, req.task_id, error="task_not_found")
             order = fold(events)
             state = order.state
+            name = order.to_agent or derived
             outcome = _result_for_state(order)
             if outcome is not None:
                 return outcome
@@ -1628,6 +1757,20 @@ wie heute (`has_rung`, `deadline`, `session_error`, `no_reply`):
             if now() >= deadline:
                 break
             sleep(interval_s)
+
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch.** Der Name, den
+die Klingel und die Timeout-Diagnose benutzen, kommt aus dem Auftrag
+(`order.to_agent`), nicht aus einer zweiten Ableitung. Weicht der
+`--await`-Aufruf im `--worktree` oder in den settings vom Bau-Aufruf ab,
+nannte die Ableitung `builder`, waehrend der Arbeiter `builder-feat-x`
+heisst — und `Herdr.run()` schluckt jeden Fehler und gibt `{}` zurueck
+(`herdr.py:52-70`). Der Fehlgriff war also vollstaendig still: voller
+Timeout, dann `no_reply`, ohne ein Wort ueber den nie geweckten Arbeiter.
+Die Ableitung bleibt als Rueckfall fuer den einen Moment, in dem noch kein
+Auftrag einen Arbeiter nennt. Zwei Tests trugen bis dahin einen Widerspruch
+in ihren Vorgaben — sie klingelten `builder-feat-x` und suchten dann die
+Sitzung von `builder`; beide Vorgaben nennen jetzt denselben Arbeiter, so
+wie es der Bau-Modus erzeugt.
 
 ### 3e — der Parser
 
@@ -1748,7 +1891,9 @@ Schluesselwort und waere als `args.from` unerreichbar.
         ]
         if missing:
             return f"build mode needs {' and '.join(missing)}"
-        stray = _given(("--timeout-ms", args.timeout_ms))
+        # `--task-id` belongs to `--await`; in build mode argparse takes it and
+        # the mode drops it without a word. Last gap of the stray-flag doctrine.
+        stray = _given(("--task-id", args.task_id), ("--timeout-ms", args.timeout_ms))
         return f"build mode does not take {stray}" if stray else None
 
 `main()` bekommt den Log-Zweig vor der Weiche Warten/Aufbauen; alles davor
@@ -1896,6 +2041,36 @@ Ersetzt: `test_an_unreadable_store_is_never_success_by_silence` wird
         )
         assert result["ok"] is False
         assert result["error"].startswith("chain_broken")
+
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch.** Zwei neue
+Faelle. Erstens die Klingel (siehe 3d): kein Test las je, WELCHEN Namen sie
+ruft — nur, dass genau einmal geklingelt wird. Zweitens ein weiterer
+Parametrize-Fall in `test_a_flag_of_the_other_mode_is_a_usage_error`:
+`[*BUILD, "--task-id", TASK_ID]` erwartet `--task-id`, die letzte Luecke der
+Stray-Flag-Doktrin.
+
+    def test_the_ring_goes_to_the_agent_the_order_is_addressed_to(herdr, tmp_path):
+        """The bell rings the name the ORDER carries, never a fresh derivation.
+
+        This call names no `--worktree`, so `agent_name("builder", None)` says
+        `builder` while the order -- and the pane the build mode started -- says
+        `builder-feat-x`. `Herdr.run()` swallows every error and returns {}
+        (herdr.py:52-70), so ringing the derived name is SILENT: the wait runs
+        its full timeout and comes back `no_reply` without a word about the
+        worker that was never woken. Same drift for a `--await` whose settings
+        carry a different `name_template` than the build call did.
+        """
+        _, proc = herdr
+        clock = iter([0.0, 0.0, 99.0])
+        result = wait(
+            herdr, tmp_path,
+            created(to_agent=WORKER),
+            ("working", WORKER, {}),
+            timeout_ms=1_000, role="builder", worktree=None, now=lambda: next(clock),
+        )
+        assert result["error"] == "no_reply"
+        ring = next(c for c in proc.calls if c[1:3] == ["agent", "prompt"])
+        assert ring[3] == WORKER, f"rang {ring[3]!r}, but the order names {WORKER!r}"
 
 Neu — der Schreibpfad, der bisher nicht testbar war:
 
@@ -2067,6 +2242,49 @@ heisst jetzt `..._the_data_dir_points_at` und patcht unveraendert
         split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
         assert "LEAN_HERDR_AGENT=builder-feat-auth" in " ".join(split)
 
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch.** Der Test oben
+prueft nur die eine Haelfte des Vertrags: dass das Pane die Variable traegt.
+Dass der Arbeiter *dieselbe* liest, war nirgends gebunden — die
+Mutationsprobe benannte `report.AGENT_ENV` um und die Suite blieb gruen,
+waehrend jeder Auftrag ins Leere lief. Der Code fuehrt die beiden Seiten
+jetzt auf eine Definition zusammen (3b); dieser Test fuehrt sie ueber die
+tatsaechlichen `--env`-Paare des Panes zusammen:
+
+    def test_the_worker_resolves_its_name_out_of_the_env_the_pane_was_given(world):
+        """The two halves of the LEAN_HERDR_AGENT contract, tied together.
+
+        `report.AGENT_ENV` used to be a second, independent spelling of the
+        variable dispatch.py writes here. Renaming that copy left the whole
+        suite green while every dispatched order ran into the void: the pane
+        carried one variable, the worker read another, `next` answered "no open
+        order" and the wait mode reported `no_reply` -- no error anywhere. The
+        pane's OWN `--env` pairs go into the worker's resolver here, so a drift
+        between the two sides cannot stay green.
+        """
+        h_proc, _ = world
+        h_proc.replies = {
+            ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
+            ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+            ("worktree", "list"): {
+                "result": {
+                    "source": {"repo_root": "/repo"},
+                    "worktrees": [
+                        {"branch": "feat/auth", "path": "/repo.feat-auth",
+                         "open_workspace_id": "w2"}
+                    ],
+                }
+            },
+        }
+        result = run_dispatch(world, reg=registry(), request=req(worktree="feat/auth"))
+        split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+        env = dict(
+            pair.split("=", 1)
+            for flag, pair in pairwise(split)
+            if flag == "--env"
+        )
+        assert env[AGENT_ENV] == "builder-feat-auth"
+        assert resolve_agent(root=ROOT, env=env) == result["agent"] == "builder-feat-auth"
+
 `tests/test_dispatch_uncovered_paths.py`: I9 — der `BusError`-Zweig in
 `wait_for_agent_id` (`dispatch.py:167-168`) ist laut Docstring die Ursache eines
 realen `ready_timeout`-Stalls und bisher ungetestet. Wer die Funktion anfasst,
@@ -2217,10 +2435,10 @@ Ende von Task 5.
 `tests/test_report.py`. Modify `tests/test_manifest.py`.
 **Consumes:** `lean_herdr.orderlog.{OrderLogError, state_dir, append,
 read_events, task_ids}`, `lean_herdr.orders.{fold, is_terminal, message_from,
-newest_open}`, `lean_herdr.dispatch.agent_name`,
+newest_open}`, `lean_herdr.dispatch.{AGENT_ENV, ROLE_ENV, agent_name}`,
 `lean_herdr.settings.{SETTINGS_PATH, read_settings, settings_for}`,
 `lean_herdr.bus.canonical_root`.
-**Interfaces:** Produces `ReportError`, `AGENT_ENV`, `ROLE_ENV`, `KIND_OF`,
+**Interfaces:** Produces `ReportError`, `KIND_OF`, `READING`, `SUBCOMMANDS`,
 `current_branch(cwd=None, *, runner) -> str`,
 `resolve_agent(override=None, *, root, cwd=None, env=None) -> str`,
 `next_order(agent, *, orders_dir) -> dict`,
@@ -2271,7 +2489,7 @@ daneben pruefen.
     from typing import Any, NoReturn
 
     from lean_herdr.bus import BusError, canonical_root
-    from lean_herdr.dispatch import agent_name
+    from lean_herdr.dispatch import AGENT_ENV, ROLE_ENV, agent_name
     from lean_herdr.orderlog import (
         OrderLogError,
         append,
@@ -2289,13 +2507,11 @@ daneben pruefen.
 
     GIT_TIMEOUT_S = 5.0
 
-    #: dispatch.py sets this on the pane it splits. It is the name the wait mode
-    #: rings and the name the order is addressed to, so taking it from the
-    #: environment is the only way the two sides cannot drift.
-    AGENT_ENV = "LEAN_HERDR_AGENT"
-
-    #: Set beside it since the first dispatch. The fallback path needs it.
-    ROLE_ENV = "LEAN_CTX_ROLE"
+    # `AGENT_ENV` and `ROLE_ENV` are IMPORTED, never spelled here: dispatch.py
+    # writes exactly these two variables onto the pane it splits, and a second
+    # spelling on this side would leave the whole suite green while every order
+    # ran into the void -- the pane carrying one variable, the worker reading
+    # another. One truth, not two (M3).
 
     #: subcommand -> the event kind it appends.
     KIND_OF = {
@@ -2307,6 +2523,14 @@ daneben pruefen.
 
     #: The two subcommands that only read.
     READING = ("next", "show")
+
+    #: Every subcommand this CLI accepts -- the parser's own `choices`, and the
+    #: list tests/test_worker_permissions.py holds BOTH permission files to.
+    #: The six words used to stand in four unbound copies (here, .claude/
+    #: settings.json, opencode.jsonc, the test), so a seventh subcommand
+    #: shipped green with no permission anywhere and failed at the worker in a
+    #: way that looks exactly like a crash.
+    SUBCOMMANDS = (*READING, *KIND_OF)
 
 
     class ReportError(RuntimeError):
@@ -2505,7 +2729,7 @@ daneben pruefen.
 
     def build_parser() -> argparse.ArgumentParser:
         p = _Parser(prog="herdr-report", description="Report on a work order.")
-        p.add_argument("command", choices=(*READING, *KIND_OF))
+        p.add_argument("command", choices=SUBCOMMANDS)
         p.add_argument("--task", default=None, help="the order id; not used by `next`")
         p.add_argument("--message", default=None, help="required for done, fail and ask")
         p.add_argument(
@@ -2805,6 +3029,10 @@ daneben pruefen.
         assert result["ok"] is False
         assert result["error"].startswith("chain_broken")
         assert result != {"ok": True, "agent": ME, "task_id": None, "text": "no open order"}
+        # `next` folds EVERY order in the log, so the one that broke has to be
+        # named -- nothing ever deletes an order, and without the id the
+        # operator cannot tell which of them is blocking every worker.
+        assert "o-a-1" in result["error"], result["error"]
 
 
     def test_done_never_reads_a_broken_log_as_task_not_found(main_root, capsys):
@@ -2821,6 +3049,23 @@ daneben pruefen.
         assert result["ok"] is False
         assert result["error"].startswith("chain_broken")
         assert result != {"ok": False, "task_id": "o-a-1", "error": "task_not_found"}
+        assert "o-a-1" in result["error"], result["error"]
+
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch.** Dreierlei in
+diesem Task. (1) `AGENT_ENV` und `ROLE_ENV` werden importiert statt hier ein
+zweites Mal geschrieben — report.py kann dispatch.py nicht importieren?
+Doch: es tut es fuer `agent_name` bereits, und die Richtung ist zirkelfrei.
+Damit gibt es fuer jeden der beiden Variablennamen genau eine Definition
+(M3). (2) `SUBCOMMANDS` ist neu und ersetzt die vierte, ungebundene Kopie
+der Unterkommandoliste: `tests/test_worker_permissions.py` importiert sie
+und haelt `opencode.jsonc` **und** `.claude/settings.json` gegen sie — in
+beide Richtungen, damit weder ein siebtes Unterkommando ohne Berechtigung
+durchgeht noch eine Berechtigung fuer ein entferntes stehenbleibt. (3) Die
+beiden Broken-Log-Waechter oben verlangen jetzt zusaetzlich die task_id in
+der Meldung: `report._folded()` faltet jeden Auftrag des Logs, nichts
+loescht je einen, also legt EIN kaputter Auftrag `next` fuer alle Arbeiter
+lahm — der Betreiber muss sehen, welcher. Der harte Fehler bleibt: ein
+kaputtes Log ist ein Fehler, nie ein „nichts zu tun".
 
 @call tdd(-k the_environment_name_wins_over_every_derivation)
 
@@ -3547,6 +3792,11 @@ angelegt** — er ist dort bisher gar nicht gefuehrt.
       "prompt": "{file:./roles/builder.md}",
       "steps": 60,
       "permission": {
+        // roles/builder.md prescribes "TDD, small commits". With the report
+        // patterns alone the builder could run neither a test nor a commit
+        // and would fail on its first step -- so exactly the gate that role
+        // text demands is granted, and nothing wider. No `git push`, no
+        // bare `git *`, no wildcard behind `bin/herdr-report`.
         "bash": {
           "*": "deny",
           "bin/herdr-report next": "allow",
@@ -3554,7 +3804,13 @@ angelegt** — er ist dort bisher gar nicht gefuehrt.
           "bin/herdr-report start *": "allow",
           "bin/herdr-report done *": "allow",
           "bin/herdr-report fail *": "allow",
-          "bin/herdr-report ask *": "allow"
+          "bin/herdr-report ask *": "allow",
+          "uv run pytest*": "allow",
+          "uv run ruff*": "allow",
+          "git add*": "allow",
+          "git commit*": "allow",
+          "git diff*": "allow",
+          "git status*": "allow"
         }
       }
     },
@@ -3562,6 +3818,19 @@ angelegt** — er ist dort bisher gar nicht gefuehrt.
 `reviewer` behaelt `"edit": "deny"`, `"write": "deny"` und seine vier
 `git`-Muster und bekommt dieselben sechs Zeilen dazu. `builder` bekommt
 **kein** `"edit": "deny"` — er schreibt Code, das ist seine Aufgabe.
+
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch, vom Betreiber
+entschieden.** Der `builder`-Block trug zuerst nur `"*": "deny"` plus die
+sechs Report-Muster — ein Agent also, dessen Rollentext „TDD, small
+commits" vorschreibt und der weder einen Test noch einen Commit ausfuehren
+konnte. Er scheitert live nicht an `herdr-report`, sondern an seinem ersten
+`uv run pytest`. Freigegeben ist **genau** das Werkzeug, das der Rollentext
+verlangt: `uv run pytest*`, `uv run ruff*`, `git add*`, `git commit*`,
+`git diff*`, `git status*`. Nichts darueber hinaus — kein `git push`, kein
+blankes `git *`, kein `uv run *`, und weiterhin keine Wildcard hinter
+`bin/herdr-report`. `"*": "deny"` bleibt der Rueckfall.
+`.claude/settings.json` wird **nicht** erweitert: es addiert nur Allows und
+verbietet nichts, dort fehlte dem Builder nie etwas.
 
 `.claude/settings.json` (neu). Das Repo liefert bis heute keine
 `.claude`-Konfiguration aus (`git ls-files '.claude*'` ist leer), die Erlaubnis
@@ -3589,9 +3858,14 @@ auf:
 
     Before this design roles/builder.md and roles/reviewer.md carried no shell
     line at all: everything ran through ctx_task, an MCP tool. reviewer even
-    carries `"*": "deny"`. Without the six patterns below the worker cannot
-    fetch its order, and the failure looks exactly like a crash -- the
+    carries `"*": "deny"`. Without one pattern per subcommand the worker
+    cannot fetch its order, and the failure looks exactly like a crash -- the
     orchestrator sees nothing and runs into `no_reply`.
+
+    The subcommand list is not repeated here: it is imported from the CLI that
+    owns it, so a seventh subcommand cannot ship without a permission beside
+    it. The builder's own gate -- the tests it is told to write and the commits
+    it is told to make -- is pinned right below it.
     """
 
     import json
@@ -3599,14 +3873,40 @@ auf:
 
     import pytest
 
+    from lean_herdr.report import SUBCOMMANDS
     from tests.test_config_files import load_jsonc
 
     ROOT = Path(__file__).resolve().parents[1]
     WORKERS = ("builder", "reviewer")
 
-    #: One pattern per subcommand. A wildcard behind the program name would let
-    #: through anything at all.
-    SUBCOMMANDS = ("next", "show", "start", "done", "fail", "ask")
+    #: The builder's own gate. roles/builder.md prescribes "TDD, small
+    #: commits", and `bash: {"*": "deny"}` plus the report patterns let it do
+    #: neither -- an opencode builder would fail on its first `uv run pytest`.
+    #: Exactly this list, nothing wider.
+    BUILDER_TOOLING = (
+        "uv run pytest*",
+        "uv run ruff*",
+        "git add*",
+        "git commit*",
+        "git diff*",
+        "git status*",
+    )
+
+
+    def opencode_key(command: str) -> str:
+        """One pattern per subcommand -- a wildcard behind the program name
+        would let through anything at all. `next` is the only one that takes no
+        flags, so it is the only one without a trailing ` *`.
+        """
+        return "bin/herdr-report next" if command == "next" else f"bin/herdr-report {command} *"
+
+
+    def claude_key(command: str) -> str:
+        return (
+            "Bash(bin/herdr-report next)"
+            if command == "next"
+            else f"Bash(bin/herdr-report {command}:*)"
+        )
 
 
     def opencode() -> dict:
@@ -3628,23 +3928,73 @@ auf:
         allowed = opencode()["agent"][role]["permission"]["bash"]
         assert allowed["*"] == "deny", "the default must stay deny"
         for command in SUBCOMMANDS:
-            key = "bin/herdr-report next" if command == "next" else f"bin/herdr-report {command} *"
-            assert allowed.get(key) == "allow", f"{role} cannot run `{command}`"
+            assert allowed.get(opencode_key(command)) == "allow", (
+                f"{role} cannot run `{command}`"
+            )
 
 
     def test_the_permission_is_never_a_bare_wildcard():
         for role in WORKERS:
-            assert "bin/herdr-report *" not in opencode()["agent"][role]["permission"]["bash"]
+            allowed = opencode()["agent"][role]["permission"]["bash"]
+            assert "bin/herdr-report *" not in allowed
+            assert "bin/herdr-report*" not in allowed
 
 
     def test_the_repo_ships_the_claude_permissions_too():
         """Without this file a fresh checkout on another machine is silent."""
-        allow = json.loads(
+        allow = claude_allow()
+        for command in SUBCOMMANDS:
+            assert claude_key(command) in allow, f"Claude Code cannot run `{command}`"
+
+
+    def claude_allow() -> list[str]:
+        return json.loads(
             (ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
         )["permissions"]["allow"]
-        assert "Bash(bin/herdr-report next)" in allow
-        for command in SUBCOMMANDS[1:]:
-            assert f"Bash(bin/herdr-report {command}:*)" in allow
+
+
+    def test_no_permission_file_names_a_subcommand_the_cli_does_not_have():
+        """The other direction, so the two lists cannot drift APART either.
+
+        `report.SUBCOMMANDS` is the one truth now; before it the six words stood
+        in four unbound copies and a seventh subcommand shipped green with no
+        permission anywhere. This catches the reverse: an allow left standing
+        for a subcommand that was renamed or removed.
+        """
+        expected = set(SUBCOMMANDS)
+        for role in WORKERS:
+            named = {
+                key.removeprefix("bin/herdr-report ").removesuffix(" *")
+                for key in opencode()["agent"][role]["permission"]["bash"]
+                if key.startswith("bin/herdr-report")
+            }
+            assert named == expected, f"{role}: {sorted(named ^ expected)}"
+        named = {
+            key.removeprefix("Bash(bin/herdr-report ").removesuffix(":*)").removesuffix(")")
+            for key in claude_allow()
+            if key.startswith("Bash(bin/herdr-report")
+        }
+        assert named == expected, f".claude/settings.json: {sorted(named ^ expected)}"
+
+
+    def test_the_builder_may_run_the_gate_its_role_text_demands():
+        """An agent told to do TDD has to be able to run a test.
+
+        The opencode `builder` block shipped as `bash: {"*": "deny"}` plus the
+        six report patterns -- so `uv run pytest` and `git commit` were both
+        denied, and the role text prescribing them could not be followed at all.
+        """
+        allowed = opencode()["agent"]["builder"]["permission"]["bash"]
+        assert allowed["*"] == "deny", "the fallback must stay deny"
+        for pattern in BUILDER_TOOLING:
+            assert allowed.get(pattern) == "allow", f"the builder cannot run `{pattern}`"
+
+
+    def test_the_builders_gate_is_not_a_blank_cheque():
+        """`nothing more` is half the operator's decision -- pin that half too."""
+        allowed = opencode()["agent"]["builder"]["permission"]["bash"]
+        for forbidden in ("git push*", "git *", "uv *", "uv run *", "rm*", "curl*"):
+            assert forbidden not in allowed, f"{forbidden} widens the builder's gate"
 
 
     def test_the_reviewer_still_may_not_write():
@@ -3807,9 +4157,22 @@ mit demselben stummen `no_reply` als Fehlerbild:
       --json '{"command":"bin/herdr-report --help"}'
 
 Expected: die Nutzungszeile. Kommt stattdessen `not in the shell allowlist`,
-fehlt der Eintrag; der Nachtrag steht in Task 8 im README:
+fehlt der Eintrag.
 
-    lean-ctx allow bin/herdr-report
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch — nachgemessen
+gegen lean-ctx 3.10.1.** Der Eintrag, den dieser Abschnitt vorschlug, konnte
+nie greifen, und noetig ist er ohnehin nicht. Zweierlei gemessen:
+(a) Das Tor normalisiert auf den **Basenamen**, bevor es vergleicht —
+`/usr/bin/tail --version` wird als „'tail' is not in the shell allowlist"
+abgewiesen, `bin/herdr-nonexistent-xyz` als
+„'herdr-nonexistent-xyz' is not in the shell allowlist". `lean-ctx allow`
+nimmt ein blankes `<cmd>`, und jeder Eintrag der wirksamen Liste ist ein
+blanker Name. Ein pfadfoermiger Eintrag `bin/herdr-report` wuerde also gegen
+nichts verglichen; die Schreibweise, die greifen KANN, ist `herdr-report`.
+(b) Der obige Aufruf lief — ohne jeden Eintrag, relativ wie absolut. Was ihn
+traegt, ist, dass das Skript im Projektwurzelverzeichnis existiert, nicht
+eine Freigabe. Task 8 nennt im README deshalb nur noch zwei Freigaben und
+sagt, was hier tatsaechlich gilt.
 
 ### Verify & Close
 
@@ -3845,7 +4208,10 @@ Ohne den Nachtrag endet dieser Task rot. Die Liste nennt kuenftig, was der READM
         for requirement in (
             "uv", "python3", "worktrunk", "herdr-worktrunk", "fzf", "jq",
             "lean-ctx allow herdr", "lean-ctx allow wt",
-            "lean-ctx allow bin/herdr-report",
+            # The path form was never able to match: the gate normalises to the
+            # basename and every allowlist entry is a bare name (measured on
+            # lean-ctx 3.10.1). The README names the spelling that CAN match.
+            "lean-ctx allow herdr-report",
             "wt config approvals", "warning:",
             # The work-order path, both halves of it. `ctx_task` used to stand
             # here; it is gone from the project, so requiring it would pin the
@@ -3893,15 +4259,27 @@ blanken `python3` des Wirtssystems, und
 haelt die Syntax deshalb auf `OLDEST_PYTHON = (3, 11)`. Eine Zahl in dieser Zeile
 waere entweder die falsche oder ein Widerspruch zum Test.
 
-Die Freigaben bekommen die dritte Zeile:
+Die Freigaben bleiben bei zwei, und der Abschnitt sagt, warum keine dritte
+noetig ist — der Abschluss-Review hat beides gemessen (7f):
 
-    lean-ctx allow herdr
-    lean-ctx allow wt
-    lean-ctx allow bin/herdr-report
+    Two approvals in lean-ctx, without which an agent under shell gating can
+    steer neither Herdr nor worktrunk:
 
-    Without the third one a lean-ctx-bound worker cannot fetch its order, and
-    the failure is silent: the orchestrator sees nothing and runs into
-    `no_reply`.
+        lean-ctx allow herdr
+        lean-ctx allow wt
+
+    `bin/herdr-report` needs no third line — measured against lean-ctx 3.10.1,
+    not assumed. The gate normalises a command to its **basename** before it
+    compares: `/usr/bin/tail --version` is refused as *"'tail' is not in the
+    shell allowlist"*, and `bin/herdr-nonexistent-xyz` as
+    *"'herdr-nonexistent-xyz' is not in the shell allowlist"*. `lean-ctx allow`
+    takes a bare `<cmd>` and every entry in the effective list is a bare name,
+    so a path-shaped entry `bin/herdr-report` would be compared against
+    nothing at all. What actually carries the call is that the script exists
+    inside the project root: `bin/herdr-report --help` runs through the gate
+    with `herdr-report` absent from the allowlist, by the relative and by the
+    absolute path alike. Should a worker ever be refused here anyway, the
+    spelling that can match is `lean-ctx allow herdr-report` — never the path.
 
 Neu, ein Abschnitt ueber den Auftragsweg — er ersetzt nichts, er stand bisher
 nirgends:
@@ -3955,9 +4333,27 @@ Task 7 vom `mcp-…`-Id auf den Agentennamen umgestellt hat:
     `ORCHESTRATOR = <name>` in both role files. The two must agree, or every
     order is refused.
 
+    That rename turns one test red:
+    `tests/test_roles.py::test_the_role_prompts_trust_the_name_dispatch_actually_stamps`
+    holds the `ORCHESTRATOR = …` line of both role files against the constant
+    `dispatch.ORCHESTRATOR_AGENT`, and the rename moves only the role files.
+    Either rename the anchor itself — `ORCHESTRATOR["name"]` in
+    `lean_herdr/handlers.py`, which the constant is imported from — and then
+    the test is green again and no `--from` is needed at all; or keep
+    `--from` and accept that one red test for as long as the rename lasts. Do
+    not "fix" it by loosening the test: it is the only guard that the sender
+    the workers trust and the sender dispatch stamps are the same string.
+
     Unlike the `ctx_task` path this replaced, the name is a claim, not a proof:
     the log stamps what the writer passes. The rule catches a stray order, not a
     determined one.
+
+**Nachtrag aus dem Abschluss-Review ueber den ganzen Branch.** Der
+Umbenennungspfad oben ist ein dokumentierter Betreiberpfad, der einen
+geschriebenen Test rot faerbt — wer ihm folgt, aendert `ORCHESTRATOR` in
+beiden Rollentexten, waehrend `dispatch.ORCHESTRATOR_AGENT` weiterhin `orch`
+nennt. Das README sagt das jetzt und nennt den besseren Weg: den Anker selbst
+umbenennen, statt den Betreiber in einen roten Testlauf laufen zu lassen.
 
 @call patch("README.md", "the four I10 corrections and the new work-order section")
 
