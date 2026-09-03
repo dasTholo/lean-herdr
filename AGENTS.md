@@ -9,9 +9,11 @@
 - **No Brief-/Report-Files**: ctx_session
 - **File size — no `lean_herdr/` file above 800 *production* LOC** (600 is the target).
   Production LOC = physical lines minus blank, comment and docstring lines. Measure it,
-  never `wc -l`: the two diverge widely in this tree — on 2026-09-03 `dispatch.py` stood
-  at 815 physical against 537 production, `llm.py` at 648 against 334. The rule has
-  always meant the second number.
+  never `wc -l`: the two diverge widely in this tree — measured 2026-09-03, at the close
+  of the pre-review work, the two largest files are `dispatch.py` at 817 physical
+  against 536 production and `llm.py` at 740 against 372. The rule has always meant the
+  second number. A quoted figure ages with the next commit, so re-measure before you
+  decide anything on one — these two are already the second reading this file has had.
 
 ## Language
 

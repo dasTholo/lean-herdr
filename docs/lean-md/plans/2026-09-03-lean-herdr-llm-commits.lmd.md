@@ -165,6 +165,13 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
   Einordnung: der historische `ordercmd.py`-Schnitt geschah bei 574 physisch /
   371 produktiv — `dispatch.py` hat 800 nach keinem der beiden Maße je
   überschritten, anders als sein eigener Kommentar behauptete.
+
+  **Nachtrag vom selben Tag, nach Task 7 und den Review-Korrekturen:** die Zahlen
+  oben sind der Stand von Task 6. Beim Abschluss des Branches misst der Baum
+  `dispatch.py` 817 physisch / **536 produktiv** und `llm.py` 740 / **372** —
+  beide weiter unter dem Ziel von 600, der Schnitt bleibt entfallen. Zitierte
+  Zahlen altern mit dem nächsten Commit; AGENTS.md trägt seit dieser Korrektur
+  den Hinweis, neu zu messen statt zu zitieren.
 - **Non-Goals** (Ablehnungsgrund im Review, kein Versäumnis): kein eigenes
   Commit-Template (worktrunk rendert, wir hängen nur `template-append` an); kein
   blockierendes Modell-Urteil vor dem Merge (der pre-merge-Hook bleibt das Tor);
@@ -2476,13 +2483,18 @@ An `tests/test_llm.py` anhängen:
 
 
     def test_a_failing_wt_diff_says_so_and_judges_nothing(monkeypatch, capsys):
+        """Eine Ursache, eine Antwort: dasselbe `skipped` wie auf dem
+        --await-Pfad. Exit 1 heisst dann genau eine Sache -- das Modell hat
+        abgelehnt."""
         monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: None)
         monkeypatch.setattr(
             llm, "prereview",
             lambda *a, **kw: pytest.fail("nothing may be judged without a diff"),
         )
-        assert llm.main(["prereview", "-C", "/gone"]) == 1
-        assert "step diff` failed" in capsys.readouterr().err
+        assert llm.main(["prereview", "-C", "/gone"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == "skipped\ndiff_failed\n"
+        assert "step diff` failed" in captured.err
 
 
     @pytest.mark.integration
