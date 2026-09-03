@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from lean_herdr.orderlog import append, read_events
+from lean_herdr.orderlog import append, read_events, state_dir
 from lean_herdr.orders import fold
 from lean_herdr.report import (
     AGENT_ENV,
@@ -27,6 +27,17 @@ ORCH = "orchestrator"
 def order(tmp_path, task, *, to_agent=ME, description="build it", **payload):
     append(task, "created", ORCH, {"to_agent": to_agent, "description": description, **payload}, orders=tmp_path)
     return task
+
+
+def _break_chain(orders_dir, task_id):
+    """Tamper the sole committed event so the chain no longer verifies --
+    the same trick test_orderlog.py's test_a_changed_body_breaks_the_chain
+    uses, one level up.
+    """
+    (path,) = sorted((Path(orders_dir) / task_id / "events").glob("*.json"))
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["payload"]["description"] = "tampered"
+    path.write_bytes(json.dumps(body, sort_keys=True, separators=(",", ":")).encode())
 
 
 # -- identity ---------------------------------------------------------
@@ -111,6 +122,19 @@ def test_a_finished_order_takes_no_further_event(tmp_path):
     assert "already completed" in report(ME, "done", "o-a-1", "again", orders_dir=tmp_path)["error"]
 
 
+def test_an_unknown_event_kind_never_counts_as_terminal(tmp_path):
+    """`is_terminal()` only names completed/failed/canceled -- an unknown
+    kind must fold into a state of its own and still take a write. Same
+    rule fold()'s own docstring holds for a format change: it must land on
+    a visible state, never on a silent block.
+    """
+    order(tmp_path, "o-a-1")
+    append("o-a-1", "vanished", ME, {}, orders=tmp_path)
+    result = report(ME, "done", "o-a-1", "closing anyway", orders_dir=tmp_path)
+    assert result["ok"] is True
+    assert fold(read_events("o-a-1", orders=tmp_path)).state == "completed"
+
+
 def test_an_unknown_order_is_not_found(tmp_path):
     assert report(ME, "start", "o-nope", "", orders_dir=tmp_path)["error"] == "task_not_found"
 
@@ -130,6 +154,32 @@ def test_show_lists_the_answer_as_its_own_event(tmp_path):
 
 # -- the CLI shell ----------------------------------------------------
 
+def _one_json_line(capsys) -> dict:
+    """Exactly one JSON line on stdout -- main()'s own contract, spelled
+    out here so the broken-log guard tests below can lean on it instead
+    of re-deriving it.
+    """
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    return json.loads(lines[0])
+
+
+@pytest.fixture
+def main_root(tmp_path, monkeypatch):
+    """Isolate main()'s own canonical_root()/state_dir() resolution under
+    tmp_path -- report.py's twin of test_dispatch_await.py's own
+    main_root fixture. Needed only by the broken-log guard tests below:
+    those must prove the guard survives all the way through main(), not
+    just through next_order()/report() called directly.
+    """
+    root = tmp_path / "repo"
+    root.mkdir()
+    monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setattr("lean_herdr.report.canonical_root", lambda *a, **kw: root)
+    monkeypatch.setenv(AGENT_ENV, ME)
+    return root
+
+
 def test_a_usage_error_is_a_json_line_and_exit_zero(capsys):
     assert main(["done", "--task", "o-a-1"]) == 0
     answer = json.loads(capsys.readouterr().out)
@@ -139,9 +189,46 @@ def test_a_usage_error_is_a_json_line_and_exit_zero(capsys):
 
 def test_an_unknown_subcommand_lands_on_stdout_too(capsys):
     assert main(["note", "--task", "o-a-1"]) == 0
-    assert json.loads(capsys.readouterr().out)["ok"] is False
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("usage_error")
 
 
 def test_next_takes_no_flags(capsys):
     assert main(["next", "--task", "o-a-1"]) == 0
     assert "next does not take --task" in json.loads(capsys.readouterr().out)["error"]
+
+
+def test_next_never_reads_a_broken_log_as_no_open_order(main_root, capsys):
+    """The Global Constraint made concrete: a broken log is an error,
+    never a 'nothing to do'. `next_order()` legitimately answers the
+    {"ok": True, "task_id": None, "text": "no open order"} shape on an
+    EMPTY log (test_next_skips_a_finished_order's sibling case) -- a
+    destroyed one must come back looking nothing like it, the read path's
+    own twin of test_dispatch_await.py's
+    test_a_broken_chain_is_never_success_by_silence.
+    """
+    orders_dir = state_dir(main_root)
+    order(orders_dir, "o-a-1")
+    _break_chain(orders_dir, "o-a-1")
+    assert main(["next"]) == 0
+    result = _one_json_line(capsys)
+    assert result["ok"] is False
+    assert result["error"].startswith("chain_broken")
+    assert result != {"ok": True, "agent": ME, "task_id": None, "text": "no open order"}
+
+
+def test_done_never_reads_a_broken_log_as_task_not_found(main_root, capsys):
+    """report()'s own twin: a destroyed log must not fold into an empty
+    Order and answer `task_not_found` -- that is `_mine()`'s \"nothing to
+    act on\" shape (test_an_unknown_order_is_not_found), and a chain break
+    is not the same thing as an order that never existed.
+    """
+    orders_dir = state_dir(main_root)
+    order(orders_dir, "o-a-1")
+    _break_chain(orders_dir, "o-a-1")
+    assert main(["done", "--task", "o-a-1", "--message", "x"]) == 0
+    result = _one_json_line(capsys)
+    assert result["ok"] is False
+    assert result["error"].startswith("chain_broken")
+    assert result != {"ok": False, "task_id": "o-a-1", "error": "task_not_found"}

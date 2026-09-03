@@ -78,7 +78,8 @@ def test_an_unknown_subcommand_is_not_a_crash(capsys):
 
 
 def test_the_package_parses_on_the_python3_the_manifest_may_meet():
-    """Every command here spawns a bare `python3` -- so does bin/herdr-dispatch.
+    """Every command here spawns a bare `python3` -- so do bin/herdr-dispatch
+    and bin/herdr-report.
 
     That interpreter is whatever the host provides, never the pinned one from
     `uv`. Syntax it cannot parse kills the handler at IMPORT time, before
