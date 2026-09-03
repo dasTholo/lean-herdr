@@ -26,6 +26,20 @@ from lean_herdr.bus import (
 from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import Herdr
 from lean_herdr.join import resolve_agent_id
+
+# The write path lives next door since dispatch.py crossed 800 LOC (plan 3g).
+# `_await_result` went with it -- both sides need that result shape, and
+# keeping it here would have made the import circular.
+from lean_herdr.ordercmd import (
+    ORCHESTRATOR_AGENT,
+    OrderRequest,
+    _await_result,
+    answer_order,
+    cancel_order,
+    create_order,
+)
+from lean_herdr.orderlog import OrderLogError, lean_ctx_data_dir, read_events, state_dir
+from lean_herdr.orders import Order, fold, message_from
 from lean_herdr.settings import (
     DEFAULT_PROFILE,
     PROFILE_BY_ROLE,
@@ -34,14 +48,6 @@ from lean_herdr.settings import (
     SettingsError,
     read_settings,
     settings_for,
-)
-from lean_herdr.tasks import (
-    Task,
-    TaskError,
-    find_task,
-    message_from,
-    read_tasks,
-    task_store_path,
 )
 from lean_herdr.worktree import (
     WorktreeOpenFailed,
@@ -63,12 +69,19 @@ POLL_INTERVAL_S = 1.0
 #: for AwaitRequest -- two copies would drift apart unnoticed.
 DEFAULT_TIMEOUT_MS = 300_000
 
-#: Exactly one ring per wait call. The payload lives in the task store.
-#: Worded neutrally, because the same text also wakes a task resumed after a
-#: question -- then it is not new. And it points at `get`, not `list`: only
-#: `get` prints the history that carries the orchestrator's answer. English,
-#: like the role prompt it is spoken into.
-WAKE_PROMPT = "Task {task_id} is waiting for you -- ctx_task get shows order and history."
+#: Exactly one ring per wait call. The payload lives in the order log.
+#: Worded neutrally, because the same text also wakes a worker whose order
+#: continues after a question -- then it is not new. English, like the role
+#: prompt it is spoken into.
+WAKE_PROMPT = (
+    "Order {task_id} is waiting for you -- bin/herdr-report next shows it, "
+    "bin/herdr-report show --task {task_id} its history."
+)
+
+#: Words the positional slot takes INSTEAD of a role. They write into the
+#: log: no worker, no kind, no model, no worktree. Every other value is a
+#: role and builds one or waits for one. (`remember` joins them in task 5.)
+LOG_COMMANDS = ("order", "answer", "cancel")
 
 #: Machine-readable verdict on the FIRST line of the completion message.
 #: Replaces the bus field `category` that fell away: without it the
@@ -129,16 +142,19 @@ def agent_args(kind: str, model: str, role_file: Path) -> list[str]:
 
 
 def default_registry_path() -> Path:
-    """The registry NEXT TO the task store -- same install, same resolution.
+    """The registry inside the SAME lean-ctx install the rest of us read.
 
     `bus.REGISTRY_PATH` is the hardcoded XDG default, while
-    `tasks.task_store_path()` honours `LEAN_CTX_DATA_DIR`, a legacy
-    `~/.lean-ctx` and `XDG_*`. Both name the SAME `agents/` directory, so
+    `orderlog.lean_ctx_data_dir()` honours `LEAN_CTX_DATA_DIR`, a legacy
+    `~/.lean-ctx` and `XDG_*`. Both name the same `agents/` directory, so
     without this the build mode read an absent registry -- a full
-    `ready_timeout_s` stall ending in `no_agent_id` -- exactly where the wait
-    mode read the right store.
+    `ready_timeout_s` stall ending in `no_agent_id`.
+
+    One resolution, not two (M3): this builds on the same function
+    `orderlog.state_dir()` builds on, never on a second copy of the
+    precedence.
     """
-    return task_store_path().parent / "registry.json"
+    return lean_ctx_data_dir() / "agents" / "registry.json"
 
 
 def wait_for_agent_id(
@@ -236,6 +252,13 @@ def dispatch(
                     req.role, req.profile, settings=cfg
                 ),
                 "LEAN_CTX_ROLE": req.role,
+                # The worker's own name, so `herdr-report` does not have to
+                # derive it. Derivation from role plus branch disagrees with
+                # this side whenever the dispatch carried no `--worktree`:
+                # here the agent is `builder`, there it would be
+                # `builder-feat-x`, and an order under the wrong name
+                # reaches nobody.
+                "LEAN_HERDR_AGENT": name,
             },
         ) or ""
         if not pane:
@@ -252,11 +275,13 @@ def dispatch(
     )
     if not agent_id:
         return _result(False, pane, None, error="no_agent_id")
-    # This is the end. The orchestrator creates the task itself through
-    # ctx_task, with exactly this agent_id as to_agent: tasks_for_agent()
-    # compares exactly as a string (core/a2a/task.rs:236), a friendly name
-    # would never find the task.
-    return _result(True, pane, agent_id)
+    # This is the end. The orchestrator creates the order itself, with
+    # exactly this `agent` as `--to`: the worker resolves the very same name
+    # out of its environment, so the two sides cannot drift. `agent_id`
+    # stays in the answer as the readiness receipt -- the agent came up and
+    # registered with lean-ctx -- and for the escalation line of the role
+    # prompt.
+    return _result(True, pane, agent_id, agent=name)
 
 
 @dataclass(frozen=True)
@@ -307,41 +332,37 @@ def _worker_root(worktree: str | None, *, herdr: Herdr, root: Path) -> Path:
     return Path(path) if path else root
 
 
-def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
-    return {"ok": ok, "task_id": task_id, **rest}
-
-
-def _result_for_state(task: Task) -> dict[str, Any] | None:
+def _result_for_state(order: Order) -> dict[str, Any] | None:
     """The return for this state -- or None if we keep waiting.
 
     `input-required` returns even though is_terminal() does not call it
-    terminal: only the orchestrator can answer, and it is asleep inside this
-    very call. Without this return the script would wait for something that
-    cannot happen without it.
+    terminal: only the orchestrator can answer, and it is asleep inside
+    this very call. Without this return the script would wait for
+    something that cannot happen without it.
     """
-    message = message_from(task, task.to_agent)
-    if task.state == "completed":
+    message = message_from(order, order.to_agent)
+    if order.state == "completed":
         result = _await_result(
-            True, task.id, state=task.state, message=message or ""
+            True, order.id, state=order.state, message=message or ""
         )
         ruling = verdict(message)
         if ruling:
             result["verdict"] = ruling
         return result
-    if task.state == "failed":
+    if order.state == "failed":
         return _await_result(
             False,
-            task.id,
-            state=task.state,
+            order.id,
+            state=order.state,
             error=f"agent_failed: {message or 'no reason given'}",
         )
-    if task.state == "canceled":
-        return _await_result(False, task.id, state=task.state, error="task_canceled")
-    if task.state == "input-required":
+    if order.state == "canceled":
+        return _await_result(False, order.id, state=order.state, error="task_canceled")
+    if order.state == "input-required":
         return _await_result(
             False,
-            task.id,
-            state=task.state,
+            order.id,
+            state=order.state,
             error="input_required",
             message=message or "",
         )
@@ -353,13 +374,13 @@ def await_task(
     *,
     herdr: Herdr,
     root: Path,
-    tasks_path: str | Path | None = None,
+    orders_dir: str | Path | None = None,
     interval_s: float = POLL_INTERVAL_S,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
     settings: RoleSettings | None = None,
 ) -> dict[str, Any]:
-    """Wait for the state change the worker sets itself.
+    """Wait for the event the worker writes itself.
 
     The waiting stays in the script: no CLI, no registration, no model step
     per round. Never raises; the result carries `ok`.
@@ -368,25 +389,30 @@ def await_task(
     agent's name, and a ring under a different name reaches nobody.
     """
     name = agent_name(req.role, req.worktree, settings=settings)
+    try:
+        # ONCE, before the loop. state_dir() resolves canonical_root()
+        # through git; inside the loop that would be a subprocess per poll
+        # round -- exactly the cost the wait mode exists to avoid.
+        directory = orders_dir if orders_dir is not None else state_dir(root)
+    except OrderLogError as exc:
+        return _await_result(False, req.task_id, error=str(exc))
     deadline = now() + req.timeout_ms / 1000.0
     has_rung = False
     state = ""
     while True:
         try:
-            tasks = read_tasks(tasks_path)
-        except TaskError as exc:
-            return _await_result(
-                False, req.task_id, error=f"tasks_unreadable: {exc}"
-            )
-        task = find_task(tasks, req.task_id)
-        if task is None:
-            # The orchestrator created the task BEFORE this call, and
-            # ctx_task renames the finished file into place before it
-            # answers (core/a2a/task.rs:213). Missing here means the id is
-            # wrong -- waiting will not change that.
+            events = read_events(req.task_id, orders=directory)
+        except OrderLogError as exc:
+            return _await_result(False, req.task_id, error=str(exc))
+        if not events:
+            # The orchestrator wrote the `created` event BEFORE this call,
+            # and append() renames the finished file into place before it
+            # returns. Nothing here means the id is wrong -- waiting will
+            # not change that.
             return _await_result(False, req.task_id, error="task_not_found")
-        state = task.state
-        outcome = _result_for_state(task)
+        order = fold(events)
+        state = order.state
+        outcome = _result_for_state(order)
         if outcome is not None:
             return outcome
         if not has_rung:
@@ -438,8 +464,15 @@ def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
         prog="herdr-dispatch", description="Build or wait -- one call."
     )
-    p.add_argument("role", help="builder | reviewer | orchestrator")
-    p.add_argument("--kind", required=True, choices=("claude", "opencode"))
+    p.add_argument(
+        "command",
+        help="builder | reviewer | orchestrator | order | answer | cancel",
+    )
+    # No longer `required=True`: `order` and `cancel` take no kind, and
+    # argparse would refuse a perfectly valid call. missing_flags() enforces it
+    # for the two modes that DO need it -- there it answers with a JSON line
+    # instead of exit 2.
+    p.add_argument("--kind", default=None, choices=("claude", "opencode"))
     # `--await` would yield the dest `await` -- a keyword, unreachable as
     # args.await. The dest MUST be set.
     p.add_argument(
@@ -467,6 +500,23 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"only with --await (default {DEFAULT_TIMEOUT_MS})",
     )
+    p.add_argument(
+        "--to", default=None, help="required with `order`: the worker's agent name"
+    )
+    p.add_argument(
+        "--after", default=None, help="only with `order`: the predecessor's task id"
+    )
+    p.add_argument(
+        "--message", default=None, help="required with `order` and `cancel`"
+    )
+    # `--from` needs `dest=` for the same reason as `--await`: `from` is a
+    # keyword and would be unreachable as args.from.
+    p.add_argument(
+        "--from",
+        dest="from_agent",
+        default=None,
+        help=f"the sender stamped into the event (default {ORCHESTRATOR_AGENT})",
+    )
     return p
 
 
@@ -480,15 +530,59 @@ def missing_flags(args: argparse.Namespace) -> str | None:
 
     `required=True` ends the process with exit 2 and one line on stderr.
     The orchestrator reads `ok` on stdout; a typo would look to it like no
-    output at all.
-
-    The same holds for the flags of the OTHER mode: argparse accepts every
-    one of them in both, and the mode that does not read them drops them
-    without a word -- `--timeout-ms` in build mode, though its own help says
-    "only with --await", and `--model`/`--role-file`/`--profile` under
-    `--await`. A non-positive `--timeout-ms` bought exactly one ring and an
-    immediate `no_reply`.
+    output at all. The same holds for the flags of the OTHER modes:
+    argparse accepts every one of them everywhere, and the mode that does
+    not read them drops them without a word -- `--timeout-ms` in build
+    mode, though its own help says "only with --await", and
+    `--model`/`--role-file`/`--profile` under `--await`. A non-positive
+    `--timeout-ms` bought exactly one ring and an immediate `no_reply`.
     """
+    if args.command in LOG_COMMANDS:
+        if args.waiting:
+            return f"`{args.command}` does not take --await"
+        stray = _given(
+            ("--kind", args.kind),
+            ("--model", args.model),
+            ("--role-file", args.role_file),
+            ("--profile", args.profile),
+            ("--worktree", args.worktree),
+            ("--timeout-ms", args.timeout_ms),
+        )
+        if stray:
+            return f"`{args.command}` does not take {stray}"
+        if args.command == "order":
+            missing = [
+                flag
+                for flag, value in (("--to", args.to), ("--message", args.message))
+                if not value
+            ]
+            return f"order needs {' and '.join(missing)}" if missing else None
+        # answer and cancel: same two flags, and neither takes --to/--after.
+        stray = _given(("--to", args.to), ("--after", args.after))
+        if stray:
+            return f"`{args.command}` does not take {stray}"
+        missing = [
+            flag
+            for flag, value in (
+                ("--task-id", args.task_id),
+                ("--message", args.message),
+            )
+            if not value
+        ]
+        return f"{args.command} needs {' and '.join(missing)}" if missing else None
+    # The role modes take none of the log commands' flags. Worded
+    # generically, not as a list: the list grows (task 5 adds --key) and an
+    # enumeration would be wrong the next time.
+    stray = _given(
+        ("--to", args.to),
+        ("--after", args.after),
+        ("--message", args.message),
+        ("--from", args.from_agent),
+    )
+    if stray:
+        return f"{stray} belongs to a log command"
+    if not args.kind:
+        return "--kind is required"
     if args.waiting:
         if not args.task_id:
             return "--await needs --task-id"
@@ -535,11 +629,30 @@ def main(argv: list[str] | None = None) -> int:
             # `config_error: <reason>` -- an operator's wrong config value is
             # not a crash.
             root = canonical_root()
-            settings = settings_for(args.role, read_settings(root / SETTINGS_PATH))
-            if args.waiting:
+            settings = settings_for(args.command, read_settings(root / SETTINGS_PATH))
+            sender = args.from_agent or ORCHESTRATOR_AGENT
+            if args.command == "order":
+                result = create_order(
+                    OrderRequest(
+                        to_agent=args.to,
+                        message=args.message,
+                        after=args.after,
+                        actor=sender,
+                    ),
+                    root=root,
+                )
+            elif args.command == "answer":
+                result = answer_order(
+                    args.task_id, args.message, root=root, actor=sender
+                )
+            elif args.command == "cancel":
+                result = cancel_order(
+                    args.task_id, args.message, root=root, actor=sender
+                )
+            elif args.waiting:
                 result = await_task(
                     AwaitRequest(
-                        role=args.role,
+                        role=args.command,
                         kind=args.kind,
                         task_id=args.task_id,
                         worktree=args.worktree,
@@ -552,7 +665,7 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 result = dispatch(
                     DispatchRequest(
-                        role=args.role,
+                        role=args.command,
                         kind=args.kind,
                         model=args.model,
                         role_file=args.role_file,

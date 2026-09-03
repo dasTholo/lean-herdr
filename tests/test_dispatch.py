@@ -119,11 +119,47 @@ def test_build_mode_returns_pane_and_agent_id_and_creates_nothing(world):
     """The build mode is finished the moment the agent_id is resolved."""
     h_proc, _ = world
     result = run_dispatch(world, reg=registry())
-    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
+    assert result == {
+        "ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"
+    }
     assert h_proc.called_with("agent", "start"), "the worker is running"
     assert not h_proc.called_with("agent", "prompt", "--wait"), (
         "the build mode neither rings nor waits"
     )
+
+
+def test_the_build_mode_hands_out_the_agent_name(world):
+    """The orchestrator must not have to rebuild the name template by hand."""
+    result = run_dispatch(world, reg=registry())
+    assert result["agent"] == "builder"
+
+
+def test_the_pane_carries_the_agent_name_in_its_environment(world):
+    """The worker resolves its own name from here -- no derivation, no drift.
+
+    Built like the existing worktree tests: `world` is (FakeProc, path), the
+    branch rides on `request=req(worktree=...)` -- `dispatch()` has no
+    `worktree` parameter -- and the worktree replies must be in place or
+    ensure_worktree() falls through to the real `wt` binary.
+    """
+    h_proc, _ = world
+    h_proc.replies = {
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
+        ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+        ("worktree", "list"): {
+            "result": {
+                "source": {"repo_root": "/repo"},
+                "worktrees": [
+                    {"branch": "feat/auth", "path": "/repo.feat-auth",
+                     "open_workspace_id": "w2"}
+                ],
+            }
+        },
+    }
+    result = run_dispatch(world, reg=registry(), request=req(worktree="feat/auth"))
+    assert result["agent"] == "builder-feat-auth"
+    split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+    assert "LEAN_HERDR_AGENT=builder-feat-auth" in " ".join(split)
 
 
 def test_the_profile_is_set_on_the_pane_not_on_the_agent(world):
@@ -210,6 +246,7 @@ def test_without_a_config_file_the_split_is_the_one_from_before(world, tmp_path)
         "--cwd", "/repo", "--no-focus",
         "--env", "LEAN_CTX_TOOL_PROFILE=standard",
         "--env", "LEAN_CTX_ROLE=builder",
+        "--env", "LEAN_HERDR_AGENT=builder",
     ]
 
 
@@ -225,20 +262,20 @@ def test_an_existing_agent_is_reused_and_cleared(world):
     assert "--wait" not in clear, "/clear without --wait (H4)"
 
 
-def test_the_build_mode_reads_the_registry_the_task_store_points_at(
+def test_the_build_mode_reads_the_registry_the_data_dir_points_at(
     monkeypatch, tmp_path
 ):
     """Both halves of one dispatch must read the SAME lean-ctx install.
 
     `bus.REGISTRY_PATH` is the hardcoded XDG default, while
-    `tasks.task_store_path()` honours `LEAN_CTX_DATA_DIR`, a legacy
+    `orderlog.lean_ctx_data_dir()` honours `LEAN_CTX_DATA_DIR`, a legacy
     `~/.lean-ctx` and `XDG_*` -- for the same `agents/` directory. Reading
     the hardcoded one let the build mode stall into `no_agent_id` on every
-    non-default install, while the wait mode read the right store.
+    non-default install, while the wait mode read the right log.
     """
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     # The hardcoded default is deliberately absent here: only the resolution
-    # via the task store can still find the agent.
+    # via the lean-ctx data dir can still find the agent.
     monkeypatch.setattr("lean_herdr.bus.REGISTRY_PATH", tmp_path / "nowhere.json")
     data = tmp_path / "data"
     (data / "agents").mkdir(parents=True)
@@ -257,7 +294,9 @@ def test_the_build_mode_reads_the_registry_the_task_store_points_at(
 
     result = dispatch(req(), herdr=Herdr(runner=h_proc), root=ROOT)
 
-    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
+    assert result == {
+        "ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"
+    }
 
 
 def test_without_an_agent_id_the_script_reports_an_error(world):

@@ -130,7 +130,9 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 1
     result = json.loads(lines[0])
-    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
+    assert result == {
+        "ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"
+    }
 
 
 # -- Gap 3: wait_for_agent_id() run for real -------------------------------
@@ -187,6 +189,22 @@ def test_wait_for_agent_id_returns_none_when_no_pane_ever_appears(monkeypatch):
 
     assert agent_id is None
     assert sleeps == [], "the deadline was already past on the first check"
+
+
+def test_an_unreadable_registry_does_not_end_the_readiness_wait(monkeypatch, tmp_path):
+    """A broken registry must run into the timeout, not out of the function."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    broken = tmp_path / "registry.json"
+    broken.write_text("{not json", encoding="utf-8")
+    proc = FakeProc()
+    proc.replies = {
+        ("agent", "list"): {"result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}},
+        ("pane", "process-info"): {"result": {"process_info": {"shell_pid": 4242}}},
+    }
+    assert wait_for_agent_id(
+        Herdr(runner=proc), "builder",
+        registry_path=broken, timeout_s=0, interval_s=0, sleep=lambda _s: None,
+    ) is None
 
 
 # -- Gap 4: pane_split_failed -----------------------------------------------

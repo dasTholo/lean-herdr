@@ -5,33 +5,35 @@ import pytest
 
 from lean_herdr.dispatch import (
     DEFAULT_TIMEOUT_MS,
+    ORCHESTRATOR_AGENT,
     AwaitRequest,
+    OrderRequest,
+    answer_order,
     await_task,
+    cancel_order,
+    create_order,
     main,
     verdict,
 )
 from lean_herdr.herdr import Herdr
+from lean_herdr.orderlog import append, read_events
+from lean_herdr.orders import fold, message_from
 from tests.doubles import FakeProc, which_stub
 
 ROOT = Path("/repo")
-WORKER = "mcp-2018183-70c877bf"
-TASK_ID = "task-1a05e34cd15-1cf3b885"
+WORKER = "builder-feat-x"
+TASK_ID = "o-1a05e34cd15-1cf3b885"
 
 
-def message(role: str, text: str) -> dict:
-    return {"role": role, "parts": [{"type": "text", "text": text}]}
+def log(tmp_path, *events, task=TASK_ID):
+    """Build an order log from (kind, actor, payload) triples."""
+    for kind, actor, payload in events:
+        append(task, kind, actor, payload, orders=tmp_path)
+    return tmp_path
 
 
-def raw_task(state: str = "Working", *, reply: str | None = None) -> dict:
-    messages = [message("orch", "build foo")]
-    if reply is not None:
-        messages.append(message(WORKER, reply))
-    return {
-        "id": TASK_ID, "from_agent": "orch", "to_agent": WORKER,
-        "state": state, "description": "build foo", "messages": messages,
-        "artifacts": [], "history": [], "metadata": {},
-        "created_at": "2026-09-02T10:00:00Z", "updated_at": "2026-09-02T10:05:00Z",
-    }
+def created(to_agent=WORKER, description="build foo", **rest):
+    return ("created", "orchestrator", {"to_agent": to_agent, "description": description, **rest})
 
 
 @pytest.fixture
@@ -42,32 +44,29 @@ def herdr(monkeypatch):
     return Herdr(runner=proc), proc
 
 
-def wait(
-    herdr, tmp_path, *tasks, timeout_ms=300_000, role="builder", worktree=None, **rest
-):
-    path = tmp_path / "tasks.json"
-    path.write_text(
-        json.dumps({"tasks": list(tasks), "updated_at": ""}), encoding="utf-8"
-    )
+def wait(herdr, tmp_path, *events, timeout_ms=300_000, role="builder", worktree=None, **rest):
+    log(tmp_path, *events)
     h, _ = herdr
     return await_task(
         AwaitRequest(
-            role=role,
-            kind="claude",
-            task_id=TASK_ID,
-            worktree=worktree,
-            timeout_ms=timeout_ms,
+            role=role, kind="claude", task_id=TASK_ID,
+            worktree=worktree, timeout_ms=timeout_ms,
         ),
         herdr=h,
         root=ROOT,
-        tasks_path=path,
+        orders_dir=tmp_path,
         sleep=lambda _s: None,
         **rest,
     )
 
 
 def test_completed_is_success_with_the_closing_message(herdr, tmp_path):
-    result = wait(herdr, tmp_path, raw_task("Completed", reply="done, three tests green"))
+    result = wait(
+        herdr, tmp_path,
+        created(),
+        ("working", WORKER, {}),
+        ("completed", WORKER, {"message": "done, three tests green"}),
+    )
     assert result["ok"] is True
     assert result["state"] == "completed"
     assert result["message"] == "done, three tests green"
@@ -77,34 +76,40 @@ def test_completed_is_success_with_the_closing_message(herdr, tmp_path):
 def test_an_already_terminal_state_does_not_ring_at_all(herdr, tmp_path):
     """The orchestrator may repeat --await safely."""
     _, proc = herdr
-    wait(herdr, tmp_path, raw_task("Completed", reply="done"))
+    wait(herdr, tmp_path, created(), ("completed", WORKER, {"message": "done"}))
     assert not proc.called_with("agent", "prompt")
 
 
 def test_failed_carries_the_workers_reason(herdr, tmp_path):
-    result = wait(herdr, tmp_path, raw_task("Failed", reply="test 4 cannot be fixed"))
+    result = wait(
+        herdr, tmp_path, created(),
+        ("failed", WORKER, {"message": "test 4 cannot be fixed"}),
+    )
     assert result["ok"] is False
     assert result["error"] == "agent_failed: test 4 cannot be fixed"
 
 
 def test_failed_without_a_reason_does_not_lie(herdr, tmp_path):
-    """The task description is not a reason given by the worker."""
-    result = wait(herdr, tmp_path, raw_task("Failed"))
+    """The order description is not a reason given by the worker."""
+    result = wait(herdr, tmp_path, created(), ("failed", WORKER, {}))
     assert result["error"] == "agent_failed: no reason given"
 
 
 def test_canceled_has_its_own_code(herdr, tmp_path):
-    assert wait(herdr, tmp_path, raw_task("Canceled"))["error"] == "task_canceled"
+    result = wait(herdr, tmp_path, created(), ("canceled", WORKER, {}))
+    assert result["error"] == "task_canceled"
 
 
 def test_input_required_returns_with_the_question(herdr, tmp_path):
     """Only the orchestrator can answer -- it has to be woken."""
     result = wait(
-        herdr, tmp_path, raw_task("InputRequired", reply="main or develop?")
+        herdr, tmp_path,
+        created(),
+        ("input-required", WORKER, {"message": "which branch strategy?"}),
     )
     assert result["ok"] is False
     assert result["error"] == "input_required"
-    assert result["message"] == "main or develop?"
+    assert result["message"] == "which branch strategy?"
 
 
 def test_the_verdict_is_read_from_the_first_line_only():
@@ -122,7 +127,8 @@ def test_the_verdict_is_read_from_the_first_line_only():
 def test_the_reviewers_verdict_comes_back_machine_readable(herdr, tmp_path):
     result = wait(
         herdr, tmp_path,
-        raw_task("Completed", reply="VERDIKT: reject\ntests/test_foo.py is missing"),
+        created(),
+        ("completed", WORKER, {"message": "VERDIKT: reject\ntests/test_foo.py is missing"}),
         role="reviewer",
     )
     assert result["ok"] is True, "the reviewer delivered -- reject is not a failure"
@@ -133,7 +139,8 @@ def test_an_open_state_rings_once_and_runs_into_the_timeout(herdr, tmp_path):
     _, proc = herdr
     clock = iter([0.0, 0.0, 5.0, 5.0, 20.0])
     result = wait(
-        herdr, tmp_path, raw_task("Working"), timeout_ms=10_000, now=lambda: next(clock)
+        herdr, tmp_path, created(), ("working", WORKER, {}),
+        timeout_ms=10_000, now=lambda: next(clock),
     )
     assert result["error"] == "no_reply"
     assert result["state"] == "working"
@@ -174,7 +181,7 @@ def test_a_crashed_worker_becomes_agent_error(herdr, tmp_path, monkeypatch):
     )
     clock = iter([0.0, 0.0, 99.0])
     result = wait(
-        (h, proc), tmp_path, raw_task("Created"), timeout_ms=1_000, now=lambda: next(clock)
+        (h, proc), tmp_path, created(), timeout_ms=1_000, now=lambda: next(clock)
     )
     assert result["error"] == "agent_error: APIError: User not found. (401)"
 
@@ -231,7 +238,7 @@ def test_a_crashed_worktree_worker_becomes_agent_error_too(
     result = wait(
         (h, proc),
         tmp_path,
-        raw_task("Created"),
+        created(),
         timeout_ms=1_000,
         worktree="feat/auth",
         now=lambda: next(clock),
@@ -271,7 +278,7 @@ def test_timeout_for_a_gone_worktree_creates_nothing(herdr, tmp_path, monkeypatc
     result = wait(
         (h, proc),
         tmp_path,
-        raw_task("Created"),
+        created(),
         timeout_ms=1_000,
         worktree="feat/gone",
         now=lambda: next(clock),
@@ -283,20 +290,24 @@ def test_timeout_for_a_gone_worktree_creates_nothing(herdr, tmp_path, monkeypatc
     )
 
 
-def test_an_unreadable_store_is_never_success_by_silence(herdr, tmp_path):
-    path = tmp_path / "tasks.json"
-    path.write_text("{broken", encoding="utf-8")
+def test_a_broken_chain_is_never_success_by_silence(herdr, tmp_path):
+    """A destroyed log must not look like 'nothing to do'."""
+    log(tmp_path, created(), ("working", WORKER, {}))
+    first, _second = sorted(
+        p for p in (tmp_path / TASK_ID / "events").iterdir() if p.suffix == ".json"
+    )
+    first.unlink()
     h, _ = herdr
     result = await_task(
-        AwaitRequest(role="builder", kind="claude", task_id=TASK_ID),
-        herdr=h, root=ROOT, tasks_path=path, sleep=lambda _s: None,
+        AwaitRequest(role="builder", kind="claude", task_id=TASK_ID, timeout_ms=1000),
+        herdr=h, root=ROOT, orders_dir=tmp_path, sleep=lambda _s: None,
     )
     assert result["ok"] is False
-    assert result["error"].startswith("tasks_unreadable:")
+    assert result["error"].startswith("chain_broken")
 
 
 def test_an_unknown_task_id_neither_waits_nor_rings(herdr, tmp_path):
-    """ctx_task finished writing the file before it answered."""
+    """append() renamed the finished file into place before it returned."""
     _, proc = herdr
     result = wait(herdr, tmp_path)
     assert result["error"] == "task_not_found"
@@ -304,10 +315,11 @@ def test_an_unknown_task_id_neither_waits_nor_rings(herdr, tmp_path):
 
 
 def test_an_unknown_state_never_counts_as_success(herdr, tmp_path):
-    """A format change in lean-ctx runs into the timeout, not into an ok."""
+    """A format change in the log runs into the timeout, not into an ok."""
     clock = iter([0.0, 0.0, 99.0])
     result = wait(
-        herdr, tmp_path, raw_task("Vanished"), timeout_ms=1_000, now=lambda: next(clock)
+        herdr, tmp_path, created(), ("vanished", WORKER, {}),
+        timeout_ms=1_000, now=lambda: next(clock),
     )
     assert result["ok"] is False and result["error"] == "no_reply"
 
@@ -428,3 +440,132 @@ def test_help_keeps_working(capsys):
         main(["--help"])
     assert exit_info.value.code == 0
     assert "herdr-dispatch" in capsys.readouterr().out
+
+
+def test_an_order_can_be_created_from_a_plain_process(tmp_path):
+    """The gap section 6 of the ctx_task spec conceded: closed."""
+    result = create_order(
+        OrderRequest(to_agent=WORKER, message="build the order log"),
+        root=ROOT, orders_dir=tmp_path,
+    )
+    assert result["ok"] is True
+    assert result["task_id"].startswith("o-")
+    order = fold(read_events(result["task_id"], orders=tmp_path))
+    assert order.to_agent == WORKER
+    assert order.from_agent == ORCHESTRATOR_AGENT
+    assert order.description == "build the order log"
+    assert order.state == "created"
+
+
+def test_an_order_can_name_its_predecessor(tmp_path):
+    first = create_order(
+        OrderRequest(to_agent=WORKER, message="a"), root=ROOT, orders_dir=tmp_path
+    )["task_id"]
+    second = create_order(
+        OrderRequest(to_agent=WORKER, message="b", after=first),
+        root=ROOT, orders_dir=tmp_path,
+    )
+    assert fold(read_events(second["task_id"], orders=tmp_path)).after == first
+
+
+def test_a_predecessor_nobody_wrote_is_refused(tmp_path):
+    """Silently folding in nothing would lose the wording without a word."""
+    result = create_order(
+        OrderRequest(to_agent=WORKER, message="b", after="o-nope"),
+        root=ROOT, orders_dir=tmp_path,
+    )
+    assert result == {"ok": False, "error": "task_not_found: o-nope"}
+
+
+def test_the_answer_is_an_event_of_its_own(tmp_path):
+    """ctx_task hid it in an update message; here it stands under its kind."""
+    task = create_order(
+        OrderRequest(to_agent=WORKER, message="a"), root=ROOT, orders_dir=tmp_path
+    )["task_id"]
+    append(task, "input-required", WORKER, {"message": "which branch?"}, orders=tmp_path)
+    result = answer_order(task, "feat/x, off main", root=ROOT, orders_dir=tmp_path)
+    assert result["ok"] is True
+    order = fold(read_events(task, orders=tmp_path))
+    assert order.state == "working", "the order returns to working on its own"
+    assert message_from(order, ORCHESTRATOR_AGENT) == "feat/x, off main"
+
+
+def test_an_answer_to_a_question_nobody_asked_is_refused(tmp_path):
+    task = create_order(
+        OrderRequest(to_agent=WORKER, message="a"), root=ROOT, orders_dir=tmp_path
+    )["task_id"]
+    result = answer_order(task, "unasked", root=ROOT, orders_dir=tmp_path)
+    assert result["ok"] is False
+    assert "not input-required" in result["error"]
+    assert len(read_events(task, orders=tmp_path)) == 1, "nothing was appended"
+
+
+def test_the_full_question_cycle_ends_in_a_completion(herdr, tmp_path):
+    """The wait mode returns on the question, and again on the answer's outcome."""
+    task = create_order(
+        OrderRequest(to_agent=WORKER, message="a"), root=ROOT, orders_dir=tmp_path
+    )["task_id"]
+    append(task, "working", WORKER, {}, orders=tmp_path)
+    append(task, "input-required", WORKER, {"message": "which branch?"}, orders=tmp_path)
+    h, _ = herdr
+    asked = await_task(
+        AwaitRequest(role="builder", kind="claude", task_id=task, timeout_ms=1000),
+        herdr=h, root=ROOT, orders_dir=tmp_path, sleep=lambda _s: None,
+    )
+    assert asked["error"] == "input_required"
+    assert asked["message"] == "which branch?"
+    answer_order(task, "feat/x", root=ROOT, orders_dir=tmp_path)
+    append(task, "completed", WORKER, {"message": "done"}, orders=tmp_path)
+    done = await_task(
+        AwaitRequest(role="builder", kind="claude", task_id=task, timeout_ms=1000),
+        herdr=h, root=ROOT, orders_dir=tmp_path, sleep=lambda _s: None,
+    )
+    assert done["ok"] is True
+    assert done["message"] == "done"
+
+
+def test_cancel_closes_a_stuck_order(tmp_path):
+    task = create_order(
+        OrderRequest(to_agent=WORKER, message="a"), root=ROOT, orders_dir=tmp_path
+    )["task_id"]
+    result = cancel_order(task, "run broke off", root=ROOT, orders_dir=tmp_path)
+    assert result["ok"] is True
+    assert fold(read_events(task, orders=tmp_path)).state == "canceled"
+
+
+def test_cancel_refuses_an_order_that_is_already_terminal(tmp_path):
+    task = create_order(
+        OrderRequest(to_agent=WORKER, message="a"), root=ROOT, orders_dir=tmp_path
+    )["task_id"]
+    append(task, "completed", WORKER, {"message": "done"}, orders=tmp_path)
+    result = cancel_order(task, "too late", root=ROOT, orders_dir=tmp_path)
+    assert result["ok"] is False
+    assert "already completed" in result["error"]
+
+
+def test_cancel_of_an_unknown_order_is_not_found(tmp_path):
+    assert cancel_order("o-nope", "x", root=ROOT, orders_dir=tmp_path)["error"] == (
+        "task_not_found"
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        (["order", "--message", "x"], "order needs --to"),
+        (["order", "--to", "builder-feat-x"], "order needs --message"),
+        (["order", "--to", "b", "--message", "x", "--kind", "claude"],
+         "`order` does not take --kind"),
+        (["cancel", "--message", "x"], "cancel needs --task-id"),
+        (["answer", "--task-id", "o-1"], "answer needs --message"),
+        (["answer", "--task-id", "o-1", "--message", "x", "--to", "b"],
+         "`answer` does not take --to"),
+        (["builder", "--to", "b"], "--to belongs to a log command"),
+        (["builder", "--model", "m", "--role-file", "r"], "--kind is required"),
+    ],
+)
+def test_the_modes_do_not_take_each_others_flags(argv, expected, capsys):
+    assert main(argv) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["ok"] is False
+    assert expected in answer["error"]
