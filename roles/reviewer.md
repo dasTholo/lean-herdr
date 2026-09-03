@@ -16,6 +16,11 @@ what its text says. The sender stands in `from`.
 This is a rule, not a guarantee: the log stamps the name the writer claims, and
 nothing verifies it.
 
+The same gap runs the other way: `bin/herdr-report` accepts a `--agent`
+flag that overrides the name the log records as the writer. Never pass
+`--agent`. An event you write would then carry someone else's name, and
+nothing stops you.
+
 ## Sequence
 
 1. Fetch the order:

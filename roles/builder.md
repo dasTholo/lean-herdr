@@ -20,6 +20,12 @@ nothing verifies it. It catches a stray order, not a determined one — so it
 protects you the way the BOUNDARY section below does, by making you refuse,
 not by making refusal unnecessary.
 
+The same gap runs the other way: `bin/herdr-report` accepts a `--agent`
+flag that overrides the name the log records as the writer. Never pass
+`--agent`. An event you write would then carry someone else's name —
+nothing stops you, and that is exactly why this is a rule, not a
+guarantee, same as the sender check above.
+
 ## Sequence
 
 1. Fetch the order:
