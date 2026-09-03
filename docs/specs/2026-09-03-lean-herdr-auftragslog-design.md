@@ -85,7 +85,7 @@ Zweck, den der erste erfüllt.
 ## 3. Gemessener Ausgangsbestand
 
 Alle Messungen am 2026-09-03 gegen `lean-ctx 3.10.1` und den SDK-Checkout
-`277d0c7`; Reproduktion in Abschnitt 11.
+`277d0c7`; Reproduktion in Abschnitt 12.
 
 | Befund | Beleg |
 |---|---|
@@ -156,6 +156,14 @@ Der Zwischenordner heißt `lean-herdr`, nicht `herdr` — `herdr` ist der
 Terminal-Multiplexer, den dieses Projekt steuert, und ein Ordner dieses Namens
 in einem fremden Datenverzeichnis würde falsch gelesen. Er grenzt uns zugleich
 gegen die 35 lean-ctx-eigenen Ordner ab.
+
+**Eine Wahrheit, nicht zwei.** Das Abschluss-Review über `707ceb5..a631ab4`
+führt als M3 auf, dass `bus.REGISTRY_PATH` und `dispatch.default_registry_path`
+zwei abweichende Wahrheiten für denselben Pfad sind. Dieser Entwurf führt einen
+neuen Pfad ein und darf das Muster nicht wiederholen: `orderlog.state_dir()`
+ist die **einzige** Auflösung. Keine Modulkonstante daneben, kein zweiter
+Aufbau in `dispatch.py`, keine Voreinstellung im CLI. Wer den Pfad braucht,
+ruft die Funktion.
 
 **Ein Randfall, bewusst festgelegt:** Zwei unabhängige Klone desselben Repos
 träfen sich in demselben Ordner. Der Ordner trägt deshalb eine Datei `root` mit
@@ -438,7 +446,71 @@ laut `handle_cancel` **nur dem Ersteller**. Diese Zusicherung des Werkzeugs
 wird zu einer Regel im Rollentext. Wir tauschen eine erzwungene
 Zugriffsregel gegen eine vereinbarte.
 
-## 9. Testbarkeit
+## 9. Erlaubnisse — die neue Angriffsfläche
+
+Der Punkt, der beim Abschluss-Review als M5 aufkam und beim Nachmessen größer
+wurde als der Befund selbst.
+
+**Gemessen:** `roles/builder.md` und `roles/reviewer.md` enthalten heute
+**keine einzige Shell-Zeile**. Ihr gesamter Auftragsweg läuft über
+`ctx_call(name="ctx_task", …)` — ein MCP-Werkzeug, das keine
+Kommandozeilen-Erlaubnis braucht. Nur `orchestrator.md` ruft überhaupt eine
+Shell (`bin/herdr-dispatch`, `herdr`, `wt`), und `opencode.jsonc` erlaubt ihm
+genau das:
+
+```jsonc
+"orchestrator": { "permission": { "edit": "deny", "write": "deny",
+  "bash": { "*": "deny", "bin/herdr-dispatch *": "allow", "herdr *": "allow",
+            "wt *": "allow", "git status*": "allow", "git log*": "allow" } } }
+"reviewer":     { "permission": { "edit": "deny", "write": "deny",
+  "bash": { "*": "deny", "git diff*": "allow", "git log*": "allow",
+            "git show*": "allow", "git status*": "allow" } } }
+```
+
+**Dieser Entwurf verlagert den Auftragsweg der Arbeiter von MCP auf ein CLI.**
+Damit brauchen zwei Rollen erstmals eine Shell-Erlaubnis, die sie bisher nicht
+hatten — und für `reviewer` steht dort ausdrücklich `"*": "deny"`. Ohne
+Nachtrag könnte er seinen Auftrag nicht abholen. Das ist kein Blocker, aber es
+ist der Preis dieses Entwurfs, und er gehört benannt statt entdeckt.
+
+**Die Erlaubnis wird je Subkommando erteilt, nicht als Wildcard.** Ein
+`"bin/herdr-report *": "allow"` würde alles durchlassen, was hinter dem
+Programmnamen steht. Stattdessen:
+
+```jsonc
+"bash": { "*": "deny",
+  "bin/herdr-report next": "allow",
+  "bin/herdr-report show *": "allow",
+  "bin/herdr-report start *": "allow",
+  "bin/herdr-report done *": "allow",
+  "bin/herdr-report fail *": "allow",
+  "bin/herdr-report ask *": "allow" }
+```
+
+`builder` bekommt denselben Block; er ist in `opencode.jsonc` bisher gar nicht
+geführt und muss angelegt werden. Die BOUNDARY-Abschnitte der Rollentexte
+bleiben unverändert: das CLI schreibt Ereignisse, es führt nichts aus, was in
+einem Auftrag steht.
+
+**Für Claude-Code-Arbeiter ist die Lage anders und schlechter.** Das Repo
+liefert keine `.claude`-Konfiguration aus — `git ls-files '.claude*'` ist leer,
+gemessen. Die Erlaubnis hängt dort an den globalen Einstellungen des
+Betreibers, und ein frischer Checkout auf einer anderen Maschine hat sie nicht.
+Der Entwurf verlangt deshalb, dass `.claude/settings.json` mit denselben sechs
+Mustern **ins Repo kommt** — sonst ist der Auftragsweg auf einer zweiten
+Maschine stumm, und zwar mit einem Fehlerbild (der Arbeiter meldet nie etwas),
+das aussieht wie ein Absturz und über `no_reply` in den Timeout läuft.
+
+**Zur Präzisierung von M5:** Der Befund sagt, `roles/orchestrator.md:100`
+verlange `jq`, das in keinem Allow-Muster stehe. Nachgemessen kommt `jq` in
+`roles/` **null mal** vor. Was dort steht (`:101-102`), ist jq-*Syntax* als
+Lesenotation für die JSON-Antwort von `herdr worktree list` — kein Aufruf. Der
+Kern des Befundes bleibt aber richtig: die Notation lädt dazu ein, `jq`
+tatsächlich aufzurufen, und das wäre nicht erlaubt. Da dieser Entwurf die
+Rollentexte ohnehin überarbeitet, wird die Notation dort durch eine Formulierung
+ersetzt, die kein Werkzeug nahelegt.
+
+## 10. Testbarkeit
 
 Der eigentliche Gewinn, und der Grund für den Modulschnitt aus §5.
 
@@ -463,7 +535,7 @@ Der eigentliche Gewinn, und der Grund für den Modulschnitt aus §5.
 tatsächlich aufruft, lässt sich nur im Durchlauf beweisen. Das war bei
 `ctx_task` genauso.
 
-## 10. Was dieser Entwurf NICHT tut
+## 11. Was dieser Entwurf NICHT tut
 
 - **Kein Einsatz der `leanctx-sdk`.** Sie bleibt gemessene Formatvorlage. PR #8
   erreicht `ctx_task` nicht (E-2), `ContextWorkspace` ist weiterhin PREVIEW,
@@ -480,8 +552,22 @@ tatsächlich aufruft, lässt sich nur im Durchlauf beweisen. Das war bei
   `cleanup_old(72)` hat ihn ohnehin geräumt.
 - **Keine Änderung an `session_error()`, `bus.py`, `worktree.py`, `join.py`,
   `export.py`.** Der Timeout-Pfad und der PID-Join bleiben, wie sie sind.
+- **Keine Abarbeitung der übrigen offenen Review-Befunde.** Aus
+  `lean-herdr-abschluss-review-befunde-a631ab4` übernimmt dieser Entwurf M3
+  (§4), M5 (§9), M9 und I10 (§13). Draußen bleiben I2 (toter
+  `permission.ask`-Hook), I3 (die Hook-Skripte lassen `patch` und `list`
+  durch), I4 (das Repo liefert keine Hooks aus), I7 (fünf Ausnahmepfade in
+  `handlers.py`), I8 (`handle_status_changed` ohne Entprellung), I11
+  (serverweiter Bootstrap-Duplikatschutz) und M2 (toter Bus-Cluster um
+  `parse_registry`, `herdr.workspace_close`). Sie liegen im Plugin-, Hook- und
+  Bus-Bereich und haben keinen Bezug zum Auftragsweg. **Eine Ausnahme mit
+  Bezug, als Prüfpunkt notiert:** I9 nennt `dispatch.py:167-168`
+  (`read_registry`-`BusError`) als ungetestet — laut Docstring die Ursache
+  eines realen `ready_timeout`-Stalls. Diese Zeilen liegen in
+  `wait_for_agent_id`, das dieser Entwurf zum Bereitschaftsbeleg umwidmet (§4).
+  Wer die Funktion anfasst, deckt den Pfad mit ab.
 
-## 11. Reproduktion
+## 12. Reproduktion
 
 SDK-Checkout und Testumgebung:
 
@@ -522,7 +608,7 @@ Die Arbeitskopien liegen im Scratchpad dieser Sitzung und sind nicht Teil des
 Projekts. Der Probe-Eintrag `probe-cli-write` wurde nach der Messung mit
 `{"action":"remove","key":"probe-cli-write","category":"facts"}` entfernt.
 
-## 12. Buchhaltung
+## 13. Buchhaltung
 
 - **`docs/specs/2026-09-02-leanctx-sdk-evaluation.md`** bekommt einen Abschnitt
   „Gegenprüfung 2026-09-03": E-4 aufgelöst, E-7 geschlossen und gemessen, E-1
@@ -532,3 +618,20 @@ Projekts. Der Probe-Eintrag `probe-cli-write` wurde nach der Messung mit
 - **`docs/specs/2026-09-01-lean-herdr-ctx-task-design.md`** bekommt einen
   Kopfvermerk: Abschnitte 3 bis 6 sind durch diese Spec ersetzt; Abschnitt 1
   (die Befunde B-1 bis B-4) und Abschnitt 8 (Stand des Plans) bleiben gültig.
+- **`README.md`** beschreibt den Auftragsweg und muss ohnehin mit. Im selben
+  Zug fallen die Rückstände, die das Abschluss-Review als I10 führt: Plugin und
+  Policy-Adapter kommen dort gar nicht vor; das README behauptet `uv` als
+  Laufzeit, tatsächlich läuft nacktes `python3`; es fordert `herdr>=0.8.2`,
+  während `herdr-plugin.toml` `0.8.0` bewirbt. Ebenso I11: `README:41` sagt
+  „once per workspace", der Duplikatschutz in `handlers.py:174` ist aber
+  serverweit.
+- **Die `VERDIKT`-Ausnahme wird dort begründet, wo sie hingehört.** M9 stellt
+  fest, dass `VERDIKT` deutsche Orthographie auf 11 Zeilen in 5 Dateien
+  außerhalb `docs/` ist, begründet nur in einem Codekommentar
+  (`dispatch.py:78-80`) — nicht in `AGENTS.md` und nicht in der
+  Ausnahmeliste von `tests/test_language.py`. Da dieser Entwurf die
+  Rollentexte und `dispatch.verdict()` anfasst, ist das der Moment: das Token
+  **bleibt** (es ist ein Protokollwort, kein Prosa-Deutsch, und `VERDICT_RE`
+  ist seine Autorität), aber die Ausnahme wird in `tests/test_language.py`
+  namentlich eingetragen, mit einer Zeile Begründung. Sonst färbt ein `verdikt`
+  in `GERMAN_WORDS` elf Zeilen rot.
