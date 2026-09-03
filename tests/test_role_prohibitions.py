@@ -179,6 +179,22 @@ MANDATORY_SENTENCES = [
         "bin/herdr-dispatch remember --key lean-herdr/<branch>",
         "one memory entry per branch; the cap is global across all projects",
     ),
+    (
+        "orchestrator.md",
+        "wt -C <path> step squash --stage none --yes",
+        (
+            "`merge --no-commit` skips the squash, so this is the ONLY place "
+            "it still happens -- drop it and the commits land unsquashed"
+        ),
+    ),
+    (
+        "orchestrator.md",
+        "wt -C <path> merge main --yes --no-commit",
+        (
+            "--no-commit is what makes the merge refuse an unfinished "
+            "worktree; without it `main` moves before anyone can look"
+        ),
+    ),
 ]
 
 

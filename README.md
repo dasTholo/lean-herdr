@@ -50,8 +50,8 @@ would then not run at all:
 
 Plus the commit generator, in worktrunk's **user** config. This one file is
 not optional bookkeeping: without `[commit.generation]` worktrunk writes
-`Changes to a.txt` from the file names, and `wt merge` squashes with exactly
-that message into `main`.
+`Changes to a.txt` from the file names, and that is the message the
+orchestrator's `wt step squash` then carries into `main`.
 
     # ~/.config/worktrunk/config.toml
     [commit]

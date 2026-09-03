@@ -107,10 +107,12 @@ state.
     5. wt -C <path> merge main --yes --no-commit
 
 **`--no-commit` skips the commit AND the squash.** That is why step 3 is not
-a luxury: it is the only place the squash still happens, and the squashed
-message is the one that lands in `main`. What `--no-commit` buys is step 5's
-refusal: if anything unfinished is left in the worktree, the merge stops
-before `main` moves at all.
+a luxury: it is the only place the squash still happens, and from two commits
+on the squashed message is the one that lands in `main` (with exactly one,
+`wt` leaves the builder's message alone and says so). What `--no-commit` buys
+is step 5's refusal: if anything unfinished is left in the worktree, the
+merge stops before `main` moves at all. It skips the commit, not the gates —
+the `pre-merge` hook still runs and its exit code still reaches you.
 
 **If step 3 fails, the teardown ends there.** You close NO workspace and you
 merge NOT AT ALL — you escalate with `wt`'s own error text. This is the
