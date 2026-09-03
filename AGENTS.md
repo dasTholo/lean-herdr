@@ -22,7 +22,7 @@
   then in full, never half.
   The one deliberate sweep ran on 2026-09-02 and left the tree English outside
   `docs/`; its plan is the 2026-09-02 language plan under `docs/lean-md/plans/`.
-  Two files stay German on purpose — `tests/fixtures/registry.sample.json` and
-  `tests/fixtures/tasks.sample.json` are frozen recordings, and both sit in
-  `EXCEPTIONS` of `tests/test_language.py`. This rule governs what comes after
-  that sweep, and `tests/test_language.py` now enforces the result.
+  One file stays German on purpose — `tests/fixtures/registry.sample.json` is
+  a frozen recording, and it sits in `EXCEPTIONS` of `tests/test_language.py`.
+  This rule governs what comes after that sweep, and `tests/test_language.py`
+  now enforces the result.

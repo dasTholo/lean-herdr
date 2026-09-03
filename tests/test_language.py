@@ -35,18 +35,17 @@ GERMAN_WORDS = frozenset(
     kandidaten kaputt kern kette kontext läuft laeuft liste löschen loeschen möglich
     moeglich nachricht nachrichten nächste naechste nanosekunden notiz öffnen oeffnen
     pfad pfade projekt prüfen pruefen quelle rahmen roh schlüssel schluessel schritte
-    später spaeter treffer ungültig ungueltig vorfahre vorfahren vorhanden während
-    waehrend wert werte zeile zeilen zeit ziel zurück zurueck
+    später spaeter treffer ungültig ungueltig vorfahr vorfahre vorfahren vorhanden
+    während waehrend wert werte zeile zeilen zeit ziel zurück zurueck
     """.split()  # noqa: SIM905 -- one prose block, so the list stays editable
 )
 
 #: Every exception carries its reason. Nothing joins this list silently.
 EXCEPTIONS = {
-    # Frozen recordings of real lean-ctx data. Translating them would falsify
-    # the measurement that parse_registry() and lean_herdr.tasks rest on --
-    # test_the_frozen_sample_has_the_expected_shape pins their shape.
+    # A frozen recording of real lean-ctx data. Translating it would
+    # falsify the measurement parse_registry() rests on --
+    # test_the_frozen_sample_has_the_expected_shape pins its shape.
     "tests/fixtures/registry.sample.json": "frozen recording of a real registry",
-    "tests/fixtures/tasks.sample.json": "frozen recording of a real task store",
     # This file carries the word list itself.
     "tests/test_language.py": "carries GERMAN_WORDS",
 }
@@ -63,18 +62,28 @@ FROZEN_IDS = {
     ),
 }
 
+#: Protocol tokens that LOOK like German prose but are literals the code
+#: owns. Removed from a line before tokenising, exactly like FROZEN_IDS.
+#: `VERDIKT` is the literal of dispatch.VERDICT_RE: roles/reviewer.md writes
+#: it, every review ever written carries it, and the orchestrator reads it
+#: as a machine value. It is a protocol word, not prose -- and without this
+#: entry the day somebody adds `verdikt` to GERMAN_WORDS turns eleven lines
+#: in five files red for a token that is deliberately spelled this way.
+PROTOCOL_TOKENS = ("VERDIKT",)
+
 _TOKEN = re.compile(r"[A-Za-zÄÖÜäöüß]+")
 
 
 def german_hits(text: str, frozen: tuple[str, ...] = ()) -> set[str]:
     """The German words in `text`, tokenised across `_` as well.
 
-    `\\b` would not split `parse_zeit`: `_` is a word character. Splitting on
-    letter runs catches identifier segments and keeps `diet` from matching
-    `die` at the same time. `frozen` lists strings the line quotes verbatim
-    from a frozen fixture; they drop out first, the rest stays guarded.
+    `\\b` would not split `parse_zeit`: `_` is a word character. Splitting
+    on letter runs catches identifier segments and keeps `diet` from
+    matching `die` at the same time. `frozen` lists strings the line quotes
+    verbatim from a frozen fixture, and PROTOCOL_TOKENS the literals the
+    code owns; both drop out first, the rest of the line stays guarded.
     """
-    for token in frozen:
+    for token in (*PROTOCOL_TOKENS, *frozen):
         text = text.replace(token, " ")
     return {w for w in _TOKEN.findall(text.lower()) if w in GERMAN_WORDS}
 
@@ -152,3 +161,17 @@ def test_the_scan_reads_tracked_files_only(tracked):
     assert not any(r.startswith((".pytest_cache/", "__pycache__/")) for r in rels)
     assert not (rels & EXCEPTIONS.keys())
     assert "lean_herdr/bus.py" in rels, "the scan must actually reach the code"
+
+
+def test_a_protocol_token_is_not_prose():
+    """VERDIKT stays as it is -- and the scan must not turn red over it."""
+    line = 'assert "VERDIKT: result" in message'
+    assert german_hits(line) == set()
+    # The guard is real only if the word list would otherwise fire.
+    assert "verdikt" in {w.lower() for w in PROTOCOL_TOKENS}
+    assert german_hits("VERDIKT: reject VERDIKT: result") == set()
+
+
+def test_the_scan_still_catches_german_on_the_same_line():
+    """Removing the token must not blank out the rest of the line."""
+    assert german_hits('# VERDIKT ist der Schluessel') >= {"ist", "der", "schluessel"}
