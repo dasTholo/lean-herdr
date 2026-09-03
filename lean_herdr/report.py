@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from lean_herdr.bus import BusError, canonical_root
-from lean_herdr.dispatch import agent_name
+from lean_herdr.dispatch import AGENT_ENV, ROLE_ENV, agent_name
 from lean_herdr.orderlog import (
     OrderLogError,
     append,
@@ -41,13 +41,11 @@ from lean_herdr.settings import (
 
 GIT_TIMEOUT_S = 5.0
 
-#: dispatch.py sets this on the pane it splits. It is the name the wait mode
-#: rings and the name the order is addressed to, so taking it from the
-#: environment is the only way the two sides cannot drift.
-AGENT_ENV = "LEAN_HERDR_AGENT"
-
-#: Set beside it since the first dispatch. The fallback path needs it.
-ROLE_ENV = "LEAN_CTX_ROLE"
+# `AGENT_ENV` and `ROLE_ENV` are IMPORTED, never spelled here: dispatch.py
+# writes exactly these two variables onto the pane it splits, and a second
+# spelling on this side would leave the whole suite green while every order
+# ran into the void -- the pane carrying one variable, the worker reading
+# another. One truth, not two (M3).
 
 #: subcommand -> the event kind it appends.
 KIND_OF = {
@@ -59,6 +57,14 @@ KIND_OF = {
 
 #: The two subcommands that only read.
 READING = ("next", "show")
+
+#: Every subcommand this CLI accepts -- the parser's own `choices`, and the
+#: list tests/test_worker_permissions.py holds BOTH permission files to.
+#: The six words used to stand in four unbound copies (here, .claude/
+#: settings.json, opencode.jsonc, the test), so a seventh subcommand
+#: shipped green with no permission anywhere and failed at the worker in a
+#: way that looks exactly like a crash.
+SUBCOMMANDS = (*READING, *KIND_OF)
 
 
 class ReportError(RuntimeError):
@@ -257,7 +263,7 @@ class _Parser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     p = _Parser(prog="herdr-report", description="Report on a work order.")
-    p.add_argument("command", choices=(*READING, *KIND_OF))
+    p.add_argument("command", choices=SUBCOMMANDS)
     p.add_argument("--task", default=None, help="the order id; not used by `next`")
     p.add_argument("--message", default=None, help="required for done, fail and ask")
     p.add_argument(

@@ -152,14 +152,44 @@ def test_an_open_state_rings_once_and_runs_into_the_timeout(herdr, tmp_path):
     assert TASK_ID in " ".join(rings[0])
 
 
+def test_the_ring_goes_to_the_agent_the_order_is_addressed_to(herdr, tmp_path):
+    """The bell rings the name the ORDER carries, never a fresh derivation.
+
+    This call names no `--worktree`, so `agent_name("builder", None)` says
+    `builder` while the order -- and the pane the build mode started -- says
+    `builder-feat-x`. `Herdr.run()` swallows every error and returns {}
+    (herdr.py:52-70), so ringing the derived name is SILENT: the wait runs
+    its full timeout and comes back `no_reply` without a word about the
+    worker that was never woken. Same drift for a `--await` whose settings
+    carry a different `name_template` than the build call did.
+    """
+    _, proc = herdr
+    clock = iter([0.0, 0.0, 99.0])
+    result = wait(
+        herdr, tmp_path,
+        created(to_agent=WORKER),
+        ("working", WORKER, {}),
+        timeout_ms=1_000, role="builder", worktree=None, now=lambda: next(clock),
+    )
+    assert result["error"] == "no_reply"
+    ring = next(c for c in proc.calls if c[1:3] == ["agent", "prompt"])
+    assert ring[3] == WORKER, f"rang {ring[3]!r}, but the order names {WORKER!r}"
+
+
 def test_a_crashed_worker_becomes_agent_error(herdr, tmp_path, monkeypatch):
-    """The cause from the session store instead of a meaningless no_reply (H1)."""
+    """The cause from the session store instead of a meaningless no_reply (H1).
+
+    The agent in the list is the one the ORDER names -- the same worker the
+    bell rang. A fixture that rings `builder-feat-x` and then looks up
+    `builder`'s session describes a world that cannot occur: the build mode
+    started the pane under the very name the orchestrator then addressed.
+    """
     h, proc = herdr
     proc.replies = {
         ("agent", "list"): {
             "result": {
                 "agents": [
-                    {"name": "builder", "pane_id": "w1:p6",
+                    {"name": WORKER, "pane_id": "w1:p6",
                      "agent_session": {"value": "sid1"}}
                 ]
             }
@@ -240,7 +270,7 @@ def test_a_crashed_worktree_worker_becomes_agent_error_too(
     result = wait(
         (h, proc),
         tmp_path,
-        created(),
+        created(to_agent="builder-feat-auth"),
         timeout_ms=1_000,
         worktree="feat/auth",
         now=lambda: next(clock),
@@ -377,6 +407,7 @@ BUILD = ["builder", "--kind", "claude", "--model", "sonnet",
         pytest.param(
             [*BUILD, "--timeout-ms", "1000"], "--timeout-ms", id="timeout-ms in build"
         ),
+        pytest.param([*BUILD, "--task-id", TASK_ID], "--task-id", id="task-id in build"),
         pytest.param([*AWAIT, "--timeout-ms", "0"], "--timeout-ms", id="timeout-ms zero"),
         pytest.param(
             [*AWAIT, "--timeout-ms", "-5"], "--timeout-ms", id="timeout-ms negative"

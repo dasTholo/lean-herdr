@@ -1,9 +1,11 @@
 import json
+from itertools import pairwise
 from pathlib import Path
 
 import pytest
 
 from lean_herdr.dispatch import (
+    AGENT_ENV,
     AGENT_READY_TIMEOUT_S,
     DispatchRequest,
     agent_args,
@@ -13,6 +15,7 @@ from lean_herdr.dispatch import (
     profile_for,
 )
 from lean_herdr.herdr import Herdr
+from lean_herdr.report import resolve_agent
 from lean_herdr.settings import (
     SETTINGS_PATH,
     RoleSettings,
@@ -160,6 +163,42 @@ def test_the_pane_carries_the_agent_name_in_its_environment(world):
     assert result["agent"] == "builder-feat-auth"
     split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
     assert "LEAN_HERDR_AGENT=builder-feat-auth" in " ".join(split)
+
+
+def test_the_worker_resolves_its_name_out_of_the_env_the_pane_was_given(world):
+    """The two halves of the LEAN_HERDR_AGENT contract, tied together.
+
+    `report.AGENT_ENV` used to be a second, independent spelling of the
+    variable dispatch.py writes here. Renaming that copy left the whole
+    suite green while every dispatched order ran into the void: the pane
+    carried one variable, the worker read another, `next` answered "no open
+    order" and the wait mode reported `no_reply` -- no error anywhere. The
+    pane's OWN `--env` pairs go into the worker's resolver here, so a drift
+    between the two sides cannot stay green.
+    """
+    h_proc, _ = world
+    h_proc.replies = {
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
+        ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+        ("worktree", "list"): {
+            "result": {
+                "source": {"repo_root": "/repo"},
+                "worktrees": [
+                    {"branch": "feat/auth", "path": "/repo.feat-auth",
+                     "open_workspace_id": "w2"}
+                ],
+            }
+        },
+    }
+    result = run_dispatch(world, reg=registry(), request=req(worktree="feat/auth"))
+    split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
+    env = dict(
+        pair.split("=", 1)
+        for flag, pair in pairwise(split)
+        if flag == "--env"
+    )
+    assert env[AGENT_ENV] == "builder-feat-auth"
+    assert resolve_agent(root=ROOT, env=env) == result["agent"] == "builder-feat-auth"
 
 
 def test_the_profile_is_set_on_the_pane_not_on_the_agent(world):

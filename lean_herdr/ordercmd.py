@@ -6,9 +6,11 @@ advance for exactly this measurement. The signatures are unchanged; only
 their home is new, and `dispatch.main()` still routes the positional slot
 here.
 
-`_await_result` came along: it is the shape of an order result, and both
+`order_result` came along: it is the shape of an order result, and both
 sides of the split need it. Leaving it in dispatch.py would have made the
-import circular.
+import circular. It is public for exactly that reason -- it used to carry
+a leading underscore while being imported across a module boundary, which
+promised a privacy it never had.
 """
 
 from __future__ import annotations
@@ -34,7 +36,9 @@ from lean_herdr.orders import fold, is_terminal
 ORCHESTRATOR_AGENT = ORCHESTRATOR["name"]
 
 
-def _await_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
+def order_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
+    """The shape every order answer takes -- the write side's and the wait
+    mode's alike. Public: dispatch.py imports it."""
     return {"ok": ok, "task_id": task_id, **rest}
 
 
@@ -112,10 +116,10 @@ def answer_order(
         directory = orders_dir if orders_dir is not None else state_dir(root)
         events = read_events(task_id, orders=directory)
         if not events:
-            return _await_result(False, task_id, error="task_not_found")
+            return order_result(False, task_id, error="task_not_found")
         order = fold(events)
         if order.state != "input-required":
-            return _await_result(
+            return order_result(
                 False,
                 task_id,
                 state=order.state,
@@ -126,8 +130,8 @@ def answer_order(
             )
         append(task_id, "answered", actor, {"message": message}, orders=directory)
     except OrderLogError as exc:
-        return _await_result(False, task_id, error=str(exc))
-    return _await_result(True, task_id, state="working", message=message)
+        return order_result(False, task_id, error=str(exc))
+    return order_result(True, task_id, state="working", message=message)
 
 
 def cancel_order(
@@ -153,10 +157,10 @@ def cancel_order(
         directory = orders_dir if orders_dir is not None else state_dir(root)
         events = read_events(task_id, orders=directory)
         if not events:
-            return _await_result(False, task_id, error="task_not_found")
+            return order_result(False, task_id, error="task_not_found")
         order = fold(events)
         if is_terminal(order.state):
-            return _await_result(
+            return order_result(
                 False,
                 task_id,
                 state=order.state,
@@ -164,5 +168,5 @@ def cancel_order(
             )
         append(task_id, "canceled", actor, {"message": message}, orders=directory)
     except OrderLogError as exc:
-        return _await_result(False, task_id, error=str(exc))
-    return _await_result(True, task_id, state="canceled", message=message)
+        return order_result(False, task_id, error=str(exc))
+    return order_result(True, task_id, state="canceled", message=message)

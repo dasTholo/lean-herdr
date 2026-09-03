@@ -29,15 +29,17 @@ from lean_herdr.join import resolve_agent_id
 from lean_herdr.leanctx import LeanCtx
 
 # The write path lives next door since dispatch.py crossed 800 LOC (plan 3g).
-# `_await_result` went with it -- both sides need that result shape, and
-# keeping it here would have made the import circular.
+# `order_result` went with it -- both sides need that result shape, and
+# keeping it here would have made the import circular. Public, not
+# `_await_result`: a name imported across a module boundary must not claim
+# to be private, and the shape serves the write path as much as the wait.
 from lean_herdr.ordercmd import (
     ORCHESTRATOR_AGENT,
     OrderRequest,
-    _await_result,
     answer_order,
     cancel_order,
     create_order,
+    order_result,
 )
 from lean_herdr.orderlog import OrderLogError, lean_ctx_data_dir, read_events, state_dir
 from lean_herdr.orders import Order, fold, message_from
@@ -65,6 +67,16 @@ AGENT_READY_INTERVAL_S = 0.5
 
 #: The wait mode asks the file, not the CLI: no process start per round.
 POLL_INTERVAL_S = 1.0
+
+#: The two variables the build mode stamps on the pane it splits and
+#: `herdr-report` reads back out of its environment. ONE definition each
+#: (M3): report.py IMPORTS these names rather than spelling the strings a
+#: second time, and the `env=` dict of the pane split below is built from
+#: them. A second spelling on either side is silent in the worst way --
+#: the pane carries one variable, the worker reads another, every order
+#: runs into the void and the wait mode reports `no_reply`.
+AGENT_ENV = "LEAN_HERDR_AGENT"
+ROLE_ENV = "LEAN_CTX_ROLE"
 
 #: How long `--await` waits without the flag. One value for the parser AND
 #: for AwaitRequest -- two copies would drift apart unnoticed.
@@ -252,14 +264,14 @@ def dispatch(
                 "LEAN_CTX_TOOL_PROFILE": profile_for(
                     req.role, req.profile, settings=cfg
                 ),
-                "LEAN_CTX_ROLE": req.role,
+                ROLE_ENV: req.role,
                 # The worker's own name, so `herdr-report` does not have to
                 # derive it. Derivation from role plus branch disagrees with
                 # this side whenever the dispatch carried no `--worktree`:
                 # here the agent is `builder`, there it would be
                 # `builder-feat-x`, and an order under the wrong name
                 # reaches nobody.
-                "LEAN_HERDR_AGENT": name,
+                AGENT_ENV: name,
             },
         ) or ""
         if not pane:
@@ -343,7 +355,7 @@ def _result_for_state(order: Order) -> dict[str, Any] | None:
     """
     message = message_from(order, order.to_agent)
     if order.state == "completed":
-        result = _await_result(
+        result = order_result(
             True, order.id, state=order.state, message=message or ""
         )
         ruling = verdict(message)
@@ -351,16 +363,16 @@ def _result_for_state(order: Order) -> dict[str, Any] | None:
             result["verdict"] = ruling
         return result
     if order.state == "failed":
-        return _await_result(
+        return order_result(
             False,
             order.id,
             state=order.state,
             error=f"agent_failed: {message or 'no reason given'}",
         )
     if order.state == "canceled":
-        return _await_result(False, order.id, state=order.state, error="task_canceled")
+        return order_result(False, order.id, state=order.state, error="task_canceled")
     if order.state == "input-required":
-        return _await_result(
+        return order_result(
             False,
             order.id,
             state=order.state,
@@ -386,17 +398,26 @@ def await_task(
     The waiting stays in the script: no CLI, no registration, no model step
     per round. Never raises; the result carries `ok`.
 
-    `settings` MUST be the same one the build mode got -- it decides the
-    agent's name, and a ring under a different name reaches nobody.
+    The bell rings `order.to_agent` -- the name the order is actually
+    addressed to, never one derived a second time here. `settings` and
+    `--worktree` decide what `agent_name()` produces, and a `--await` call
+    that spells either differently than the build call did would ring
+    `builder` while the worker is `builder-feat-x`. `Herdr.run()` swallows
+    every error and returns {} (herdr.py:52-70), so that miss is SILENT:
+    the full timeout, then `no_reply`. One truth, not two (M3).
+
+    The derivation stays as the fallback for the one moment no order names
+    a worker yet -- a log whose first event is not `created`.
     """
-    name = agent_name(req.role, req.worktree, settings=settings)
+    derived = agent_name(req.role, req.worktree, settings=settings)
+    name = derived
     try:
         # ONCE, before the loop. state_dir() resolves canonical_root()
         # through git; inside the loop that would be a subprocess per poll
         # round -- exactly the cost the wait mode exists to avoid.
         directory = orders_dir if orders_dir is not None else state_dir(root)
     except OrderLogError as exc:
-        return _await_result(False, req.task_id, error=str(exc))
+        return order_result(False, req.task_id, error=str(exc))
     deadline = now() + req.timeout_ms / 1000.0
     has_rung = False
     state = ""
@@ -404,15 +425,16 @@ def await_task(
         try:
             events = read_events(req.task_id, orders=directory)
         except OrderLogError as exc:
-            return _await_result(False, req.task_id, error=str(exc))
+            return order_result(False, req.task_id, error=str(exc))
         if not events:
             # The orchestrator wrote the `created` event BEFORE this call,
             # and append() renames the finished file into place before it
             # returns. Nothing here means the id is wrong -- waiting will
             # not change that.
-            return _await_result(False, req.task_id, error="task_not_found")
+            return order_result(False, req.task_id, error="task_not_found")
         order = fold(events)
         state = order.state
+        name = order.to_agent or derived
         outcome = _result_for_state(order)
         if outcome is not None:
             return outcome
@@ -437,10 +459,10 @@ def await_task(
         _worker_root(req.worktree, herdr=herdr, root=root),
     )
     if error:
-        return _await_result(
+        return order_result(
             False, req.task_id, state=state, error=f"agent_error: {error}"
         )
-    return _await_result(False, req.task_id, state=state, error="no_reply")
+    return order_result(False, req.task_id, state=state, error="no_reply")
 
 
 def remember_branch(
@@ -652,7 +674,9 @@ def missing_flags(args: argparse.Namespace) -> str | None:
     ]
     if missing:
         return f"build mode needs {' and '.join(missing)}"
-    stray = _given(("--timeout-ms", args.timeout_ms))
+    # `--task-id` belongs to `--await`; in build mode argparse takes it and
+    # the mode drops it without a word. Last gap of the stray-flag doctrine.
+    stray = _given(("--task-id", args.task_id), ("--timeout-ms", args.timeout_ms))
     return f"build mode does not take {stray}" if stray else None
 
 
