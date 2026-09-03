@@ -49,11 +49,12 @@ lean_herdr/
   dispatch.py    ~    nur Kommentare + choices=KINDS            (Task 2 / Task 4)
   report.py worktree.py bus.py orderlog.py orders.py join.py
   export.py digest.py config.py leanctx.py herdr.py    nur Kommentare (Task 2)
-  llm.py         ~    nur Prosa: der Config-Pfad im Docstring    (Task 3)
+  llm.py         ~    nur Prosa: fuenf Erwaehnungen des Config-Pfads   (Task 3)
                       -- das Verhalten folgt SETTINGS_PATH von selbst
 
 bin/herdr-dispatch  WEG                                              (Task 2)
 bin/herdr-report    WEG                                              (Task 2)
+bin/herdr-llm       BLEIBT  -- gehoert dem LLM-Plan, wird nicht angefasst
 
 .config/lean-herdr.toml  ->  .lean-ctx/lean-herdr/config.toml        (Task 3)
 roles/                   ->  .lean-ctx/lean-herdr/roles/             (Task 3)
@@ -69,7 +70,7 @@ tests/test_templates.py   NEU  (Task 3, Wahrheit wandert in Task 5)
 tests/test_workspace.py   NEU  (Task 4)
 tests/test_initcmd.py     NEU  (Task 5)
 tests/test_worker_permissions.py  ~  der neue Fallstrick             (Task 2)
-tests/test_manifest.py            ~  bin/ faellt aus der Pruefliste  (Task 2)
+tests/test_manifest.py            ~  zwei der drei bin/-Eintraege     (Task 2)
 tests/test_roles.py               ~  Muster (Task 2), Vorlage (Task 3)
 tests/test_role_prohibitions.py   ~  Muster (Task 2), Vorlage (Task 3)
 tests/test_config_files.py        ~  Muster (Task 2), Pfade (Task 3)
@@ -180,13 +181,21 @@ Regression dieses Umbaus haelt:
 - **Der Python-Syntax-Floor bleibt 3.11 fuer `lean_herdr/*.py`.** Die
   Plugin-Handler starten ein nacktes `python3`, den Interpreter des Hosts.
   `cli.py`, `workspace.py` und `initcmd.py` fallen unter denselben Glob in
-  `test_manifest.py`; nur die beiden `bin/`-Eintraege verlassen die Pruefliste,
-  weil `lean-herdr` als Entry-Point unter dem installierten Interpreter laeuft.
+  `test_manifest.py`; von den **drei** `bin/`-Eintraegen dort verlassen nur
+  `herdr-dispatch` und `herdr-report` die Pruefliste, weil `lean-herdr` als
+  Entry-Point unter dem installierten Interpreter laeuft. `bin/herdr-llm` bleibt
+  stehen: es startet weiterhin ein nacktes `python3`.
 - **Kein Import-Zyklus.** `ORCHESTRATOR_AGENT` zieht in Task 4 von `handlers`
   nach `settings`. Ohne diesen Umzug entstuende `handlers` -> `workspace` ->
   `dispatch` -> `ordercmd` -> `handlers`, und `ordercmd` greift zur **Importzeit**
   auf den Namen zu — der Zyklus kraechte beim ersten Import, nicht erst im Test.
-- **Dateigroesse:** kein `lean_herdr/`-Modul ueber 800 produktive LOC (Ziel 600).
+- **Dateigroesse:** kein `lean_herdr/`-Modul ueber 800 **produktive** LOC (Ziel
+  600). Produktive LOC = physische Zeilen minus Leer-, Kommentar- und
+  Docstring-Zeilen; `wc -l` ist ausdruecklich **nicht** das Mass, und die beiden
+  Zahlen liegen in diesem Baum weit auseinander — `dispatch.py` steht am
+  2026-09-03 bei 817 physischen gegen 519 produktive Zeilen. Ein Gate, das die
+  physische Zahl gegen 800 haelt, ist deshalb schon heute rot, ohne dass eine
+  Regel verletzt waere (`AGENTS.md`, „Project Hard Rules").
   `init` kommt deshalb von vornherein nach `lean_herdr/initcmd.py` statt spaeter
   aus `workspace.py` herausgeschnitten zu werden — `up` und `init` teilen nichts
   ausser dem Verb, und `ordercmd.py` ist der Praezedenzfall.
@@ -206,23 +215,37 @@ Regression dieses Umbaus haelt:
   Schreibweise) · Task 4 setzt 3 voraus (`up` liest die Config am neuen Ort) ·
   Task 5 setzt 4 voraus (`init` haengt am Parser aus Task 4) · Task 6 setzt alle
   voraus.
-- **Der LLM-Plan ist teilweise schon gelandet — gemessen, nicht vermutet.**
-  `docs/lean-md/plans/2026-09-03-lean-herdr-llm-commits.lmd.md` laeuft parallel,
-  und seine Tasks 1 und 2 stehen bereits im Baum (`8e2272e`, `26a25d5`,
-  `0a32bab`). Drei Folgen, die dieser Plan traegt:
+- **Der LLM-Plan ist weiter gelandet, als dieser Plan bei seiner Niederschrift
+  annahm — am 2026-09-03 nachgemessen, nicht vermutet.**
+  `docs/lean-md/plans/2026-09-03-lean-herdr-llm-commits.lmd.md` laeuft parallel, und
+  im Baum stehen inzwischen nicht nur seine Tasks 1 und 2 (`8e2272e`, `26a25d5`,
+  `0a32bab`), sondern auch der Pre-Review-Richter (`9449ec1`, `9677639`, `14bf07c`)
+  und alles, was danach an ihm korrigiert wurde (bis `02c7e79`). **Vier** Folgen,
+  die dieser Plan traegt:
   1. **`ROOT_KEYS` ist heute `("default", "roles", "llm")`.** Task 4 macht daraus
      ein **Vier**-Tupel. Wer die Zeile stattdessen abschreibt, wie sie in der
      Spec steht, loescht `"llm"` — dann wird jeder `[llm]`-Block ein
      `config_error`, und `tests/test_settings.py` wird an zwei Stellen rot.
-  2. **`lean_herdr/llm.py` existiert**, hat aber noch **kein** CLI: es traegt
-     `generate()`, `complete()`, `file_settings()` und keine `main()`. `llm.py`
-     liest `SETTINGS_PATH` aus `settings`, folgt dem Umzug in Task 3 also von
-     selbst — nur seine Prosa nennt noch den alten Pfad.
-  3. **`bin/herdr-llm` gehoert nicht diesem Plan.** Der Pfad existiert nicht und
-     wird hier weder angelegt noch entfernt; das Verb `lean-herdr llm` ist Sache
-     des anderen Plans, wenn dessen Task 2 landet. Deshalb prueft das
-     Aufraeum-Gate in Task 2 gezielt `bin/herdr-dispatch` und `bin/herdr-report`
-     und nicht `bin/herdr-` als Praefix.
+  2. **`lean_herdr/llm.py` hat inzwischen ein eigenes CLI** — `main()` bei
+     `llm.py:685`, `build_parser()` mit `prog="herdr-llm"` bei `:635`, und die
+     beiden Modi `generate` und `prereview`. Fuer diesen Plan bleibt das folgenlos:
+     `llm.py` liest `SETTINGS_PATH` aus `settings` und folgt dem Umzug in Task 3
+     von selbst. Nur seine Prosa nennt den alten Pfad — an **fuenf** Stellen statt
+     an den drei, die in der ersten Fassung dieses Plans standen, und eine davon
+     ist ein argparse-Hilfetext, den ein Benutzer zu sehen bekommt.
+  3. **`bin/herdr-llm` EXISTIERT** — versioniert seit `14bf07c` — **und bleibt.**
+     Das Verb `lean-herdr llm` ist Sache des anderen Plans; hier wird die Datei
+     weder angelegt noch entfernt noch umgeschrieben. Deshalb nennt das
+     Aufraeum-Gate in Task 2 `bin/herdr-dispatch` und `bin/herdr-report`
+     ausdruecklich statt `bin/herdr-` als Praefix — und deshalb ueberlebt das
+     Verzeichnis `bin/` diesen Plan. Jede Formulierung, die hinterher „`bin/` ist
+     weg" behauptet, ist falsch.
+  4. **`bin/herdr-llm` bleibt darum auch in `tests/test_manifest.py`.** Es startet
+     ein nacktes `python3` und faellt unter denselben Syntax-Floor wie die
+     Plugin-Handler. Aus der dortigen `sources`-Liste verlassen **zwei von drei**
+     `bin/`-Eintraegen die Pruefliste, nicht alle drei. Wer sie durch den blossen
+     Paket-Glob ersetzt, loescht eine Pruefung, die noch etwas bewacht — und zwar
+     lautlos, weil kein Test das Fehlen eines Tests meldet.
   Wer beide Plaene ausfuehrt, fuehrt sie **nacheinander** aus, nie nebeneinander:
   beide fassen `opencode.jsonc`, `.claude/settings.json`, `settings.py` und
   `.config/lean-herdr.toml` an — und diesen letzten Pfad gibt es nach Task 3
@@ -244,7 +267,7 @@ bleiben bestehen und funktionieren weiter; Task 2 raeumt sie ab.
 
 ### Der Router
 
-Der Vertrag steht schon zweimal im Baum — `dispatch.main` (`dispatch.py:683-762`)
+Der Vertrag steht schon zweimal im Baum — `dispatch.main` (`dispatch.py:727-817`)
 und `report.main` (`report.py:294-329`) schreiben beide eine JSON-Zeile und geben
 immer 0 zurueck. Der Router baut nichts davon nach, er reicht durch.
 
@@ -420,7 +443,7 @@ enden mit Exit 0 — `echo $?` liefert `0`.
 `tests/test_role_prohibitions.py`, `tests/test_roles.py`,
 `tests/test_config_files.py`, `tests/test_worktree.py`,
 `tests/test_dispatch.py`, `tests/test_dispatch_await.py`,
-`tests/test_dispatch_uncovered_paths.py`,
+`tests/test_dispatch_uncovered_paths.py`, `tests/test_settings.py`,
 `lean_herdr/dispatch.py`, `lean_herdr/report.py`, `lean_herdr/settings.py`,
 `lean_herdr/worktree.py`, `lean_herdr/bus.py`, `lean_herdr/ordercmd.py`,
 `lean_herdr/orderlog.py`.
@@ -429,8 +452,8 @@ sonst kein neuer Code. Die Ersetzung ist mechanisch und vollstaendig:
 `bin/herdr-dispatch` -> `lean-herdr dispatch`, `bin/herdr-report` ->
 `lean-herdr report`. Nach diesem Task nennt **keine** versionierte Datei
 ausserhalb `docs/` mehr einen dieser beiden Pfade. `bin/herdr-llm` bleibt
-unberuehrt — er gehoert dem LLM-Plan, existiert nicht, und wird hier weder
-angelegt noch entfernt.
+unberuehrt — die Datei **existiert** (versioniert seit `14bf07c`), gehoert dem
+LLM-Plan, und wird hier weder geloescht noch umgeschrieben.
 **Consumes:** den Entry-Point aus Task 1.
 
 @call recall_context("lean-herdr console entry point lean-herdr cli verbs")
@@ -445,12 +468,15 @@ freigeben, und beide Seiten haengen an denselben Tests.
       --exclude-dir=docs --exclude-dir=.git --exclude-dir=.pytest_cache \
       --exclude-dir=__pycache__ .
 
-**Expected:** rund 87 Treffer in 21 Dateien. Am Ende dieses Tasks liefert
-derselbe Aufruf **null** Treffer.
+**Expected:** 82 Treffer in 18 Dateien (gemessen 2026-09-03; die erste Fassung
+dieses Plans zaehlte 87 in 21, bevor der LLM-Plan Zeilen umschrieb — eine
+Abweichung nach unten ist kein Alarm, eine Datei mehr als hier gelistet schon).
+Am Ende dieses Tasks liefert derselbe Aufruf **null** Treffer.
 
 Das Muster nennt die beiden Programme ausdruecklich statt `bin/herdr-` als
-Praefix: `lean_herdr/llm.py` und `.config/lean-herdr.toml` erwaehnen
-`bin/herdr-llm`, das dem LLM-Plan gehoert und hier nicht angefasst wird. Ein
+Praefix: `lean_herdr/llm.py`, `lean_herdr/settings.py`, `README.md`,
+`tests/test_llm.py` und `.config/lean-herdr.toml` erwaehnen `bin/herdr-llm`, das
+dem LLM-Plan gehoert und hier nicht angefasst wird. Ein
 Praefix-Gate waere darum nie gruen zu bekommen, ohne fremde Arbeit
 mitzuschleifen. `.pytest_cache` faellt heraus, weil dort die Test-IDs des
 letzten Laufs liegen — dieselbe Falle, die `test_language.py` mit `git ls-files`
@@ -486,20 +512,23 @@ der Kern dieses Tasks und nicht laenger nur eine Vorsichtsmassnahme:
     // builder's allowlist simply never named the other program, because there
     // was one. Now the gate is the only separation left.
 
-@call patch(".claude/settings.json", "die sechs allow-Eintraege")
+@call patch(".claude/settings.json", "die sechs report-Eintraege in `permissions.allow`")
 
-    {
-      "permissions": {
-        "allow": [
+**Nur diese sechs Zeilen, kein Ersatz der Datei.** `permissions.allow` traegt
+**neun** Eintraege: hinter den sechs stehen `Bash(git add:*)`,
+`Bash(uv run pytest:*)` und `Bash(wt step commit:*)`
+(`.claude/settings.json:10-12`), und alle drei sind festgenagelt —
+`tests/test_worker_permissions.py::CLAUDE_BUILDER_TOOLING` (`:167-171`) und
+`::test_the_claude_builder_may_commit_through_worktrunk` (`:147-153`). Wer den
+Block unten als ganze Datei schreibt, macht drei Tests rot und nimmt dem
+Claude-Builder gleichzeitig das Recht zu committen und zu testen.
+
           "Bash(lean-herdr report next)",
           "Bash(lean-herdr report show:*)",
           "Bash(lean-herdr report start:*)",
           "Bash(lean-herdr report done:*)",
           "Bash(lean-herdr report fail:*)",
-          "Bash(lean-herdr report ask:*)"
-        ]
-      }
-    }
+          "Bash(lean-herdr report ask:*)",
 
 ### Die Rollentexte
 
@@ -513,7 +542,7 @@ der Kern dieses Tasks und nicht laenger nur eine Vorsichtsmassnahme:
 
 Rein mechanisch, ohne jede Umformulierung: `bin/herdr-dispatch` ->
 `lean-herdr dispatch`, `bin/herdr-report` -> `lean-herdr report`. Der Satz in
-`roles/orchestrator.md:103` nennt die erlaubten Programme und wird dabei
+`roles/orchestrator.md:129` nennt die erlaubten Programme und wird dabei
 praeziser, nicht laenger:
 
     Nothing but `herdr`, `wt`, `git` and `lean-herdr dispatch` is allowed
@@ -597,8 +626,10 @@ Menge waere leer und der Test gruen aus dem falschen Grund.
 
 @call patch("tests/test_manifest.py", "die sources-Liste und ihren Docstring")
 
-Die beiden `bin/`-Eintraege verlassen die Pruefliste, und der Docstring sagt
-warum:
+**Zwei** der **drei** `bin/`-Eintraege verlassen die Pruefliste. `bin/herdr-llm`
+bleibt darin — es startet weiterhin ein nacktes `python3` und ist genau das, wofuer
+dieser Test da ist. Wer die Liste durch den blossen Paket-Glob ersetzt, loescht
+lautlos eine Pruefung, die noch etwas bewacht. Der Docstring sagt beides:
 
     def test_the_package_parses_on_the_python3_the_manifest_may_meet():
         """Every command in the manifest spawns a bare `python3`.
@@ -611,14 +642,19 @@ warum:
 
         `bin/herdr-dispatch` and `bin/herdr-report` used to stand in this list
         for the same reason and are gone: as the `lean-herdr` entry point the
-        CLIs run under the INSTALLED interpreter. The package glob stays --
-        `handlers.py` and everything it imports is still reached by a bare
-        `python3`, and that now includes `workspace.py`.
+        CLIs run under the INSTALLED interpreter. `bin/herdr-llm` stays --
+        worktrunk starts it as a bare `python3` script, not through an entry
+        point. The package glob stays too: `handlers.py` and everything it
+        imports is still reached by a bare `python3`, and that now includes
+        `workspace.py`.
         """
         assert all(e["command"][0] == "python3" for e in manifest()["events"]), (
             "the floor below only matters as long as the manifest spawns python3"
         )
-        sources = sorted((ROOT / "lean_herdr").glob("*.py"))
+        sources = [
+            *sorted((ROOT / "lean_herdr").glob("*.py")),
+            ROOT / "bin" / "herdr-llm",
+        ]
 
 @call patch("tests/test_role_prohibitions.py", "die MANDATORY_SENTENCES mit bin/-Pfaden")
 @call patch("tests/test_roles.py", "test_workers_work_through_herdr_report")
@@ -714,11 +750,14 @@ faellt weg; der andere bleibt und traegt allein:
 @call patch("tests/test_worktree.py", "der Kommentar in test_wt_switch_passes_base_at_by_default")
 
 Die restlichen sind Wortersetzungen im Kommentar, ohne Verhaltensbezug — bis auf
-die beiden `prog=`-Werte und den einen Test, der auf einem von ihnen steht:
+die beiden `prog=`-Werte und den einen Test, der auf einem von ihnen steht. Die
+Zeilennummern sind am 2026-09-03 nachgemessen; `dispatch.py` ist seit der ersten
+Fassung dieses Plans um rund 45 Zeilen gewachsen, die uebrigen Dateien stehen
+unveraendert:
 
 | Datei | Stelle |
 |---|---|
-| `lean_herdr/dispatch.py` | `:72`, `:90-91`, `:268`, `:511` (`prog=`), `:700` |
+| `lean_herdr/dispatch.py` | `:78`, `:96-97`, `:274`, `:541` (`prog=`), `:744` |
 | `lean_herdr/report.py` | `:9`, `:265` (`prog=`), `:297` |
 | `lean_herdr/settings.py` | `:20` |
 | `lean_herdr/bus.py` | `:3` |
@@ -726,7 +765,8 @@ die beiden `prog=`-Werte und den einen Test, der auf einem von ihnen steht:
 | `lean_herdr/orderlog.py` | `:287` |
 | `tests/test_dispatch.py` | `:370` |
 | `tests/test_dispatch_uncovered_paths.py` | `:15` (Modul-Docstring) |
-| `opencode.jsonc` | `:41` und `:52` — **zwei** Kommentarzeilen, nicht eine |
+| `tests/test_settings.py` | `:194` — kam mit dem LLM-Plan dazu |
+| `opencode.jsonc` | `:41` und `:53` — **zwei** Kommentarzeilen, nicht eine |
 
 Die beiden `prog=`-Werte werden `"lean-herdr dispatch"` und
 `"lean-herdr report"` — sie stehen in jeder `--help`-Ausgabe, und ein Programm,
@@ -885,22 +925,36 @@ dieser Aenderung **rot** — er ist der Grund, warum er eine Task frueher entsta
 Weil `test_role_prohibitions.py` seit Task 3 die Vorlage liest, wandert die
 Zeile in **beide** Fassungen; der Gleichheitstest haelt das fest.
 
-@call patch("README.md", "die zwei Erwaehnungen der Rollentexte und der Config-Pfad")
+@call patch("README.md", "die vier Erwaehnungen der Rollentexte und des Config-Pfads")
 
-`README.md:96-97` nennt `roles/builder.md` und `roles/reviewer.md` als Traeger
-der Zeile `ORCHESTRATOR = orch`; `README.md:120` nennt `.config/lean-herdr.toml`
-als Konfigurationsdatei. Beide Pfade wandern hier mit — nicht erst in Task 4, wo
-der Abschnitt ohnehin umgeschrieben wird: eine README, die einen Pfad nennt, den
-es seit dem letzten Commit nicht mehr gibt, ist genau die Art Bruch, die dieser
+Vier Stellen, am 2026-09-03 nachgemessen — die erste Fassung dieses Plans kannte
+nur zwei, weil der LLM-Plan den `[llm]`-Abschnitt seither dazwischengeschoben hat:
+`README.md:201-202` nennt `roles/builder.md` und `roles/reviewer.md` als Traeger
+der Zeile `ORCHESTRATOR = orch`; `:91` nennt `.config/lean-herdr.toml` als den Ort
+des `[llm]`-Blocks; `:150` nennt ihn in einem Kommentarbeispiel als „die dauerhafte
+Stelle"; `:225` nennt ihn als die ausgelieferte, vollstaendig auskommentierte
+Konfigurationsdatei. Alle vier wandern hier mit — nicht erst in Task 4, wo der
+Bootstrap-Abschnitt ohnehin umgeschrieben wird: eine README, die einen Pfad nennt,
+den es seit dem letzten Commit nicht mehr gibt, ist genau die Art Bruch, die dieser
 Task zumacht.
 
-@call patch("lean_herdr/llm.py", "die drei Prosa-Erwaehnungen von .config/lean-herdr.toml")
+@call patch("lean_herdr/llm.py", "die fuenf Erwaehnungen von .config/lean-herdr.toml")
 
-`llm.py:40`, `:48` und `:277` nennen den alten Pfad im Text. Das **Verhalten**
-folgt dem Umzug von selbst — `file_settings()` liest `SETTINGS_PATH` aus
-`settings` und weiss nichts von einem Literal —, aber ein Docstring, der einen
-Pfad nennt, den es nicht gibt, schickt den naechsten Leser ins Leere. `:280`
-nennt `bin/herdr-llm` und bleibt unberuehrt: dieser Pfad gehoert dem LLM-Plan.
+`llm.py:46`, `:54`, `:375`, `:387` und `:657` nennen den alten Pfad im Text —
+**fuenf** Stellen, nicht die drei der ersten Planfassung, und `:657` ist kein
+Docstring, sondern der argparse-Hilfetext von `--model`: ihn stehenzulassen hiesse,
+einem Benutzer in `--help` einen Pfad zu nennen, den es nicht mehr gibt. Das
+**Verhalten** folgt dem Umzug von selbst — `file_settings()` liest `SETTINGS_PATH`
+aus `settings` und weiss nichts von einem Literal.
+
+`:387` traegt zusaetzlich einen Zeilenanker auf die Nachbardatei: „`.config/`
+lookup from there would miss (settings.py:20-24)". Der Kommentar, den er meint,
+steht heute bei `settings.py:18-22` und waechst durch den Patch oben auf `:18-27`;
+der Anker wandert entsprechend mit, sonst zeigt er nach diesem Task auf
+`PROFILE_BY_ROLE`.
+
+`llm.py:378` nennt `bin/herdr-llm` und bleibt unberuehrt: dieser Pfad gehoert dem
+LLM-Plan, und die Datei existiert.
 
 ### Die Vorlagen
 
@@ -1077,11 +1131,16 @@ Constraints), aber es beantwortet, ob der Split eine ueberfluessige Pane
 erzeugt — und das ist ein Befund, den ein spaeterer Schnitt braucht.
 
 `herdr pane process-info` liefert kein `env`, aber ein `shell_pid`; unter Linux
-ist `/proc/<pid>/environ` die exakte Antwort. Ein Skript, das die Kette ohne
-Abschreiben durchlaeuft und hinter sich aufraeumt:
+ist `/proc/<pid>/environ` die exakte Antwort. Das Skript unten laeuft ueber
+`ctx_execute(language="python")`, **nicht** als `python3 - <<'PY'`: unter
+`shell_strict_mode = true` lehnt das Shell-Gate jede Pipe in einen nackten
+Interpreter permanent ab. Es durchlaeuft die Kette ohne Abschreiben und raeumt
+hinter sich auf:
 
     mkdir -p /tmp/lh-env-probe && git -C /tmp/lh-env-probe init -q
-    python3 - <<'PY'
+
+Dann, als Python:
+
     import json, subprocess
 
     def herdr(*args):
@@ -1110,7 +1169,9 @@ Abschreiben durchlaeuft und hinter sich aufraeumt:
               [e for e in env if e.startswith(("LEAN_HERDR_PROBE", "LEAN_CTX_"))])
 
     print(herdr("workspace", "close", ws))
-    PY
+
+Und wieder als Shell:
+
     rm -rf /tmp/lh-env-probe
 
 **Expected:** drei Angaben, alle drei werden festgehalten.
@@ -1169,7 +1230,10 @@ in denselben Satz.
     #: crashes on the first import, not in a test.
     ORCHESTRATOR_AGENT = "orch"
 
-Ans Ende der Datei, hinter `settings_for()`:
+Ans **Ende der Datei**, hinter `llm_settings()` — nicht hinter `settings_for()`:
+das ist seit dem LLM-Plan nicht mehr dieselbe Stelle (`settings_for()` endet bei
+`settings.py:183`, danach laufen `LlmSettings` und `llm_settings()` bis `:247`).
+Der neue Block spiegelt `llm_settings` und gehoert neben es, nicht davor:
 
     @dataclass(frozen=True)
     class WorkspaceSettings:
@@ -1182,6 +1246,13 @@ Ans Ende der Datei, hinter `settings_for()`:
 
         `model = ""` means "no --model at all", exactly what the bootstrap
         does today. `None` would need a second spelling for the same state.
+
+        What is NOT here: `direction`, `ratio` and `focus`. The orchestrator
+        pane takes `pane_split`'s own defaults -- `start_orchestrator` reads
+        only `profile` and `ready_timeout_s` off `[roles.orchestrator]`. That
+        is what the keystroke does today and the one path both callers share;
+        naming it here keeps it a decision rather than an oversight, in a
+        module whose whole purpose is that a wrong file never stays silent.
         """
 
         label: str = "{repo}"
@@ -1244,11 +1315,17 @@ mit `KINDS` in der bestehenden `from lean_herdr.settings import (...)`-Liste.
 @call patch("lean_herdr/ordercmd.py", "die ORCHESTRATOR_AGENT-Definition")
 
 `ordercmd.py:36` liest den Namen nicht mehr aus `handlers`, sondern aus
-`settings` — der Import von `handlers` faellt dort ganz weg:
+`settings` — der Import von `handlers` (`ordercmd.py:22`) faellt dort ganz weg:
 
     from lean_herdr.settings import ORCHESTRATOR_AGENT
 
-`dispatch.py:37` bleibt **unveraendert**: es importiert den Namen weiterhin aus
+Und der Modul-Docstring bei `ordercmd.py:11` wandert mit: er erklaert heute, dass
+`ORCHESTRATOR_AGENT` hier oeffentlich ist, um einen Import-Zyklus zu umgehen. Den
+Zyklus gibt es nach diesem Task nicht mehr — der Name kommt aus dem Blattmodul.
+Der Absatz nennt stattdessen den verbliebenen Grund: `dispatch.py` importiert ihn
+weiterhin von hier.
+
+`dispatch.py:41` bleibt **unveraendert**: es importiert den Namen weiterhin aus
 `ordercmd`, das ihn re-exportiert. Damit bleiben auch
 `test_roles.py::test_the_role_prompts_trust_the_name_dispatch_actually_stamps`
 (`from lean_herdr.dispatch import ORCHESTRATOR_AGENT`) und der `--from`-Hilfetext
@@ -1548,8 +1625,17 @@ Neue Datei (verbatim):
 @call patch("lean_herdr/handlers.py", "die ORCHESTRATOR-Konstante und handle_bootstrap")
 
 Die Konstante `ORCHESTRATOR` faellt **ganz** weg: `kind` und `env` gehoeren jetzt
-`[workspace]` und `[roles.orchestrator]`, der Name wohnt in `settings`. Und
-`handle_bootstrap` wird zu:
+`[workspace]` und `[roles.orchestrator]`, der Name wohnt in `settings`. An ihre
+Stelle tritt eine Frist, die nur dem Tastendruck gehoert:
+
+    #: The keystroke is answered by the PANE, not by the agent id: a plugin
+    #: handler has nobody to show a result to, and Herdr's handler process is
+    #: the wrong place to sit out `[roles.orchestrator].ready_timeout_s` (45 s
+    #: by default). `lean-herdr workspace up` keeps the full wait -- its caller
+    #: reads the id off stdout and has a use for it.
+    KEYSTROKE_READY_TIMEOUT_S = 2.0
+
+Und `handle_bootstrap` wird zu:
 
     def handle_bootstrap(cfg: Config) -> None:
         """A deliberate gesture: open an orchestrator pane in THIS workspace.
@@ -1593,7 +1679,7 @@ Die Konstante `ORCHESTRATOR` faellt **ganz** weg: `kind` und `env` gehoeren jetz
                 settings=workspace_settings(data),
                 profile=role.profile,
                 workspace_id=workspace,
-                ready_timeout_s=role.ready_timeout_s,
+                ready_timeout_s=min(role.ready_timeout_s, KEYSTROKE_READY_TIMEOUT_S),
             )
         except (BusError, SettingsError) as exc:
             herdr.run("notification", "show", "--message", f"lean-herdr: {exc}")
@@ -1886,28 +1972,61 @@ heutigen Tests nicht erfuellen.
 `{"workspace": {"cwd": "/repo"}}` und stellen **keine** Antwort auf
 `("workspace", "list")` bereit. Nach der Aenderung:
 
-1. `canonical_root("/repo")` startet `git rev-parse` in einem Verzeichnis, das
-   kein Checkout ist, und wirft `BusError` → der Handler endet in der
-   Notification, bevor der Kern laeuft.
-2. Selbst mit gueltigem `cwd` liefert das rohe `workspace list` `{}` → der Kern
-   antwortet `no_herdr_server`.
+1. Das rohe `workspace list` liefert `{}` → der Kern antwortet
+   `no_herdr_server`, bevor er irgendetwas tut. Beide Tests brauchen deshalb
+   einen `("workspace", "list")`-Eintrag in der Antworttabelle.
+2. **Der Waiter ist die eigentliche Falle, und sie kostet Wartezeit statt einer
+   Fehlermeldung.** `start_orchestrator` nimmt `waiter=wait_for_agent_id` als
+   Vorgabe, und `handle_bootstrap` reicht keinen eigenen herein. In
+   `test_bootstrap_starts_the_orchestrator_in_its_own_workspace` gibt es keine
+   `("agent", "list")`-Antwort, `agent_list()` ist also `[]` — der echte Waiter
+   pollt daraufhin mit `time.sleep` bis `ready_timeout_s` und liest dabei die
+   **echte** Registry des Operators (`dispatch.py:71-72`:
+   `AGENT_READY_TIMEOUT_S = RoleSettings.ready_timeout_s` = 45.0,
+   `AGENT_READY_INTERVAL_S = 0.5`; `default_registry_path()` zeigt nach
+   `~/.local/share/lean-ctx/agents/`). Das sind **45 Sekunden echter Schlaf in
+   einem Unit-Test**, kein Fehlschlag — die Suite wird nicht rot, nur unbrauchbar
+   langsam.
 
-Beide Tests brauchen deshalb ein echtes Git-Verzeichnis als `cwd` (die
-`world`-Fixture arbeitet ohnehin in `tmp_path`; ein `git init -q` dort genuegt)
-und einen `("workspace", "list")`-Eintrag in der Antworttabelle. Zusaetzlich
-prueft der erste, dass **kein** `workspace create` abgesetzt wurde — genau die
-Eigenschaft, die den Tastendruck vom `up` unterscheidet:
+   Eine `("agent", "list")`-Antwort ist **kein** Ausweg: derselbe Aufruf traegt
+   die Duplikatspruefung, der Kern antwortete `already_running` und spraenge den
+   Split — der Test prueft dann nichts mehr. Der Ausweg ist eine Naht fuer den
+   Waiter, und `handle_bootstrap` braucht sie ohnehin (siehe den Absatz unten):
+   der Test setzt `monkeypatch.setattr("lean_herdr.workspace.wait_for_agent_id",
+   lambda *a, **k: "mcp-42")`.
+
+**Achtung, die Vorgabe der ersten Planfassung war hier falsch und ist gestrichen:**
+`canonical_root` wirft in diesen Tests **nichts**. Die `world`-Fixture ersetzt sie
+(`tests/test_handlers.py:26`:
+`monkeypatch.setattr("lean_herdr.handlers.canonical_root", lambda cwd: Path("/repo"))`),
+und der Stub liefert `/repo` fuer jedes `cwd`. Ein `git init -q` in `tmp_path`
+aenderte daran nichts und gehoert nicht in diese Tests.
+
+Zusaetzlich prueft der erste, dass **kein** `workspace create` abgesetzt wurde —
+genau die Eigenschaft, die den Tastendruck vom `up` unterscheidet:
 
     assert not proc.called_with("workspace", "create"), proc.flat()
 
-**Eine Verhaltensaenderung, die die Spec nicht erwaehnt und die hier
-dokumentiert wird, damit sie niemand fuer einen Fehler haelt:** die neue Pane
-laeuft unter `canonical_root(cwd)` statt unter dem `cwd` aus dem Ereignis. Das
-ist richtig — `SETTINGS_PATH` ist relativ zur Wurzel, und eine Pane in einem
-Unterverzeichnis laese die Config nicht. Die Folge ist, dass ein Tastendruck
-**ausserhalb** eines Git-Checkouts jetzt mit einer Notification endet statt eine
-Pane zu oeffnen. Das ist kein Verlust: ohne Repo gibt es weder Config noch
-Auftragslog, und der Orchestrator haette nichts zu tun.
+**Zwei Verhaltensaenderungen, die die Spec nicht erwaehnt und die hier
+dokumentiert werden, damit sie niemand fuer einen Fehler haelt.**
+
+Die erste: die neue Pane laeuft unter `canonical_root(cwd)` statt unter dem `cwd`
+aus dem Ereignis. Das ist richtig — `SETTINGS_PATH` ist relativ zur Wurzel, und
+eine Pane in einem Unterverzeichnis laese die Config nicht. Die Folge ist, dass
+ein Tastendruck **ausserhalb** eines Git-Checkouts jetzt mit einer Notification
+endet statt eine Pane zu oeffnen. Das ist kein Verlust: ohne Repo gibt es weder
+Config noch Auftragslog, und der Orchestrator haette nichts zu tun.
+
+Die zweite: **der Tastendruck wartet jetzt.** `handle_bootstrap` kehrt heute
+unmittelbar nach `agent_start` zurueck (`handlers.py:202-207`); ueber den
+geteilten Kern blockiert er, bis der Waiter eine `agent_id` sieht — im Prozess
+eines Herdr-Plugin-Handlers, wo niemand eine Ausgabe erwartet. Die Antwort darauf
+ist **nicht**, dem Kern das Warten abzugewoehnen (`up` braucht die `agent_id`,
+und zwei Zweige waeren genau die Doppelung, gegen die dieser Task existiert),
+sondern dem Tastendruck eine kurze eigene Frist zu geben. Das erledigt
+`KEYSTROKE_READY_TIMEOUT_S` im Aufruf oben; ohne den Deckel saesse ein
+Plugin-Handler die vollen 45 Sekunden aus `[roles.orchestrator].ready_timeout_s`
+ab.
 
 @call patch("tests/test_cli.py", "nichts weiter -- der parametrisierte Test nimmt das dritte Verb automatisch mit")
 
@@ -2305,6 +2424,12 @@ das, weil es beide Felder mit `or ""` liest.
     the worktrunk hook approval and the Herdr plugin registration are reported
     as `warnings` and stay yours to grant.
 
+    Two of the eight carry this project's own answers and are meant to be
+    edited: `.config/wt.toml` pins the pre-merge gate to `uv run pytest -q`,
+    and `.claude/settings.json` allows `Bash(uv run pytest:*)`. In a project
+    that is not Python, both are wrong on the first merge -- and a pre-merge
+    gate that fails is the one that aborts the merge, so you find out early.
+
 ### Verify & Close
 
 @call verify(lean_herdr/initcmd.py lean_herdr/workspace.py tests/test_initcmd.py)
@@ -2391,11 +2516,36 @@ Prompt-Datei, ist der Pfad in `opencode.jsonc` falsch und nicht der Rollentext.
 
 **Expected:** `rc=1` — die Rollentexte sind versioniert und reisen im Branch.
 
-    python3 -c "import pathlib;print(sorted((p.name, sum(1 for _ in p.open())) for p in pathlib.Path('lean_herdr').glob('*.py')))"
+Dieses Skript laeuft ueber `ctx_execute(language="python")`, **nicht** als
+`python3 - <<'PY'` und nicht als `python3 -c`: unter `shell_strict_mode = true`
+lehnt das Shell-Gate jede Pipe in einen nackten Interpreter ab, und zwar
+permanent, nicht als voruebergehenden Fehler.
 
-**Expected:** kein Modul ueber 800 Zeilen. `dispatch.py` steht bei 762 und
-waechst in diesem Plan nur um eine `choices`-Zeile; `workspace.py` und
-`initcmd.py` liegen deutlich darunter.
+    import ast
+    import pathlib
+
+    for path in sorted(pathlib.Path("lean_herdr").glob("*.py")):
+        src = path.read_text(encoding="utf-8")
+        lines = src.splitlines()
+        blank = sum(1 for line in lines if not line.strip())
+        comment = sum(1 for line in lines if line.strip().startswith("#"))
+        docstring = 0
+        for node in ast.walk(ast.parse(src)):
+            if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                if ast.get_docstring(node, clean=False) is not None:
+                    first = node.body[0]
+                    docstring += first.end_lineno - first.lineno + 1
+        production = len(lines) - blank - comment - docstring
+        over = "  <-- OVER" if production > 800 else ""
+        print(f"{path.name}: {len(lines)} physical, {production} production{over}")
+
+**Expected:** keine `OVER`-Zeile. Gemessen werden **produktive** Zeilen, nicht
+`wc -l` — die Regel in `AGENTS.md` hat immer die erste Zahl gemeint, und in
+diesem Baum liegen die beiden weit auseinander. Der Stand vor diesem Plan
+(2026-09-03): `dispatch.py` **817 physisch gegen 519 produktiv**, `llm.py` 751
+gegen 352. Ein Gate auf der physischen Zahl waere hier schon rot, bevor dieser
+Plan eine Zeile angefasst hat. `dispatch.py` waechst hier nur um eine
+`choices`-Zeile; `workspace.py` und `initcmd.py` liegen deutlich darunter.
 
 @call gate(.)
 
@@ -2428,5 +2578,5 @@ here` erwaehnt die Vorlagen nicht.
 @call verify(README.md)
 @call gate(.)
 @call commit(".", "docs: describe the one-binary setup and the workspace verbs")
-@call remember_decision("lean-herdr: the project is installed as `uv tool install --editable .` and needs `lean-ctx allow lean-herdr`; `bin/` is gone and the role prompts live in .lean-ctx/lean-herdr/roles/. Migrating an existing checkout means closing every open order first -- running workers lose bin/herdr-report.")
+@call remember_decision("lean-herdr: the project is installed as `uv tool install --editable .` and needs `lean-ctx allow lean-herdr`; bin/herdr-dispatch and bin/herdr-report are gone (bin/herdr-llm STAYS -- it belongs to the LLM plan and is still a bare-python3 script in tests/test_manifest.py), and the role prompts live in .lean-ctx/lean-herdr/roles/. Migrating an existing checkout means closing every open order first -- running workers lose bin/herdr-report.")
 @phase-end
