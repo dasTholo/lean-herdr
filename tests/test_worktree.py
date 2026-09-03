@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -8,6 +9,7 @@ from lean_herdr.worktree import (
     WorktreeOpenFailed,
     WorktreeTarget,
     WorktrunkMissing,
+    _open_workspace,
     anchor_pane,
     ensure_worktree,
     find_worktree,
@@ -31,6 +33,68 @@ LISTING_WITH_WORKTREES = {
         ],
     }
 }
+
+# Verbatim shape (fields the code never reads are elided with plausible
+# values), measured live against real Herdr 0.8.2 / wt 0.76.0 on 2026-09-03
+# via `herdr worktree open`. Neither `open_workspace_id` nor `workspace_id`
+# exists at the top level of `result` — the shape every test below used to
+# assume, and the real Herdr never produces.
+MEASURED_WORKTREE_OPEN_REPLY: dict[str, Any] = {
+    "id": "cli:worktree:open",
+    "result": {
+        "already_open": True,
+        "type": "worktree_opened",
+        "workspace": {
+            "workspace_id": "w2",
+            "label": "feat/probe",
+            "active_tab_id": "w2:t1",
+            "worktree": {"checkout_path": "/repo.feat-probe", "repo_root": "/repo"},
+        },
+        "worktree": {
+            "branch": "feat/probe",
+            "open_workspace_id": "w2",
+            "path": "/repo.feat-probe",
+        },
+        "root_pane": {"pane_id": "w2:p1", "tab_id": "w2:t1", "workspace_id": "w2"},
+        "tab": {"tab_id": "w2:t1", "workspace_id": "w2", "pane_count": 1},
+    },
+}
+
+
+def real_worktree_open_reply(
+    *, workspace_id: str, branch: str, path: str, already_open: bool = False
+) -> dict[str, Any]:
+    """A `worktree open` reply in the real (measured) shape, for any branch.
+
+    `MEASURED_WORKTREE_OPEN_REPLY` fixes the fields to the live probe; this
+    parametrises the same shape so the existing `feat/auth`-flavoured tests
+    can carry the real reply too.
+    """
+    tab_id = f"{workspace_id}:t1"
+    return {
+        "id": "cli:worktree:open",
+        "result": {
+            "already_open": already_open,
+            "type": "worktree_opened",
+            "workspace": {
+                "workspace_id": workspace_id,
+                "label": branch,
+                "active_tab_id": tab_id,
+                "worktree": {"checkout_path": path, "repo_root": "/repo"},
+            },
+            "worktree": {
+                "branch": branch,
+                "open_workspace_id": workspace_id,
+                "path": path,
+            },
+            "root_pane": {
+                "pane_id": f"{workspace_id}:p1",
+                "tab_id": tab_id,
+                "workspace_id": workspace_id,
+            },
+            "tab": {"tab_id": tab_id, "workspace_id": workspace_id, "pane_count": 1},
+        },
+    }
 
 
 @pytest.fixture
@@ -64,7 +128,9 @@ def test_new_worktree_is_created_and_registered_at_repo_root(h, monkeypatch):
     herdr, proc = h
     proc.replies = {
         ("worktree", "list"): EMPTY_LISTING,
-        ("worktree", "open"): {"result": {"open_workspace_id": "w2"}},
+        ("worktree", "open"): real_worktree_open_reply(
+            workspace_id="w2", branch="feat/auth", path="/repo.feat-auth"
+        ),
     }
     monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: "/usr/bin/wt")
     wt_calls: list[list[str]] = []
@@ -116,7 +182,9 @@ def test_existing_worktree_without_workspace_is_reopened(h):
                 ],
             }
         },
-        ("worktree", "open"): {"result": {"open_workspace_id": "w5"}},
+        ("worktree", "open"): real_worktree_open_reply(
+            workspace_id="w5", branch="feat/auth", path="/repo.feat-auth"
+        ),
     }
     target = ensure_worktree("feat/auth", herdr=herdr, cwd="/repo")
     assert target == WorktreeTarget(path=Path("/repo.feat-auth"), workspace_id="w5")
@@ -151,3 +219,39 @@ def test_anchor_pane_is_none_when_the_workspace_is_empty(h):
     herdr, proc = h
     proc.replies = {("pane", "list"): {"result": {"panes": []}}}
     assert anchor_pane(herdr, "w2") is None
+
+
+def test_open_workspace_reads_the_measured_reply_shape(h):
+    """`_open_workspace` against the verbatim reply real Herdr 0.8.2 sends.
+
+    Every test above this one used to feed `{"result": {"open_workspace_id":
+    "w2"}}` — a shape the real `worktree open` never produces. This is the
+    shape it does; `_open_workspace` must find `w2` inside it.
+    """
+    herdr, proc = h
+    proc.replies = {("worktree", "open"): MEASURED_WORKTREE_OPEN_REPLY}
+    workspace_id = _open_workspace(
+        herdr, repo_root=Path("/repo"), path=Path("/repo.feat-probe"), branch="feat/probe"
+    )
+    assert workspace_id == "w2"
+
+
+def test_open_workspace_tab_only_response_names_what_it_got(h):
+    """herdr-worktrunk may register a checkout as a tab, not a workspace.
+
+    A reply carrying only a tab has no workspace of its own to report — the
+    error must name that specifically, not the generic "no workspace_id",
+    and must NOT treat the tab's `workspace_id` (the tab's *host* workspace)
+    as if it were the worktree's own.
+    """
+    herdr, proc = h
+    proc.replies = {
+        ("worktree", "open"): {
+            "result": {"tab": {"tab_id": "w9:t1", "workspace_id": "w9"}}
+        }
+    }
+    with pytest.raises(WorktreeOpenFailed, match="tab 'w9:t1', no workspace"):
+        _open_workspace(
+            herdr, repo_root=Path("/repo"), path=Path("/repo.feat-x"), branch="feat/x"
+        )
+

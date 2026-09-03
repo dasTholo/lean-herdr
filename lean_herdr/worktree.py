@@ -93,12 +93,56 @@ def _open_workspace(
     --cwd MUST be the repo root; called from a linked-worktree workspace,
     Herdr rejects with `linked_worktree_source` (H8). Otherwise that exact
     case would come back as an empty dict and look like success.
+
+    The id is not a top-level field. Measured against Herdr 0.8.2, a
+    `worktree open` reply nests it as `result.workspace.workspace_id`, with
+    `result.worktree.open_workspace_id` and `result.root_pane.workspace_id`
+    carrying the same id as corroboration (`result.tab` is present too, but
+    its `workspace_id` is NOT used as a hit — see below):
+
+        {"result": {"workspace": {"workspace_id": "w2", ...},
+                     "worktree": {"open_workspace_id": "w2", ...},
+                     "root_pane": {"workspace_id": "w2", ...},
+                     "tab": {"workspace_id": "w2", ...}}}
+
+    `result.open_workspace_id` / `result.workspace_id` — the keys this used
+    to read — exist only on `worktree_list` entries, never on an `open`
+    reply; they stay below as a last-resort fallback so nothing that
+    happened to rely on them breaks. The bug they caused was self-disguising:
+    `ensure_worktree` consults `worktree_list` first, and THAT listing's
+    entries genuinely do carry `open_workspace_id` — so a second call for the
+    same branch quietly took the listing path and succeeded, while the
+    first, workspace-opening call failed every time.
     """
     opened = herdr.worktree_open(cwd=repo_root, path=path, label=branch)
     result = opened.get("result") or {}
-    workspace = result.get("open_workspace_id") or result.get("workspace_id")
+    workspace_obj = result.get("workspace") if isinstance(result.get("workspace"), dict) else {}
+    worktree_obj = result.get("worktree") if isinstance(result.get("worktree"), dict) else {}
+    root_pane = result.get("root_pane") if isinstance(result.get("root_pane"), dict) else {}
+    tab = result.get("tab") if isinstance(result.get("tab"), dict) else {}
+    # `tab.workspace_id` is deliberately NOT in this ladder. In tab mode that
+    # id names whatever workspace already hosts the tab (e.g. the caller's
+    # own) — not a new workspace for this worktree. Treating it as a hit
+    # would silently hand back the wrong workspace instead of failing loud.
+    workspace = (
+        workspace_obj.get("workspace_id")
+        or worktree_obj.get("open_workspace_id")
+        or root_pane.get("workspace_id")
+        or result.get("open_workspace_id")
+        or result.get("workspace_id")
+    )
     if not workspace:
-        reason = (opened.get("error") or {}).get("code") or "no workspace_id"
+        error_code = (opened.get("error") or {}).get("code")
+        if error_code:
+            reason = error_code
+        elif tab:
+            # herdr-worktrunk: Herdr registers a checkout either as a nested
+            # worktree workspace or opens it as a plain tab, depending on
+            # configuration. A tab-only reply has no workspace of its own to
+            # report — say so specifically, not the generic "no workspace_id".
+            reason = f"opened as tab {tab.get('tab_id')!r}, no workspace"
+        else:
+            reason = "no workspace_id"
         raise WorktreeOpenFailed(f"worktree open for {branch}: {reason}")
     return str(workspace)
 
