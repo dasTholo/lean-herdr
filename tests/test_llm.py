@@ -401,3 +401,188 @@ def test_a_missing_key_says_so_on_stderr(monkeypatch, capsys, tmp_path):
     monkeypatch.setattr(llm, "generate", lambda *a, **kw: "x")
     assert llm.main(["generate"]) == 0
     assert "falling back to the file names" in capsys.readouterr().err
+
+
+def worktrees(*entries: dict) -> dict:
+    return {"result": {"worktrees": list(entries)}}
+
+
+def test_prereview_reads_only_the_first_line(no_store):
+    """The reasoning may say `reject` as often as it likes."""
+    spy = SpyRunner(answer(
+        "PREREVIEW: pass\nI would reject this if the order had not asked "
+        "for it. Nothing to reject."
+    ))
+    ruling, note = llm.prereview(
+        "add a parser", "diff --git a/x b/x", runner=spy,
+        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+    )
+    assert ruling == "pass"
+    assert note.startswith("I would reject this")
+
+
+def test_a_verdict_further_down_does_not_count(no_store):
+    spy = SpyRunner(answer("Looks fine to me.\nPREREVIEW: reject"))
+    ruling, note = llm.prereview(
+        "add a parser", "diff", runner=spy,
+        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+    )
+    assert ruling == "skipped"
+    assert note == "unparsable_answer"
+
+
+@pytest.mark.parametrize(
+    ("diff", "spy", "reason"),
+    [
+        ("   ", SpyRunner(answer("PREREVIEW: reject")), "empty_diff"),
+        (
+            "x" * (llm.MAX_DIFF_BYTES + 1),
+            SpyRunner(answer("PREREVIEW: reject")),
+            "diff_too_large",
+        ),
+        ("diff", SpyRunner(raises=OSError("no curl")), "no_answer"),
+        ("diff", SpyRunner(answer("I have no opinion")), "unparsable_answer"),
+    ],
+    ids=["empty", "too-large", "no-curl", "unparsable"],
+)
+def test_prereview_never_rejects_when_its_own_machinery_fails(diff, spy, reason, no_store):
+    ruling, note = llm.prereview(
+        "an order", diff, runner=spy,
+        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+    )
+    assert ruling == "skipped", "the plumbing must never reject"
+    assert note == reason
+
+
+def test_a_missing_key_is_skipped_not_rejected(no_store):
+    spy = SpyRunner(answer("PREREVIEW: reject"))
+    ruling, note = llm.prereview(
+        "an order", "diff", runner=spy, env={}, auth_path=no_store,
+        settings=NO_FILE,
+    )
+    assert (ruling, note) == ("skipped", "no_answer")
+    assert spy.calls == []
+
+
+def judged(no_store, *, cfg=None, env=None, **kw):
+    """One prereview call; returns the request body that was sent."""
+    spy = SpyRunner(answer("PREREVIEW: pass"))
+    llm.prereview(
+        "an order", "diff", runner=spy, auth_path=no_store,
+        settings=cfg if cfg is not None else NO_FILE,
+        env={llm.KEY_ENV: "k", **(env or {})},
+        **kw,
+    )
+    return json.loads(spy.bodies[0])
+
+
+def test_the_judges_precedence_runs_all_six_levels(no_store):
+    """Raising the judge must not raise the commit generator's bill."""
+    cfg = LlmSettings(
+        model="file/shared", prereview_model="file/judge",
+        effort="minimal", prereview_effort="medium",
+    )
+    both = {
+        llm.MODEL_ENV: "env/shared",
+        llm.PREREVIEW_MODEL_ENV: "env/judge",
+    }
+    assert judged(no_store, cfg=cfg, env=both, model="flag/m")["model"] == "flag/m"
+    assert judged(no_store, cfg=cfg, env=both)["model"] == "env/judge"
+    assert judged(no_store, cfg=cfg, env={llm.MODEL_ENV: "env/shared"})[
+        "model"
+    ] == "file/judge", "its own file key beats the shared environment"
+    assert judged(
+        no_store, cfg=LlmSettings(model="file/shared"),
+        env={llm.MODEL_ENV: "env/shared"},
+    )["model"] == "env/shared"
+    assert judged(no_store, cfg=LlmSettings(model="file/shared"))[
+        "model"
+    ] == "file/shared", "with nothing of its own the judge shares the model"
+    assert judged(no_store)["model"] == llm.DEFAULT_MODEL
+
+
+def test_the_judge_does_not_inherit_the_commit_generators_effort(no_store):
+    """`[llm].effort` is the formatter's `minimal`. Inheriting it would
+    make the judge as thoughtless as the formatter, silently."""
+    cfg = LlmSettings(effort="minimal")
+    assert judged(no_store, cfg=cfg)["reasoning"] == {
+        "effort": llm.PREREVIEW_EFFORT
+    }
+    assert judged(
+        no_store, cfg=LlmSettings(effort="minimal", prereview_effort="high")
+    )["reasoning"] == {"effort": "high"}
+    assert judged(no_store, cfg=cfg, effort="low")["reasoning"] == {"effort": "low"}
+
+
+def test_the_note_is_cut_at_the_cap(no_store):
+    spy = SpyRunner(answer("PREREVIEW: reject\n" + "x" * 5000))
+    _ruling, note = llm.prereview(
+        "an order", "diff", runner=spy,
+        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+    )
+    assert len(note) == llm.NOTE_MAX_CHARS
+
+
+def test_the_diff_comes_from_the_worktree_not_the_checkout():
+    calls = []
+
+    def runner(cmd, **_kw):
+        calls.append(list(cmd))
+        return Completed(stdout="diff --git a/x b/x")
+
+    assert llm.wt_diff("/worktrees/feat-x", runner=runner) == "diff --git a/x b/x"
+    assert calls == [["wt", "-C", "/worktrees/feat-x", "step", "diff"]]
+
+
+def test_a_failing_wt_diff_is_none():
+    assert llm.wt_diff("/x", runner=lambda *a, **k: Completed(returncode=1)) is None
+    assert llm.wt_diff("/x", runner=SpyRunner(raises=OSError("no wt"))) is None
+
+
+def test_an_unresolvable_worktree_is_skipped_not_rejected():
+    """The invariant `_worker_root()` would have broken."""
+    def runner(*_a, **_kw):
+        raise AssertionError("nothing may run without a resolved path")
+
+    assert llm.prereview_result(
+        "an order", branch="feat/x", worktree_list=worktrees(), runner=runner,
+    ) == {"prereview": "skipped", "prereview_note": "worktree_unresolved"}
+    assert llm.prereview_result(
+        "an order", branch="feat/x",
+        worktree_list=worktrees({"branch": "feat/x"}), runner=runner,
+    )["prereview_note"] == "worktree_unresolved"
+    assert llm.prereview_result(
+        "an order", branch=None, worktree_list=worktrees(), runner=runner,
+    )["prereview_note"] == "no_branch"
+
+
+def test_a_garbage_worktree_list_is_skipped_not_a_crash():
+    assert llm.prereview_result(
+        "an order", branch="feat/x", worktree_list="not a dict",
+        runner=lambda *a, **k: Completed(),
+    )["prereview"] == "skipped"
+
+
+def test_the_resolved_path_is_the_one_the_diff_runs_in(no_store):
+    seen = []
+
+    def runner(cmd, **_kw):
+        seen.append(list(cmd))
+        if cmd[:1] == ["wt"]:
+            return Completed(stdout="diff --git a/x b/x")
+        return Completed(stdout=json.dumps(answer("PREREVIEW: reject\nno test")))
+
+    got = llm.prereview_result(
+        "an order",
+        branch="feat/x",
+        worktree_list=worktrees(
+            {"branch": "other", "path": "/wrong"},
+            {"branch": "feat/x", "path": "/right"},
+        ),
+        runner=runner,
+        settings=NO_FILE,
+        env={llm.KEY_ENV: "k"},
+        auth_path=no_store,
+    )
+    assert got == {"prereview": "reject", "prereview_note": "no test"}
+    assert seen[0] == ["wt", "-C", "/right", "step", "diff"]

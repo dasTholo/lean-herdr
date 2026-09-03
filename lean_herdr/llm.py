@@ -36,6 +36,7 @@ from lean_herdr.settings import (
     llm_settings,
     read_settings,
 )
+from lean_herdr.worktree import find_worktree
 
 #: OpenRouter's slug for the model measured in the design (spec 2.2).
 #: The floor of the chain, never the decision: `[llm]` in
@@ -94,6 +95,80 @@ GENERATE_EFFORT = "minimal"
 #: that must not have a second way to fail.
 DIFFSTAT_RE = re.compile(r"<diffstat>(.*?)</diffstat>", re.DOTALL)
 FALLBACK_FILES = 3
+
+PREREVIEW_TIMEOUT_S = 60.0
+DIFF_TIMEOUT_S = 30.0
+
+#: A model of its own for the judge. Precedence: an explicit `model=`
+#: (the CLI's --model), then this, then $LEAN_HERDR_LLM_MODEL, then
+#: DEFAULT_MODEL. Without it the two jobs would be stuck on one
+#: variable, and they are not the same job: the commit path formats a
+#: diffstat and is happy with the smallest model there is, the judge
+#: reads code. The builder inherits the pane's environment, so moving
+#: $LEAN_HERDR_LLM_MODEL to raise the judge would raise the commit
+#: generator's bill on every commit as a side effect.
+PREREVIEW_MODEL_ENV = "LEAN_HERDR_PREREVIEW_MODEL"
+
+#: MEASURED 2026-09-03, google/gemini-3.8-flash, 3 runs per cell, over a
+#: diff carrying three planted faults and a clean control diff:
+#:   effort   faults named on bad.diff       rejects on clean.diff       $/call
+#:   minimal  3+3+3 of 3, reject every run   0 of 3                      0.00063
+#:   low      3+3+3 of 3, reject every run   0 of 3                      0.00063
+#:   medium   3+3+3 of 3, reject every run   0 of 3                      0.00148
+#: `medium` buys ~200 reasoning tokens and finds nothing the cheap levels
+#: missed; `minimal` and `low` tie inside the noise -- both spend 0 reasoning
+#: tokens -- and `low` measured the cheaper of the two.
+#: The rule the measurement settled: the cheapest level with no false
+#: alarm on a clean diff wins. A false alarm costs a whole builder
+#: round; a missed finding costs nothing, because the strong reviewer
+#: runs afterwards either way.
+PREREVIEW_EFFORT = "low"
+
+#: The note travels into the follow-up order and from there into the
+#: order log. A rambling model justification does not belong there.
+NOTE_MAX_CHARS = 2_000
+
+#: Bigger than this and there is no judging left to do -- `skipped`,
+#: with a reason, and no call. Well under MAX_PROMPT_BYTES, because the
+#: prompt around the diff has to fit too.
+MAX_DIFF_BYTES = 150_000
+
+#: The FIRST line, exactly as `dispatch.verdict()` reads its own token:
+#: the first line alone, so that quoting the same words further down in
+#: the reasoning cannot flip the ruling. `PREREVIEW:` is a protocol
+#: token, not prose.
+PREREVIEW_RE = re.compile(r"PREREVIEW:\s*(pass|reject)\s*$")
+
+#: Deliberately narrow, and every ground checkable without knowing the
+#: project: no taste, no formatting, no architecture. Those belong to
+#: the strong reviewer, and a cheap model arguing about them would cost
+#: a builder round for nothing.
+PREREVIEW_PROMPT = """You are a cheap pre-check that runs before an expensive reviewer.
+Judge ONLY the diff below, and only against the order it was written for.
+
+Answer with `PREREVIEW: pass` or `PREREVIEW: reject` on the FIRST line, then
+at most three sentences of reason.
+
+Reject ONLY for one of these, and name which one:
+- new or changed logic with no test beside it
+- debug leftovers: print/pdb calls, commented-out code
+- unresolved merge markers
+- hard-coded absolute paths or secrets
+- tool droppings in the diff: .orig, .rej, scratch files
+- changes the order does not cover
+
+Never reject for taste, formatting or architecture. When in doubt, pass: a
+strong reviewer runs after you either way, and a wrong rejection costs a
+whole build round.
+
+<order>
+{order}
+</order>
+
+<diff>
+{diff}
+</diff>
+"""
 
 
 def api_key(env: Any = None, auth_path: Any = None) -> str | None:
@@ -354,6 +429,140 @@ def generate(
         auth_path=auth_path,
     )
     return answer or fallback_message(prompt)
+
+
+def _skip(reason: str) -> dict[str, str]:
+    return {"prereview": "skipped", "prereview_note": reason}
+
+
+def wt_diff(
+    path: Any,
+    *,
+    runner: Any = subprocess.run,
+    timeout_s: float = DIFF_TIMEOUT_S,
+) -> str | None:
+    """`wt -C <path> step diff` -- or None when the call fails at all.
+
+    Verified against `wt step --help` (0.76.0): diff shows "all changes
+    since branching (committed, staged, unstaged, untracked)" -- exactly
+    the set `wt merge` would take. `git diff` alone would miss the
+    committed part, `git diff main...` the untracked one.
+    """
+    try:
+        proc = runner(
+            ["wt", "-C", str(path), "step", "diff"],
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout if proc.returncode == 0 else None
+
+
+def prereview(
+    order: str,
+    diff: str,
+    *,
+    model: str | None = None,
+    effort: str | None = None,
+    timeout_s: float = PREREVIEW_TIMEOUT_S,
+    runner: Any = subprocess.run,
+    env: Any = None,
+    auth_path: Any = None,
+    settings: LlmSettings | None = None,
+) -> tuple[str, str]:
+    """(`pass` | `reject` | `skipped`, note). Never raises.
+
+    `skipped` for every failure of the machinery itself -- no key,
+    timeout, unparsable answer, empty diff, a diff over the cap. NEVER
+    `reject`. That is the technical form of the design decision: the
+    model may block, its plumbing may not.
+
+    The judge resolves its own two levels FIRST and falls back to the
+    shared ones: flag, `$LEAN_HERDR_PREREVIEW_MODEL`,
+    `[llm].prereview_model`, `$LEAN_HERDR_LLM_MODEL`, `[llm].model`,
+    constant. The effort does NOT fall back to `[llm].effort` -- that
+    one is the commit generator's `minimal`, and inheriting it would
+    quietly make the judge as thoughtless as the formatter.
+    """
+    if not diff.strip():
+        return "skipped", "empty_diff"
+    if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
+        return "skipped", "diff_too_large"
+    environ = os.environ if env is None else env
+    cfg = file_settings() if settings is None else settings
+    answer = complete(
+        PREREVIEW_PROMPT.format(order=order, diff=diff),
+        effort=_first(effort, cfg.prereview_effort, fallback=PREREVIEW_EFFORT),
+        model=_first(
+            model,
+            environ.get(PREREVIEW_MODEL_ENV),
+            cfg.prereview_model,
+            environ.get(MODEL_ENV),
+            cfg.model,
+            fallback=DEFAULT_MODEL,
+        ),
+        timeout_s=timeout_s,
+        runner=runner,
+        env=env,
+        auth_path=auth_path,
+    )
+    if answer is None:
+        return "skipped", "no_answer"
+    lines = answer.lstrip().splitlines()
+    hit = PREREVIEW_RE.match(lines[0]) if lines else None
+    if hit is None:
+        return "skipped", "unparsable_answer"
+    return hit.group(1), "\n".join(lines[1:]).strip()[:NOTE_MAX_CHARS]
+
+
+def prereview_result(
+    order: str,
+    *,
+    branch: str | None,
+    worktree_list: Any,
+    settings: LlmSettings | None = None,
+    runner: Any = subprocess.run,
+    **kwargs: Any,
+) -> dict[str, str]:
+    """The two keys the wait mode merges into its `completed` answer.
+
+    Resolves the path ITSELF via find_worktree(), and deliberately NOT
+    via `dispatch._worker_root()`: that one falls back to the repo root
+    when the branch does not resolve (dispatch.py:338-345), which is
+    right for its own purpose -- finding a crash log on the timeout
+    path -- and wrong here. `wt step diff` would then run in the
+    orchestrator's own checkout, and a dirty tree there could reject a
+    STRANGER's diff. "Not found" is `skipped`: a visibly withheld
+    ruling instead of a false one.
+
+    This function lives here and not in dispatch.py for a second
+    reason: dispatch.py stands at 762 lines against an 800-line
+    ceiling.
+    """
+    if not branch:
+        return _skip("no_branch")
+    try:
+        entry = find_worktree(worktree_list or {}, branch)
+    except (AttributeError, TypeError):
+        return _skip("worktree_unresolved")
+    path = entry.get("path") if isinstance(entry, dict) else None
+    if not path:
+        return _skip("worktree_unresolved")
+    diff = wt_diff(path, runner=runner)
+    if diff is None:
+        return _skip("diff_failed")
+    # `settings` comes in ALREADY VALIDATED from dispatch.main(), which
+    # read the file once for its own RoleSettings anyway. Two gains: no
+    # second `git rev-parse`, and a wrong `[llm]` value reaches the
+    # orchestrator as `config_error:` instead of dying quietly in
+    # file_settings(). Only the commit path may swallow it -- there a
+    # broken config must not cost a commit; here it has a reader.
+    ruling, note = prereview(
+        order, diff, runner=runner, settings=settings, **kwargs
+    )
+    return {"prereview": ruling, "prereview_note": note}
 
 
 def _positive_seconds(text: str) -> float:
