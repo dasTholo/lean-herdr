@@ -1,6 +1,15 @@
 # lean-herdr: Auftragsweg auf `ctx_task` — Design v1.0
 
-**Status:** entworfen, nicht implementiert
+> **Ueberholt am 2026-09-03.** Die Abschnitte 3 bis 6 sind durch
+> `2026-09-03-lean-herdr-auftragslog-design.md` ersetzt: der Auftragsweg
+> laeuft nicht mehr ueber `ctx_task`, sondern ueber ein eigenes
+> Ereignis-Log. Abschnitt 1 (die Befunde B-1 bis B-4) und Abschnitt 8
+> (Stand des Plans) bleiben gueltig.
+
+**Status:** implementiert und abgenommen (Plan
+`docs/lean-md/plans/2026-09-02-lean-herdr-ctx-task.lmd.md`, alle sieben
+Tasks, zuletzt fortgeschrieben in `a631ab4`) — der Auftragsweg daraus ist
+seit dem 2026-09-03 ersetzt.
 **Ersetzt:** den Bus-basierten Auftragsweg aus `2026-09-01-lean-herdr-design.md`
 (Tasks 6, 7, 9, 11, 12 des Implementierungsplans)
 **Anlass:** Stufe 3 (Task 11) hat den geplanten Weg im Betrieb widerlegt.

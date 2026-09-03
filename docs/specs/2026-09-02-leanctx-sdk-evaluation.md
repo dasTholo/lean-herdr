@@ -321,7 +321,12 @@ Die hier dokumentierte Messung fällt unter „Evaluation" und ist gedeckt.
 
 ## 6. Optionen
 
-**A — Bei `ctx_task` bleiben. ‹gewählt am 2026-09-02›** Die bestehende Spec führt
+> **Überholt am 2026-09-03.** Gewählt ist seither **C**; die Gegenprüfung
+> in Abschnitt 8 hat zwei der Gründe für A (E-5, E-6) widerlegt und einen
+> (E-4) aufgelöst. Die drei Optionen bleiben als Dokumentation des Standes
+> vom 2026-09-02 stehen.
+
+**A — Bei `ctx_task` bleiben. ‹gewählt am 2026-09-02, überholt am 2026-09-03›** Die bestehende Spec führt
 in Abschnitt 7 nun „Kein Einsatz der `leanctx-sdk`" mit Verweis auf dieses
 Dokument. Tragende Gründe: E-2, E-4, E-5, E-6, E-8, E-9. Ausdrücklich **nicht**
 tragend: E-1 — der Versions-Pin war ein Fehlschluss, kein Hindernis. Der
@@ -333,7 +338,7 @@ Workspace je Arbeiter). Bringt ein dokumentiertes, verkettetes Ereignisformat mi
 kostet die Preview-Instabilität, die Lizenzfrage für den Betrieb, ein neues
 Arbeiter-CLI und den nachgebauten Rückfragekanal.
 
-**C — Eigenes Ereignis-Log, ohne SDK.** Sobald ein Arbeiter-CLI ohnehin nötig ist
+**C — Eigenes Ereignis-Log, ohne SDK. ‹gewählt am 2026-09-03›** Sobald ein Arbeiter-CLI ohnehin nötig ist
 (E-8), kann es genauso gut ein eigenes Format schreiben — mit unseren sechs
 Zuständen inklusive `input-required`. Die in E-3 gemessene Ablage ist dafür die
 Vorlage: 16-stellige Sequenz im Dateinamen, `previous_digest`-Kette, ein JSON je
@@ -440,3 +445,24 @@ print(f"[worker] {wrec.event_kind} seq={wrec.sequence} "
 
 Die Arbeitskopien der Messung liegen im Scratchpad dieser Sitzung
 (`probe1_surface.py` … `probe5_mutation.py`) und sind nicht Teil des Projekts.
+
+## 8. Gegenprüfung 2026-09-03
+
+Gemessen gegen `lean-ctx 3.10.1` und den SDK-Checkout `277d0c7`, nach PR #8
+und PR #10. Die Befunde aus Abschnitt 3 bleiben als Messung des Standes vom
+2026-09-02 stehen; hier steht, was die Nachmessung an ihnen geändert hat.
+
+| Befund | Stand 2026-09-03 |
+|---|---|
+| **E-1** (Versions-Pin) | für die neuen Agent Tools **umgekehrt**: `agent.py:436` verlangt die Engine **exakt** `3.10.1`, während der Workspace-Kern nur die Major-Version prüft |
+| **E-2** (SDK ersetzt `leanctx.py` nicht) | **bestätigt**: `AgentContext` erreicht nur ein `frozenset` aus zehn Werkzeugen (`agent.py:41-45`); `ctx_task`, `ctx_agent`, `ctx_session`, `ctx_handoff` und `ctx_call` enden in `UnsupportedCapabilityError` |
+| **E-4** (Fork + `attach_session`) | **aufgelöst** durch PR #10: `[worker] attach_session OK`, `workspace_completed seq=5` |
+| **E-5** („ein Workspace trägt einen Auftrag") | **widerlegt**: `complete()` ist optional; gemessen tragen sechs Aufträge und vier Sitzungen einen durchgehend `active` Workspace |
+| **E-6** („kein `input-required`") | **widerlegt**: der Rückfragezyklus läuft ohne `abort` — `unresolved_questions` → Lesen → `decisions` → weiterarbeiten |
+| **E-7** (Inhalts-Pin) | **geschlossen und gemessen**: ändert der Arbeiter die gebundene Quelldatei vor dem Anhängen, scheitert es mit `WorkspaceConflictError` |
+
+E-5 und E-6 hingen nicht an der SDK, sondern an der Art ihrer Benutzung.
+Daraus folgt nicht, dass die SDK die Antwort ist, sondern dass die
+**Architektur** die Antwort ist, die diese Bewertung an der SDK gemessen
+hat: ein dateibasiertes, append-only, hash-verkettetes Ereignis-Log — also
+Option C. Die Reproduktion steht in Abschnitt 12 der Nachfolgespec.

@@ -62,7 +62,13 @@ def test_readme_names_every_runtime_dependency():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     for requirement in (
         "uv", "worktrunk", "herdr-worktrunk", "fzf", "jq",
-        "lean-ctx allow herdr", "lean-ctx allow wt", "wt config approvals",
-        "warning:", "ctx_task", "<ORCHESTRATOR_AGENT_ID>",
+        "lean-ctx allow herdr", "lean-ctx allow wt",
+        "lean-ctx allow bin/herdr-report",
+        "wt config approvals", "warning:",
+        # The work-order path, both halves of it. `ctx_task` used to stand
+        # here; it is gone from the project, so requiring it would pin the
+        # README to a tool that no longer exists.
+        "bin/herdr-dispatch order", "bin/herdr-report",
+        "ORCHESTRATOR = orch",
     ):
         assert requirement in text, f"README does not name {requirement!r}"
