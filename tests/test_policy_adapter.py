@@ -41,6 +41,28 @@ def test_all_three_hook_points_are_wired():
     assert '"hook", "observe"' in text, "tool.execute.after must feed lean-ctx"
 
 
+def test_the_adapter_is_syntactically_loadable():
+    """Not marked `integration` on purpose -- this one has to run by default.
+
+    The four tests above search the file for substrings. A file that node
+    rejects outright can carry every one of them, so all four stay green on
+    an adapter opencode cannot even import. The tests that really load it are
+    deselected by `addopts` in pyproject.toml, which leaves `pytest -q` with
+    no reader of this file at all. `node --check` parses, it runs nothing.
+    """
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is missing -- the adapter's syntax stays UNCHECKED in this run")
+    proc = subprocess.run(
+        [node, "--check", str(ADAPTER)],
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert proc.returncode == 0, f"node --check rejects the adapter:\n{proc.stderr}"
+
+
 def node_driver(tmp_path: Path, body: str) -> subprocess.CompletedProcess:
     """Really load and call the adapter -- not just read its text."""
     if shutil.which("node") is None:
