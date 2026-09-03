@@ -9,10 +9,6 @@ nachgelegt. Die Gegenprüfung gegen
 gefunden, sondern die Annahme widerlegt, die den `ctx_task`-Weg überhaupt
 erzwungen hat.
 
-> **Zur Schreibweise:** Dieses Dokument benutzt korrekte deutsche Umlaute, wie
-> `2026-09-02-leanctx-sdk-evaluation.md`. Die älteren Specs im selben
-> Verzeichnis benutzen die Ersatzschreibung `ae/oe/ue`.
-
 ## 1. Der Anlass, und warum er nicht die SDK ist
 
 Der Betreiber fragte, ob PR #8 der `leanctx-sdk` dem Auftragsweg hilft. Die
@@ -293,8 +289,8 @@ def knowledge_remember(self, *, key: str, value: str,
                        category: str = "decisions") -> CtxResponse
 ```
 
-Kein `knowledge_recall()` — Begründung in §7. Das Modul kommt in B2a des
-laufenden Plans ohnehin aus `72dee2f^` zurück.
+Kein `knowledge_recall()` — Begründung in §7. Das Modul steht bereits: `eaf0ef8`
+hat es aus `72dee2f^` zurückgeholt und dabei ins Englische gesetzt.
 
 ### Entfällt ersatzlos
 
@@ -501,6 +497,17 @@ Mustern **ins Repo kommt** — sonst ist der Auftragsweg auf einer zweiten
 Maschine stumm, und zwar mit einem Fehlerbild (der Arbeiter meldet nie etwas),
 das aussieht wie ein Absturz und über `no_reply` in den Timeout läuft.
 
+**Es sind zwei Schichten, nicht eine.** Neben der Agentenlaufzeit
+(`opencode.jsonc` bzw. `.claude/settings.json`) steht bei jedem
+lean-ctx-gebundenen Arbeiter die `shell_allowlist` aus
+`~/.config/lean-ctx/config.toml`, durch die jeder `ctx_shell`-Aufruf muss.
+Gemessen trägt sie heute: `bin/herdr-dispatch --help` läuft durch, und `herdr`,
+`git`, `uv`, `python3` stehen namentlich darin. Aber sie ist
+**Betreiber-Konfiguration, nicht Repo-Inhalt** — dasselbe Problem wie bei
+`.claude/settings.json`, nur eine Ebene tiefer. Der Plan prüft beide Schichten
+im Durchlauf, statt sich auf eine zu verlassen; das Fehlerbild ist in beiden
+Fällen dasselbe stumme `no_reply`.
+
 **Zur Präzisierung von M5:** Der Befund sagt, `roles/orchestrator.md:100`
 verlange `jq`, das in keinem Allow-Muster stehe. Nachgemessen kommt `jq` in
 `roles/` **null mal** vor. Was dort steht (`:101-102`), ist jq-*Syntax* als
@@ -617,7 +624,11 @@ Projekts. Der Probe-Eintrag `probe-cli-write` wurde nach der Messung mit
   diese Spec überholt" fortgeschrieben; die Befunde selbst bleiben stehen.
 - **`docs/specs/2026-09-01-lean-herdr-ctx-task-design.md`** bekommt einen
   Kopfvermerk: Abschnitte 3 bis 6 sind durch diese Spec ersetzt; Abschnitt 1
-  (die Befunde B-1 bis B-4) und Abschnitt 8 (Stand des Plans) bleiben gültig.
+  (die Befunde B-1 bis B-4) und Abschnitt 8 (Stand des Plans, zuletzt in
+  `a631ab4` fortgeschrieben) bleiben gültig. Im selben Zug wird die Statuszeile
+  richtiggestellt: sie sagt bis heute „entworfen, nicht implementiert", obwohl
+  der Plan `2026-09-02-lean-herdr-ctx-task.lmd.md` mit allen sieben Tasks
+  abgenommen ist.
 - **`README.md`** beschreibt den Auftragsweg und muss ohnehin mit. Im selben
   Zug fallen die Rückstände, die das Abschluss-Review als I10 führt: Plugin und
   Policy-Adapter kommen dort gar nicht vor; das README behauptet `uv` als
