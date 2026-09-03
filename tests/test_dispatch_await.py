@@ -573,6 +573,8 @@ def test_cancel_of_an_unknown_order_is_not_found(tmp_path):
         (["order", "--to", "builder-feat-x"], "order needs --message"),
         (["order", "--to", "b", "--message", "x", "--kind", "claude"],
          "`order` does not take --kind"),
+        (["order", "--to", "b", "--message", "x", "--task-id", "o-1"],
+         "`order` does not take --task-id"),
         (["cancel", "--message", "x"], "cancel needs --task-id"),
         (["answer", "--task-id", "o-1"], "answer needs --message"),
         (["answer", "--task-id", "o-1", "--message", "x", "--to", "b"],

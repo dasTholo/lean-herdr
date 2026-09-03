@@ -1693,6 +1693,9 @@ Schluesselwort und waere als `args.from` unerreichbar.
             if stray:
                 return f"`{args.command}` does not take {stray}"
             if args.command == "order":
+                stray = _given(("--task-id", args.task_id))
+                if stray:
+                    return f"`{args.command}` does not take {stray}"
                 missing = [
                     flag
                     for flag, value in (("--to", args.to), ("--message", args.message))
@@ -2011,6 +2014,8 @@ Und die Parser-Faelle:
             (["order", "--to", "builder-feat-x"], "order needs --message"),
             (["order", "--to", "b", "--message", "x", "--kind", "claude"],
              "`order` does not take --kind"),
+            (["order", "--to", "b", "--message", "x", "--task-id", "o-1"],
+             "`order` does not take --task-id"),
             (["cancel", "--message", "x"], "cancel needs --task-id"),
             (["answer", "--task-id", "o-1"], "answer needs --message"),
             (["answer", "--task-id", "o-1", "--message", "x", "--to", "b"],

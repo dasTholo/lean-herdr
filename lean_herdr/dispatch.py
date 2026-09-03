@@ -551,6 +551,9 @@ def missing_flags(args: argparse.Namespace) -> str | None:
         if stray:
             return f"`{args.command}` does not take {stray}"
         if args.command == "order":
+            stray = _given(("--task-id", args.task_id))
+            if stray:
+                return f"`{args.command}` does not take {stray}"
             missing = [
                 flag
                 for flag, value in (("--to", args.to), ("--message", args.message))
