@@ -58,18 +58,41 @@ def find_worktree(worktree_list: dict[str, Any], branch: str) -> dict[str, Any] 
 
 
 def wt_switch(
-    branch: str, *, cwd: str | Path, runner: Any = subprocess.run
+    branch: str, *, cwd: str | Path, runner: Any = subprocess.run, base: str = "@"
 ) -> Path | None:
-    """`wt switch --create <branch> --no-cd --format json --yes` → .path.
+    """`wt switch --create <branch> --base <base> --no-cd --format json --yes` → .path.
 
-    `--no-cd` because the script doesn't change directory; `--yes` because
-    no human is sitting at the approval prompt.
+    `--no-cd` because the script doesn't change directory; `--yes` because no
+    human is sitting at the approval prompt. `base` defaults to `@` (the
+    currently checked-out branch) rather than `wt`'s own default (the repo's
+    default branch): the order-log path is self-referential — a worker
+    reports back by running `bin/herdr-report`, which is introduced by the
+    orchestrator's own branch. A worktree branched off `main` structurally
+    lacks that script, so the worker runs into the wait-mode timeout and
+    returns `no_reply`. Measured: `wt switch --create feat/probe` with no
+    `--base` produced a worktree at `main`'s HEAD, missing `bin/herdr-report`,
+    `.claude/settings.json` and `lean_herdr/orderlog.py` alike.
+
+    Honest subtlety: this runs with `cwd=repo_root` (H8 — `--cwd`/`cwd` MUST
+    be the repo root, or the later `worktree open` is rejected with
+    `linked_worktree_source`). So `@` resolves to whatever is checked out at
+    the MAIN checkout — not necessarily the orchestrator's own branch, if the
+    orchestrator itself is running inside a linked worktree.
+
+    Also unchanged by this fix, and worth writing down so nobody "fixes" it
+    back by accident: per `wt switch --help`, a branch created with an
+    explicit `--base` gets no upstream unless its name matches an existing
+    remote branch. That was already true of the old, defaulted `--base` — not
+    a regression.
     """
     if shutil.which("wt") is None:
         raise WorktrunkMissing("wt is not installed")
     try:
         proc = runner(
-            ["wt", "switch", "--create", branch, "--no-cd", "--format", "json", "--yes"],
+            [
+                "wt", "switch", "--create", branch, "--base", base,
+                "--no-cd", "--format", "json", "--yes",
+            ],
             cwd=str(cwd),
             capture_output=True,
             text=True,

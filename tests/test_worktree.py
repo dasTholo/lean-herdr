@@ -146,7 +146,9 @@ def test_new_worktree_is_created_and_registered_at_repo_root(h, monkeypatch):
 
     target = ensure_worktree("feat/auth", herdr=herdr, cwd="/repo", runner=wt_runner)
     assert target.path == Path("/repo.feat-auth") and target.workspace_id == "w2"
-    assert wt_calls[0][:5] == ["wt", "switch", "--create", "feat/auth", "--no-cd"]
+    assert wt_calls[0][:7] == [
+        "wt", "switch", "--create", "feat/auth", "--base", "@", "--no-cd",
+    ]
     assert "--yes" in wt_calls[0] and "--format" in wt_calls[0]
     assert not any(c[1] == "list" and "--format=json" in c for c in wt_calls), (
         "wt list output is never parsed — two schemas (W2)"
@@ -254,4 +256,32 @@ def test_open_workspace_tab_only_response_names_what_it_got(h):
         _open_workspace(
             herdr, repo_root=Path("/repo"), path=Path("/repo.feat-x"), branch="feat/x"
         )
+
+
+def test_wt_switch_passes_base_at_by_default(monkeypatch):
+    """A worker's worktree branches off the current HEAD, not the default
+    branch — otherwise it lacks whatever the caller's own branch introduced
+    (here: `bin/herdr-report`, without which a worker cannot report back).
+    """
+    monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: "/usr/bin/wt")
+    calls: list[list[str]] = []
+
+    def runner(cmd, **kwargs):
+        calls.append(list(cmd))
+        return Completed(stdout=json.dumps({"path": "/repo.feat-x"}))
+
+    wt_switch("feat/x", cwd="/repo", runner=runner)
+    assert calls[0][:6] == ["wt", "switch", "--create", "feat/x", "--base", "@"]
+
+
+def test_wt_switch_base_is_overridable(monkeypatch):
+    monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: "/usr/bin/wt")
+    calls: list[list[str]] = []
+
+    def runner(cmd, **kwargs):
+        calls.append(list(cmd))
+        return Completed(stdout=json.dumps({"path": "/repo.feat-x"}))
+
+    wt_switch("feat/x", cwd="/repo", runner=runner, base="main")
+    assert calls[0][:6] == ["wt", "switch", "--create", "feat/x", "--base", "main"]
 
