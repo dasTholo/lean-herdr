@@ -140,3 +140,22 @@ def test_newest_handoff_takes_the_first_entry():
     assert newest is not None and newest.endswith("20260901-new.json")
     assert newest_handoff("Handoff Ledgers (0):") is None
     assert newest_handoff("") is None
+
+
+def test_remember_writes_into_the_decisions_category(fake):
+    answer = LeanCtx(ROOT, runner=fake).knowledge_remember(
+        key="lean-herdr/feat-x", value="Order log replaces ctx_task."
+    )
+    assert answer.ok is True
+    assert fake.called_with("call", "ctx_knowledge", "--project-root", ROOT)
+    assert args_of(fake.calls[0]) == {
+        "action": "remember",
+        "key": "lean-herdr/feat-x",
+        "value": "Order log replaces ctx_task.",
+        "category": "decisions",
+    }
+
+
+def test_there_is_no_recall_method():
+    """Knowledge is injected, not fetched -- a read step would buy nothing."""
+    assert not hasattr(LeanCtx, "knowledge_recall")

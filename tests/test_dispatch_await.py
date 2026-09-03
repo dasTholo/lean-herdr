@@ -13,9 +13,11 @@ from lean_herdr.dispatch import (
     cancel_order,
     create_order,
     main,
+    remember_branch,
     verdict,
 )
 from lean_herdr.herdr import Herdr
+from lean_herdr.leanctx import CtxResponse
 from lean_herdr.orderlog import append, read_events, state_dir
 from lean_herdr.orders import fold, message_from
 from tests.doubles import FakeProc, which_stub
@@ -728,3 +730,22 @@ def test_main_routes_cancel_into_cancel_order(main_root, capsys):
     order = fold(read_events(task, orders=state_dir(main_root)))
     assert order.state == "canceled"
     assert message_from(order, ORCHESTRATOR_AGENT) == "run broke off"
+
+
+def test_remember_reports_success_even_when_lean_ctx_is_missing():
+    """A memory entry is not the deliverable -- a green branch stays green."""
+    class Absent:
+        def knowledge_remember(self, **_kwargs):
+            return CtxResponse(False, error="unavailable")
+
+    result = remember_branch(
+        "lean-herdr/feat-x", "one sentence", root=ROOT, client=Absent()
+    )
+    assert result["ok"] is True
+    assert result["remembered"] is False
+    assert result["reason"] == "unavailable"
+
+
+def test_remember_needs_a_key_and_a_message(capsys):
+    assert main(["remember", "--message", "x"]) == 0
+    assert "remember needs --key" in json.loads(capsys.readouterr().out)["error"]

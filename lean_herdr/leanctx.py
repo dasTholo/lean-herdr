@@ -128,7 +128,8 @@ class LeanCtx:
         rightly refuse `anonymous` as a client. And `task_id` never arrives:
         every write path of `ctx_agent post` hard-sets it to `None`
         (core/agents/registry.rs:430, shared.rs:31). Work orders therefore run
-        through `ctx_task`, see lean_herdr/tasks.py.
+        through our own log, see lean_herdr/orderlog.py -- which needs no
+        identity at all.
 
         `to_agent` MUST be a lean-ctx agent_id. A friendly name is accepted
         silently and never delivered (B7).
@@ -159,6 +160,40 @@ class LeanCtx:
     def handoff_show(self, path: str | Path) -> CtxResponse:
         """One ledger. `path` is MANDATORY -- without it: `error: -32602`."""
         return self.call("ctx_handoff", {"action": "show", "path": str(path)})
+
+    # -- Knowledge (write only) -------------------------------------------
+
+    def knowledge_remember(
+        self, *, key: str, value: str, category: str = "decisions"
+    ) -> CtxResponse:
+        """One entry into the project memory. ONE PER BRANCH, never per order.
+
+        The 800-entry cap is GLOBAL across every project on this machine
+        (measured: 278 active / 21 archived). Three to five notes per order
+        would be fifty per branch, and after fifteen branches lean-herdr
+        would evict other projects' memories. Hence: key
+        `lean-herdr/<branch>`, category `decisions`, and ONE TO TWO
+        sentences -- what the branch achieved and which decision outlives it.
+        The history lives in the order log, not here.
+
+        The brevity is a rule, not a matter of taste: the injection quota is
+        capped, so a long entry crowds out more useful ones.
+
+        There is deliberately no `knowledge_recall()`. Knowledge is INJECTED,
+        not fetched: a `ctx_read` brings the relevant entries along unasked,
+        capped by `recall_facts_limit=10` and filtered by a relevance
+        threshold (`ctx_read(handlers.py)` got nothing at all). A read step
+        would cost a tool call for something already in the context.
+
+        Nothing is tidied up afterwards either -- lean-ctx has the lifecycle
+        already: decay 0.01/day, stale after 30 days, archiving instead of
+        deletion at the cap, rehydration on a recall miss. Writing sparingly
+        IS the precaution.
+        """
+        return self.call(
+            "ctx_knowledge",
+            {"action": "remember", "key": key, "value": value, "category": category},
+        )
 
 
 def newest_handoff(list_text: str) -> str | None:

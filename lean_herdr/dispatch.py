@@ -26,6 +26,7 @@ from lean_herdr.bus import (
 from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import Herdr
 from lean_herdr.join import resolve_agent_id
+from lean_herdr.leanctx import LeanCtx
 
 # The write path lives next door since dispatch.py crossed 800 LOC (plan 3g).
 # `_await_result` went with it -- both sides need that result shape, and
@@ -81,7 +82,7 @@ WAKE_PROMPT = (
 #: Words the positional slot takes INSTEAD of a role. They write into the
 #: log: no worker, no kind, no model, no worktree. Every other value is a
 #: role and builds one or waits for one. (`remember` joins them in task 5.)
-LOG_COMMANDS = ("order", "answer", "cancel")
+LOG_COMMANDS = ("order", "answer", "cancel", "remember")
 
 #: Machine-readable verdict on the FIRST line of the completion message.
 #: Replaces the bus field `category` that fell away: without it the
@@ -442,6 +443,29 @@ def await_task(
     return _await_result(False, req.task_id, state=state, error="no_reply")
 
 
+def remember_branch(
+    key: str,
+    value: str,
+    *,
+    root: Path,
+    client: LeanCtx | None = None,
+) -> dict[str, Any]:
+    """The orchestrator's ONE entry for a finished branch. Never raises.
+
+    Not `ok: false` when lean-ctx is missing: a memory entry is not the
+    deliverable, and a failed dispatch at the very end of a green branch
+    would read like a failed branch. The reason travels in `remembered`.
+    """
+    ctx = client or LeanCtx(root)
+    answer = ctx.knowledge_remember(key=key, value=value)
+    return {
+        "ok": True,
+        "key": key,
+        "remembered": answer.ok,
+        **({} if answer.ok else {"reason": answer.error or "unknown"}),
+    }
+
+
 class UsageError(Exception):
     """A parser complaint -- raised instead of ending the process."""
 
@@ -517,6 +541,7 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"the sender stamped into the event (default {ORCHESTRATOR_AGENT})",
     )
+    p.add_argument("--key", default=None, help="required with `remember`")
     return p
 
 
@@ -550,6 +575,8 @@ def missing_flags(args: argparse.Namespace) -> str | None:
         )
         if stray:
             return f"`{args.command}` does not take {stray}"
+        if args.key and args.command != "remember":
+            return "--key belongs to `remember`"
         if args.command == "order":
             stray = _given(("--task-id", args.task_id))
             if stray:
@@ -560,6 +587,16 @@ def missing_flags(args: argparse.Namespace) -> str | None:
                 if not value
             ]
             return f"order needs {' and '.join(missing)}" if missing else None
+        if args.command == "remember":
+            missing = [
+                flag
+                for flag, value in (
+                    ("--key", args.key),
+                    ("--message", args.message),
+                )
+                if not value
+            ]
+            return f"remember needs {' and '.join(missing)}" if missing else None
         # answer and cancel: same two flags, and neither takes --to/--after.
         stray = _given(("--to", args.to), ("--after", args.after))
         if stray:
@@ -581,6 +618,7 @@ def missing_flags(args: argparse.Namespace) -> str | None:
         ("--after", args.after),
         ("--message", args.message),
         ("--from", args.from_agent),
+        ("--key", args.key),
     )
     if stray:
         return f"{stray} belongs to a log command"
@@ -652,6 +690,8 @@ def main(argv: list[str] | None = None) -> int:
                 result = cancel_order(
                     args.task_id, args.message, root=root, actor=sender
                 )
+            elif args.command == "remember":
+                result = remember_branch(args.key, args.message, root=root)
             elif args.waiting:
                 result = await_task(
                     AwaitRequest(
