@@ -130,7 +130,7 @@ def opencode_messages(session_id: str, db_path: str | Path | None = None) -> lis
     for (raw,) in rows:
         try:
             data = json.loads(raw)
-        except json.JSONDecodeError, TypeError:
+        except (json.JSONDecodeError, TypeError):
             continue
         if isinstance(data, dict):
             messages.append(data)

@@ -179,9 +179,15 @@ export const LeanCtxPolicy = async ({ project, directory }) => ({
     // actually did -- the same payload shape as PostToolUse on Claude. It
     // decides nothing, prints nothing and exits 0; measured against
     // lean-ctx 3.10.1.
+    //
+    // The arguments sit on `input` here, not on `output`: opencode calls
+    // this hook as (input={tool,sessionID,callID,args}, output={title,
+    // metadata,output}). Reading `output.args` alone left every observation
+    // with an empty tool_input -- cache and ledger never learned WHICH file
+    // was read. The fallback keeps the hook whole should the shape move.
     await observe({
       tool_name: String(input.tool || "").toLowerCase(),
-      tool_input: output.args ?? {},
+      tool_input: input.args ?? output.args ?? {},
       tool_response: output.output ?? output.result ?? {},
       cwd: directory ?? project?.worktree ?? process.cwd(),
       session_id: input.sessionID ?? null,

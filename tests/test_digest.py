@@ -64,6 +64,17 @@ def test_the_token_falls_back_to_the_findings_count():
 def test_the_handoff_is_capped():
     many = "\n".join(f"  - file{i}.py" for i in range(40))
     text = render_digest("Task: t", many)
-    # `- file`, not `  - file`: render_digest() strips the joined handoff, so
-    # the FIRST line loses its indentation. Counting without it stays exact.
-    assert text is not None and text.count("- file") == 12
+    # With the indentation: `ctx_handoff show` delivers JSON, and a first line
+    # robbed of its leading blanks would leave the block unparsable.
+    assert text is not None and text.count("  - file") == 12
+
+
+def test_an_empty_task_line_does_not_swallow_the_next_line():
+    """`Task:` with nothing behind it is the fallback's cue, not a value.
+
+    A `\\s*` after `Task:` reaches across the line break and hands the token
+    the FOLLOWING line -- the findings count could then never be reached.
+    """
+    assert summary_token("Task:\nKey findings: a; b; c\n") == "3 findings"
+    assert summary_token("Task:   \nKey findings: a; b\n") == "2 findings"
+    assert summary_token("Task: \t real one\nKey findings: a; b\n") == "real one"

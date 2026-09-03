@@ -19,7 +19,9 @@ FRAME = re.compile(r"^-{3,}.*$", re.MULTILINE)
 COMPRESSION_LINE = re.compile(r"^\[COMPRESSION:.*$", re.MULTILINE)
 
 #: `Task: ...` in the resume text -- the only line that feeds the token.
-TASK_LINE = re.compile(r"^Task:\s*(.+)$", re.MULTILINE)
+#: `[ \t]`, not `\s`: `\s` crosses the line break, so an empty `Task:` line
+#: would swallow the FOLLOWING line instead of leaving the fallback its turn.
+TASK_LINE = re.compile(r"^Task:[ \t]*(.+)$", re.MULTILINE)
 FINDINGS_LINE = re.compile(r"^Key findings:\s*(.+)$", re.MULTILINE)
 
 
@@ -36,9 +38,13 @@ def strip_frame(resume_text: str) -> str:
 def render_digest(resume_text: str, handoff_text: str | None = None) -> str | None:
     """Markdown digest -- or None when there is nothing to show."""
     core = strip_frame(resume_text)
+    # No .strip() on the joined block: blank lines are already gone, so there
+    # is nothing left around it -- but stripping would eat the indentation of
+    # the first and last line, and `ctx_handoff show` delivers JSON whose
+    # indentation carries meaning.
     handoff = "\n".join(
         line for line in (handoff_text or "").splitlines() if line.strip()
-    ).strip()
+    )
     if not (core or handoff):
         return None
 

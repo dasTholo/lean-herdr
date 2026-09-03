@@ -10,6 +10,8 @@ uv.lock
 # Test / tooling
 .pytest_cache/
 .ruff_cache/
+.coverage
+htmlcov/
 dist/
 
 # LMD skills are installed artefacts, reproducible via:

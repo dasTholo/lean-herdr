@@ -82,7 +82,14 @@ def test_a_real_hook_denies_native_grep_through_the_adapter(tmp_path):
 
 @pytest.mark.integration
 def test_the_adapter_reports_every_tool_call_to_lean_ctx(tmp_path):
-    """tool.execute.after -> `lean-ctx hook observe`, or lean-ctx sees nothing."""
+    """tool.execute.after -> `lean-ctx hook observe`, or lean-ctx sees nothing.
+
+    The payload is the one opencode really passes: the arguments ride on the
+    FIRST parameter (input={tool,sessionID,callID,args}), the second one
+    carries the result (output={title,metadata,output}). A driver that puts
+    `args` on the second parameter would let an adapter reading `output.args`
+    look healthy while every real observation arrives empty.
+    """
     if shutil.which("lean-ctx") is None:
         pytest.skip("lean-ctx not installed")
     # A stub instead of the real binary: the test measures the HANDOVER, it
@@ -102,8 +109,13 @@ def test_the_adapter_reports_every_tool_call_to_lean_ctx(tmp_path):
         const {{ LeanCtxPolicy }} = await import({json.dumps(str(ADAPTER))});
         const hooks = await LeanCtxPolicy({{ directory: process.cwd() }});
         await hooks["tool.execute.after"](
-          {{ tool: "Read" }},
-          {{ args: {{ filePath: "README.md" }}, output: {{ content: "x" }} }},
+          {{
+            tool: "Read",
+            sessionID: "ses_1",
+            callID: "call_1",
+            args: {{ filePath: "README.md" }},
+          }},
+          {{ title: "README.md", metadata: {{}}, output: "x" }},
         );
         console.log("observed");
         """,
@@ -111,8 +123,9 @@ def test_the_adapter_reports_every_tool_call_to_lean_ctx(tmp_path):
     assert "observed" in proc.stdout, proc.stderr
     seen = json.loads(transcript.read_text(encoding="utf-8"))
     assert seen["tool_name"] == "read", "the name is passed through lower-cased"
-    assert seen["tool_input"] == {"filePath": "README.md"}
-    assert seen["tool_response"] == {"content": "x"}
+    assert seen["tool_input"] == {"filePath": "README.md"}, "args ride on `input`"
+    assert seen["tool_response"] == "x"
+    assert seen["session_id"] == "ses_1"
 
 
 @pytest.mark.integration

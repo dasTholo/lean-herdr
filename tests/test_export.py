@@ -12,7 +12,7 @@ from lean_herdr.export import (
 
 FAILED_EXPORT = {
     "messages": [
-        {"role": "user", "content": "tu was"},
+        {"role": "user", "content": "do something"},
         {
             "role": "assistant",
             "error": {
