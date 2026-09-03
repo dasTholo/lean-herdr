@@ -72,7 +72,7 @@ Branch:
 - `roles/orchestrator.md` schreibt `--worktree <branch>` vor, sobald Code
   entsteht. Der Normalfall ist also der Branch-Fall.
 - Und mit `--worktree` landet die Pane über `anchor_pane()`
-  (`worktree.py:159-170`) im **eigenen Workspace der Worktree** — genau den
+  (`worktree.py:173-186`) im **eigenen Workspace der Worktree** — genau den
   räumt das Teardown am Branch-Ende weg.
 
 Worker-Panes sind im Worktree-Fluss also absichtlich branch-gebunden und
@@ -194,6 +194,14 @@ die Quelle —, und ein zusätzlicher Test hält Vorlage und eingecheckte Kopie
 byte-gleich. Ohne ihn driften zwei Fassungen desselben Textes auseinander,
 und der Test, der die Verbote bewacht, bewacht die falsche.
 
+Dass die Vorlagen tatsächlich im Wheel landen, ist eine Annahme und wird
+geprüft, nicht geglaubt: `pyproject.toml` benutzt hatchling mit
+`packages = ["lean_herdr"]`, und Nicht-Python-Dateien unterhalb des
+Paketverzeichnisses gehen dabei üblicherweise mit. Der Plan verifiziert es
+einmal am gebauten Wheel — schlägt es fehl, braucht es einen
+`force-include`-Eintrag. Ein `init`, dem im fremden Projekt die Vorlagen
+fehlen, wäre sonst der erste Fehler, den ein neuer Benutzer sieht.
+
 ## 4. Konfiguration
 
 `RoleSettings` bleibt, was es ist: Pane-Geometrie plus Profil, pro Rolle. Was
@@ -217,9 +225,15 @@ Zwei Festlegungen, damit keine zweite Lesart offenbleibt:
 
 - **`{repo}` in `label` ist optional.** Anders als bei `name_template`, wo
   `{role}` und `{branch}` erzwungen sind, weil der Wiederverwendungsschlüssel
-  an ihnen hängt (`settings.py:113-126`), ist `label` reine Beschriftung. Ein
+  an ihnen hängt (`settings.py:112-125`), ist `label` reine Beschriftung. Ein
   wörtliches `label = "arbeit"` ist gültig; ein unbekannter Platzhalter bleibt
   ein `SettingsError`.
+- **`[workspace]` braucht eine eigene Prüfung.** Die vorhandene Maschinerie
+  ist `RoleSettings`-förmig: `ALLOWED` entsteht aus `fields(RoleSettings)`,
+  und `_check_types` / `_validate` prüfen genau dessen Schlüssel. Der neue
+  Abschnitt bekommt daher ein eigenes Dataclass `WorkspaceSettings` mit
+  eigenem `_check_types`-Aufruf — nicht eine Erweiterung von `RoleSettings`,
+  die dann auch unter `[roles.*]` gültig wäre.
 - **`up` baut die Agent-Argumente selbst, nicht über `agent_args()`.** Die
   Funktion (`dispatch.py:146-154`) setzt für `opencode` immer `--model` und
   leitet den Agentennamen aus dem Dateinamen der Rolle ab — beides passt hier
@@ -249,18 +263,35 @@ einem Worktree kommt.
    `{"ok": false, "error": "not_initialised: run `lean-herdr workspace init`"}`.
    Nicht stillschweigend mit Defaults starten — die Config ist der ganze Zweck
    des Aufrufs.
-2. **Server erreichbar?** `herdr.is_available()` plus ein `workspace list`.
-   Kein Server: `{"ok": false, "error": "no_herdr_server"}`, statt am toten
-   Socket zu hängen. Jedes `herdr <sub>` läuft über den Socket; der Server ist
-   eine echte Vorbedingung, keine Annahme.
+2. **Server erreichbar?** `herdr.is_available()` plus ein **rohes**
+   `herdr.run("workspace", "list")`. Nicht `workspace_list()`: die Methode
+   (`herdr.py:189-191`) flacht „Server tot" und „null Workspaces" beide auf
+   `[]` ab, nur die rohe Antwort unterscheidet sie ( `{}` im Fehlerfall). Kein
+   Server: `{"ok": false, "error": "no_herdr_server"}`, statt am toten Socket
+   zu hängen. Jedes `herdr <sub>` läuft über den Socket; der Server ist eine
+   echte Vorbedingung, keine Annahme.
 3. **Läuft der Orchestrator schon?** `agent list` nach `ORCHESTRATOR_AGENT`
    absuchen → `{"ok": true, "already_running": true, …}`. Derselbe
    Duplikat-Check, den `handle_bootstrap` heute macht; `up` ist idempotent.
-4. **Workspace finden oder anlegen.** Existiert einer mit
-   `worktree.checkout_path == root`, wird der genommen. Sonst
-   `herdr workspace create --cwd <root> --label <label>
-   --env LEAN_CTX_TOOL_PROFILE=<profil> --env LEAN_CTX_ROLE=orchestrator
-   --focus`.
+4. **Workspace finden oder anlegen** — zwei Regeln, nicht eine. `worktree`
+   ist in `WorkspaceInfo` **optional und nullable**
+   (`herdr-api.schema.json:1113-1133`: `anyOf [WorkspaceWorktreeInfo, null]`,
+   nicht in `required`). Ein Workspace, den `workspace create --cwd <root>`
+   selbst angelegt hat, kann also `worktree: null` tragen — eine Suche allein
+   über `checkout_path` fände ihn nie wieder und legte beim nächsten Aufruf
+   einen zweiten an, sobald die Orchestrator-Pane geschlossen ist und der
+   Duplikat-Check aus Schritt 3 nicht mehr greift. Also:
+
+   1. `workspace list`: Eintrag mit `worktree.checkout_path == root`.
+   2. Sonst ein **einzelnes** `herdr pane list` ohne `--workspace` — gemessen
+      trägt jeder Eintrag `cwd` **und** `workspace_id`. Die erste Pane mit
+      `cwd == root` nennt den Workspace. Das ist bewusst nur ein Ersatzweg:
+      gemessen kann ein Workspace Panes mit fremden `cwd` mitführen, die
+      Zuordnung ist also unscharf. Der Normalfall läuft über Regel 1.
+   3. Greift keine der beiden:
+      `herdr workspace create --cwd <root> --label <label>
+      --env LEAN_CTX_TOOL_PROFILE=<profil> --env LEAN_CTX_ROLE=orchestrator
+      --focus`.
 5. **Pane.** *Die eine Stelle, die der Plan zuerst messen muss:* Landet das
    `--env` von `workspace create` auf der Wurzel-Pane, ist diese Pane bereits
    die Orchestrator-Pane und der Schritt entfällt. Wenn nicht, wird von
@@ -305,6 +336,31 @@ einem Worktree kommt.
 beiden Startwege nicht mehr auseinanderdriften — heute können sie es, und der
 Tastendruck ignoriert die Config vollständig.
 
+**Die beiden unterscheiden sich an genau einer Stelle, und die gehört in die
+Signatur, nicht in den Kern.** `up` sucht oder legt den Workspace nach
+Schritt 4 an. `handle_bootstrap` darf das gerade **nicht**: es muss den
+Workspace des Ereignisses nehmen (`handlers.py:174-183`), und sein Docstring
+sagt auch warum — *„An anchor pane from this workspace makes sure the new pane
+lands here and not in the caller's workspace"* (`handlers.py:170-171`). Würde
+der Kern die Fund-oder-Anlege-Regel selbst enthalten, startete der Tastendruck
+den Orchestrator in einem anderen Workspace als dem, in dem er gedrückt wurde
+— genau der Fehler, den der heutige Code vermeidet.
+
+Daher:
+
+```python
+def start_orchestrator(
+    *, herdr: Herdr, root: Path, settings, workspace_id: str | None
+) -> dict[str, Any]:
+```
+
+- `up` übergibt `workspace_id=None` → der Kern durchläuft Schritt 4.
+- `handle_bootstrap` übergibt die Id aus dem Ereignis → der Kern nimmt genau
+  diese und legt **nie** einen Workspace an.
+
+Alles übrige — Duplikat-Check, Pane, `agent start`, das Warten auf
+`agent_id` — teilen sich beide vollständig.
+
 ## 8. Fehlerbehandlung
 
 Unverändert das Hausmuster: eine JSON-Zeile auf stdout, `ok` als einzige
@@ -316,9 +372,15 @@ einschließlich des abschließenden `except Exception`.
 
 - **`cli.py`** — Verb-Routing; unbekanntes Verb liefert `usage_error` statt
   Exit 2.
-- **`up`** gegen `FakeHerdr` aus `tests/doubles.py`: kein Server, Workspace
-  existiert bereits, Orchestrator läuft bereits, Timeout ohne `agent_id`,
-  Erfolgsweg.
+- **`up`** gegen `Herdr(runner=FakeProc(...))` aus `tests/doubles.py` — das
+  Hausmuster, siehe `tests/test_dispatch.py:48` und `:66`. Es gibt **kein**
+  `FakeHerdr`; `doubles.py` trägt `Completed`, `FakeProc` und `which_stub`.
+  Fälle: kein Server, Workspace über Regel 1 gefunden, Workspace nur über den
+  Pane-Ersatzweg gefunden, Workspace neu angelegt, Orchestrator läuft bereits,
+  `no_anchor_pane`, Timeout ohne `agent_id`, Erfolgsweg.
+- **Der geteilte Kern** — mit `workspace_id="w7"` wird kein
+  `workspace create` abgesetzt (`FakeProc.called_with` prüft das direkt), mit
+  `workspace_id=None` schon.
 - **`init`** in `tmp_path`: schreibt, überspringt, `--force`, kein Git-Repo,
   Warnungsliste.
 - **`test_worker_permissions.py` — der neue Fallstrick.** Bisher trennte ein
