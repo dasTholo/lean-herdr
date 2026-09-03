@@ -88,8 +88,15 @@ def test_a_duplicate_sequence_breaks_the_chain(tmp_path):
     """Two writers at the same sequence keep BOTH files -- and that is an error."""
     append(TASK, "created", "orchestrator", orders=tmp_path)
     (path,) = files(tmp_path)
-    twin = path.with_name(f"{'0' * 15}1-deadbeef.json")
-    twin.write_bytes(path.read_bytes())
+    # a genuine second event at sequence 1 -- own bytes, own valid digest,
+    # so it is the SEQUENCE check that has to catch it, not the file name.
+    body = json.loads(path.read_text(encoding="utf-8"))
+    body["actor"] = "someone-else"
+    blob = json.dumps(body, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
+    digest = hashlib.sha256(blob).hexdigest()
+    path.with_name(f"{'0' * 15}1-{digest[:DIGEST_PREFIX_LEN]}.json").write_bytes(blob)
     with pytest.raises(OrderLogError, match="chain_broken"):
         read_events(TASK, orders=tmp_path)
 
@@ -118,7 +125,7 @@ def test_append_refuses_to_extend_a_broken_chain(tmp_path):
 
 def test_a_task_id_never_becomes_a_path_escape(tmp_path):
     """`--task-id` comes off a command line. `../` must not reach the disk."""
-    for evil in ("../escape", "..", ".", "a/b", "", "o" * 65, "o-\x00"):
+    for evil in ("../escape", "..", ".", "a/b", "", "o" * 65, "o-\x00", "o-bad\n"):
         with pytest.raises(OrderLogError, match="bad_task_id"):
             read_events(evil, orders=tmp_path)
     # And the write path guards the same way -- it is the one that creates.

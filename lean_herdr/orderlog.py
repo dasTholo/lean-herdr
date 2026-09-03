@@ -57,7 +57,7 @@ DIGEST_PREFIX_LEN = 8
 #: flag and then becomes a path segment. `../` in a `--task-id` must never
 #: reach the file system. No dot is allowed at all -- our ids never carry
 #: one, and allowing it would let `..` through the pattern intact.
-_TASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+_TASK_ID = re.compile(r"^[A-Za-z0-9_-]{1,64}\Z")
 
 #: Markers of a legacy or mixed install whose data directory is not split
 #: along XDG lines (core/data_dir.rs:10). Carried over verbatim from
