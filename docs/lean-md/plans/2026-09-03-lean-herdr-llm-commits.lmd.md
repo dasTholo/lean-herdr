@@ -180,17 +180,35 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
   Fehler dagegen als `config_error:` durch: dort hat er einen Leser.
   Was **bleibt**: `RoleSettings` wird nicht angefasst, und `[llm]` ist ein Block
   für sich, den nur `llm.py` liest.
-- **Eine bewusste Abweichung von der Spec, als solche zu behandeln** — ein
-  Review meldet sie NICHT als Befund: die Spec (§9) nennt nur
-  `$LEAN_HERDR_LLM_MODEL` als Überschreibung. Der Plan gibt der Vorprüfung mit
-  `$LEAN_HERDR_PREREVIEW_MODEL` eine **zweite** Variable. Grund: die eine
-  Variable bedient beide Verbraucher, und die Vorprüfung ist der einzige der
-  beiden, der über `bin/herdr-dispatch --prereview` läuft — dort gibt es kein
-  `--model`-Flag, an dem ein Betreiber drehen könnte. Wer den Richter auf ein
-  stärkeres Modell heben wollte, hätte damit auch den Commit-Generator gehoben,
-  und zwar für jeden einzelnen Commit: der Builder erbt die Umgebung seines
-  Panes. Das Non-Goal, das bestehen bleibt, ist das eigentliche: **keine**
-  Konfiguration in `.config/lean-herdr.toml`, `settings.py` bleibt unberührt.
+- **Zweite bewusste Abweichung von der Spec** — ein Review meldet sie NICHT als
+  Befund: Spec §9 nennt nur `$LEAN_HERDR_LLM_MODEL`. Der Plan gibt der Vorprüfung
+  mit `$LEAN_HERDR_PREREVIEW_MODEL` und `[llm].prereview_model` **eigene** Ebenen.
+  Grund: eine gemeinsame Einstellung bedient beide Verbraucher, und wer den
+  Richter auf ein stärkeres Modell heben wollte, hätte damit auch den
+  Commit-Generator gehoben — für jeden einzelnen Commit.
+- **DIE ZWEI KETTEN, einmal und wörtlich.** Fünf Stellen beschreiben sie (der
+  Konstanten-Kommentar in `llm.py`, `.config/lean-herdr.toml`, die
+  `argparse`-Hilfetexte, und die README an zwei Stellen). Alle fünf schreiben
+  **das** hier ab, nicht ihre eigene Paraphrase — eine abweichende Beschreibung
+  ist ein Review-Befund:
+
+      generate()  model:   --model  >  $LEAN_HERDR_LLM_MODEL  >  [llm].model
+                           >  DEFAULT_MODEL
+      generate()  effort:  --effort  >  [llm].effort  >  GENERATE_EFFORT
+
+      prereview() model:   --model  >  $LEAN_HERDR_PREREVIEW_MODEL
+                           >  [llm].prereview_model  >  $LEAN_HERDR_LLM_MODEL
+                           >  [llm].model  >  DEFAULT_MODEL
+      prereview() effort:  --effort  >  [llm].prereview_effort
+                           >  PREREVIEW_EFFORT
+
+  Drei Dinge daran sind Absicht und keine Lücke: **der Effort hat keine
+  Umgebungsebene** (Flag und Datei genügen für vier Werte); **`prereview_effort`
+  fällt NICHT auf `[llm].effort` zurück** (das ist das `minimal` des
+  Commit-Generators, und es zu erben machte den Richter still ebenso
+  gedankenlos wie den Formatierer); und **die Umgebung steht über der Datei**
+  (sie ist der Griff in einer laufenden Pane, ohne eine Datei anzufassen, die
+  jedes Repository dieser Maschine liest).
 - **Sprachtor:** `tests/test_language.py` greift für die neuen Dateien
   automatisch — alles außerhalb `docs/` ist Englisch, `roles/*.md` und
   `README.md` eingeschlossen.
@@ -210,8 +228,8 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
 `lean_herdr.llm.DEFAULT_MODEL`, `MODEL_ENV`, `KEY_ENV`, `ENDPOINT`, `AUTH_PATH`,
 `MAX_PROMPT_BYTES`, `GENERATE_TIMEOUT_S`, `GENERATE_EFFORT`,
 `api_key(env=None, auth_path=None) -> str | None`,
-`complete(prompt, *, effort, model=None, timeout_s=…, runner=…, env=None,
-auth_path=None) -> str | None`, `fallback_message(prompt) -> str`,
+`complete(prompt, *, effort, model=DEFAULT_MODEL, timeout_s=…, runner=…,
+env=None, auth_path=None) -> str | None`, `fallback_message(prompt) -> str`,
 `_first(*candidates, fallback) -> str`,
 `file_settings(root=None, *, cwd=None) -> LlmSettings`,
 `generate(prompt, *, model=None, effort=None, timeout_s=…, runner=…, env=None,
@@ -223,7 +241,7 @@ Plugin-Handler.
 
 ### Zuerst: `[llm]` in `lean_herdr/settings.py`
 
-`_check_root()` (`settings.py:139-160`) lässt am Top-Level **nur** `default` und
+`_check_root()` (`settings.py:139-161`) lässt am Top-Level **nur** `default` und
 `roles` zu und wirft für alles andere `SettingsError`. Ein `[llm]`-Block in
 `.config/lean-herdr.toml` würde deshalb heute **jeden** `bin/herdr-dispatch`-Aufruf
 mit `config_error:` scheitern lassen — nicht nur die neuen. Der Schlüssel muss
@@ -276,10 +294,13 @@ Und ans Ende der Datei, hinter `settings_for()`:
         silent fallback. Whoever writes `effort = "mininal"` must not go
         hunting for the bug in the model.
 
-        Note who catches it: `bin/herdr-llm generate` does NOT let this
-        raise (see llm.file_settings), because a failing generation command
-        aborts a commit. `bin/herdr-dispatch` does let it through, as
-        `config_error:` -- there it is an operator error with a reader.
+        Note who catches it, because the two consumers differ on purpose:
+        `llm.file_settings()` swallows this and takes the defaults -- it
+        serves `bin/herdr-llm generate`, where a raise would abort the
+        commit worktrunk is in the middle of. `dispatch.main()` calls this
+        function directly and lets it through as `config_error:` -- there
+        the orchestrator reads the complaint. Without that second call site
+        a typo in `[llm]` would be silent everywhere.
         """
         table = _check_root({} if data is None else data)
         block = table.get("llm")
@@ -359,9 +380,9 @@ second reader or a second `git rev-parse` would be exactly the two-truths bug
 this codebase keeps catching.
 
     #: OpenRouter's slug for the model measured in the design (spec 2.2).
-    #: `$LEAN_HERDR_LLM_MODEL` beats it, so an operator swaps the model
-    #: without touching this file -- and without a config key, because
-    #: settings.py stays out of this (spec 9).
+    #: The floor of the chain, never the decision: `[llm]` in
+    #: .config/lean-herdr.toml, `$LEAN_HERDR_LLM_MODEL` and the CLI flag all
+    #: beat it, in that rising order. See the precedence block below.
     DEFAULT_MODEL = "google/gemini-3.8-flash"
     MODEL_ENV = "LEAN_HERDR_LLM_MODEL"
     KEY_ENV = "OPENROUTER_API_KEY"
@@ -468,7 +489,7 @@ this codebase keeps catching.
         prompt: str,
         *,
         effort: str,
-        model: str | None = None,
+        model: str = DEFAULT_MODEL,
         timeout_s: float = GENERATE_TIMEOUT_S,
         runner: Any = subprocess.run,
         env: Any = None,
@@ -503,7 +524,7 @@ this codebase keeps catching.
             return None
         body = json.dumps(
             {
-                "model": model or DEFAULT_MODEL,
+                "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "reasoning": {"effort": effort},
             }
@@ -595,7 +616,12 @@ this codebase keeps catching.
         try:
             base = Path(root) if root is not None else canonical_root(cwd)
             return llm_settings(read_settings(base / SETTINGS_PATH))
-        except (SettingsError, BusError, OSError) as exc:
+        except (SettingsError, BusError, OSError, subprocess.SubprocessError) as exc:
+            # SubprocessError is NOT redundant beside OSError: canonical_root()
+            # runs git with a timeout, and subprocess.TimeoutExpired descends
+            # from SubprocessError, not from OSError. A hung git would
+            # otherwise walk straight out of the manual `prereview` mode,
+            # which has no blanket except around it.
             print(f"herdr-llm: ignoring the settings file: {exc}", file=sys.stderr)
             return LlmSettings()
 
@@ -990,18 +1016,28 @@ Der neue Block folgt ihr:
 @call patch(".config/lean-herdr.toml", "das Ende der Datei, hinter [roles.reviewer]")
 
     # [llm]
-    # Reads by lean_herdr/llm.py alone: the commit generator worktrunk calls
+    # Read by lean_herdr/llm.py alone: the commit generator worktrunk calls
     # through bin/herdr-llm, and the pre-review judge behind --prereview.
-    # Precedence per value: CLI flag > environment > this file > built-in.
+    # They are two different jobs -- the generator formats a diffstat, the
+    # judge reads code -- so they get separate keys, and the judge inherits
+    # only where a line below says so.
     #
-    # model = "google/gemini-3.8-flash"   # both, unless overridden below
-    # effort = "minimal"                  # minimal | low | medium | high
+    # The commit generator:
+    #   model:  --model > $LEAN_HERDR_LLM_MODEL > model > built-in
+    #   effort: --effort > effort > built-in "minimal"
+    # model = "google/gemini-3.8-flash"   # the judge falls back to this
+    # effort = "minimal"                  # THE GENERATOR ONLY -- not the judge
     #
-    # The judge is a different job from the commit generator: the generator
-    # formats a diffstat, the judge reads code. Give it its own model here
-    # rather than raising `model` -- that one is paid on every commit.
-    # prereview_model = ""                # empty: share `model`
-    # prereview_effort = "low"
+    # The pre-review judge:
+    #   model:  --model > $LEAN_HERDR_PREREVIEW_MODEL > prereview_model
+    #           > $LEAN_HERDR_LLM_MODEL > model > built-in
+    #   effort: --effort > prereview_effort > built-in
+    # prereview_model = ""                # empty: share `model` above
+    # prereview_effort = "low"            # `effort` above is NOT inherited
+    #
+    # Raising `model` to make the judge smarter raises the generator's bill
+    # on every commit; give the judge `prereview_model` instead.
+    # `effort` and `prereview_effort`: minimal | low | medium | high.
 
 ### Verify & Close
 
@@ -1033,7 +1069,9 @@ Commit des Builders, den Squash des Orchestrators und den Squash innerhalb von
 `wt merge`.
 
 Der Import, den Task 1 bewusst ausgelassen hat, kommt jetzt oben dazu —
-`import argparse`, alphabetisch vor `import json`.
+`import argparse`, alphabetisch vor `import json`. Dazu `EFFORTS` in den
+bestehenden `from lean_herdr.settings import (...)`-Block: der Parser nimmt seine
+`choices` von dort, statt die vier Wörter ein zweites Mal zu schreiben.
 
 Ans Ende von `lean_herdr/llm.py` anhängen:
 
@@ -1045,12 +1083,15 @@ Ans Ende von `lean_herdr/llm.py` anhängen:
         p.add_argument("mode", choices=("generate",))
         p.add_argument(
             "--model", default=None,
-            help=f"default: ${MODEL_ENV}, else {DEFAULT_MODEL}",
+            help="beats $LEAN_HERDR_LLM_MODEL and [llm] in "
+                 ".config/lean-herdr.toml; see --help of that file",
         )
         p.add_argument(
-            "--effort", default=None,
-            choices=("minimal", "low", "medium", "high"),
-            help=f"default: {GENERATE_EFFORT}",
+            # EFFORTS, not a second spelling of the same four words: the
+            # settings validator rejects anything outside it, and two lists
+            # would disagree the day a fifth level shows up.
+            "--effort", default=None, choices=EFFORTS,
+            help="beats [llm].effort; no environment level exists",
         )
         p.add_argument("--timeout", type=float, default=None, help="seconds")
         return p
@@ -1091,9 +1132,10 @@ Ans Ende von `lean_herdr/llm.py` anhängen:
                 message = fallback_message(prompt)
             sys.stdout.write(message.rstrip("\n") + "\n")
             return 0
-        # Unreachable while `choices` names one mode. Task 7 replaces this
-        # line with the prereview branch -- an explicit raise, so a third
-        # mode added without a branch fails loudly instead of exiting 0.
+        # Unreachable while `choices` names one mode -- and a placeholder:
+        # task 7 replaces exactly this line with the prereview branch. Until
+        # then it is a raise rather than a fall-through, so a second mode
+        # added without a branch cannot exit 0 with an empty stdout.
         raise AssertionError(f"unhandled mode: {args.mode}")
 
 `bin/herdr-llm` (neu, ausführbar — `chmod +x`). Die `sys.path`-Zeile ist dieselbe
@@ -1362,9 +1404,11 @@ Neuer Abschnitt direkt hinter der `wt config approvals`-Passage
 
     Which model, and how hard it thinks, is configured per project in
     `.config/lean-herdr.toml` under `[llm]` -- the same file the role settings
-    live in. Precedence per value: a CLI flag, then the environment, then that
-    file, then the built-in default. A broken or absent file costs the defaults,
-    never the commit.
+    live in. For the commit generator: `--model` beats `$LEAN_HERDR_LLM_MODEL`,
+    which beats `[llm].model`, which beats the built-in; `--effort` beats
+    `[llm].effort`, which beats the built-in `minimal`. The pre-review judge has
+    keys of its own -- see the work-order section. A broken or absent file costs
+    the defaults, never the commit.
 
     **The new attack surface, named:** the builder may now run a command that
     sends the contents of its worktree to a third-party service. That was already
@@ -1495,7 +1539,7 @@ Expected: PASS.
 `PREREVIEW_RE`, `PREREVIEW_PROMPT`, `wt_diff(path, *, runner=…, timeout_s=…) ->
 str | None`, `prereview(order, diff, *, model=None, effort=None, timeout_s=…,
 runner=…, env=None, auth_path=None, settings=None) -> tuple[str, str]`,
-`prereview_result(order, *, branch, worktree_list, root=None, runner=…, …) ->
+`prereview_result(order, *, branch, worktree_list, settings=None, runner=…, …) ->
 dict[str, str]`.
 **Consumes:** `complete()`, `_first()`, `file_settings()` und
 `settings.LlmSettings` aus Task 1; `lean_herdr.worktree.find_worktree`.
@@ -1693,7 +1737,7 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         *,
         branch: str | None,
         worktree_list: Any,
-        root: Any = None,
+        settings: LlmSettings | None = None,
         runner: Any = subprocess.run,
         **kwargs: Any,
     ) -> dict[str, str]:
@@ -1724,14 +1768,15 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         diff = wt_diff(path, runner=runner)
         if diff is None:
             return _skip("diff_failed")
-        # `root` comes from the wait mode, which resolved it through
-        # canonical_root() before its poll loop. Handing it down means the
-        # settings file is found without a second `git rev-parse` -- and
-        # found relative to the MAIN checkout, not to the worker's worktree.
-        kwargs.setdefault(
-            "settings", file_settings(root) if root is not None else None
+        # `settings` comes in ALREADY VALIDATED from dispatch.main(), which
+        # read the file once for its own RoleSettings anyway. Two gains: no
+        # second `git rev-parse`, and a wrong `[llm]` value reaches the
+        # orchestrator as `config_error:` instead of dying quietly in
+        # file_settings(). Only the commit path may swallow it -- there a
+        # broken config must not cost a commit; here it has a reader.
+        ruling, note = prereview(
+            order, diff, runner=runner, settings=settings, **kwargs
         )
-        ruling, note = prereview(order, diff, runner=runner, **kwargs)
         return {"prereview": ruling, "prereview_note": note}
 
 Der Import oben in `lean_herdr/llm.py` wächst um eine Zeile — die einzige
@@ -1755,7 +1800,7 @@ An `tests/test_llm.py` anhängen:
         ))
         ruling, note = llm.prereview(
             "add a parser", "diff --git a/x b/x", runner=spy,
-            env={llm.KEY_ENV: "k"}, auth_path=no_store,
+            env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
         )
         assert ruling == "pass"
         assert note.startswith("I would reject this")
@@ -1765,7 +1810,7 @@ An `tests/test_llm.py` anhängen:
         spy = SpyRunner(answer("Looks fine to me.\nPREREVIEW: reject"))
         ruling, note = llm.prereview(
             "add a parser", "diff", runner=spy,
-            env={llm.KEY_ENV: "k"}, auth_path=no_store,
+            env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
         )
         assert ruling == "skipped"
         assert note == "unparsable_answer"
@@ -1784,7 +1829,7 @@ An `tests/test_llm.py` anhängen:
     def test_prereview_never_rejects_when_its_own_machinery_fails(diff, spy, reason, no_store):
         ruling, note = llm.prereview(
             "an order", diff, runner=spy,
-            env={llm.KEY_ENV: "k"}, auth_path=no_store,
+            env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
         )
         assert ruling == "skipped", "the plumbing must never reject"
         assert note == reason
@@ -1794,6 +1839,7 @@ An `tests/test_llm.py` anhängen:
         spy = SpyRunner(answer("PREREVIEW: reject"))
         ruling, note = llm.prereview(
             "an order", "diff", runner=spy, env={}, auth_path=no_store,
+            settings=NO_FILE,
         )
         assert (ruling, note) == ("skipped", "no_answer")
         assert spy.calls == []
@@ -1853,7 +1899,7 @@ An `tests/test_llm.py` anhängen:
         spy = SpyRunner(answer("PREREVIEW: reject\n" + "x" * 5000))
         _ruling, note = llm.prereview(
             "an order", "diff", runner=spy,
-            env={llm.KEY_ENV: "k"}, auth_path=no_store,
+            env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
         )
         assert len(note) == llm.NOTE_MAX_CHARS
 
@@ -1915,6 +1961,7 @@ An `tests/test_llm.py` anhängen:
                 {"branch": "feat/x", "path": "/right"},
             ),
             runner=runner,
+            settings=NO_FILE,
             env={llm.KEY_ENV: "k"},
             auth_path=no_store,
         )
@@ -1935,19 +1982,22 @@ An `tests/test_llm.py` anhängen:
 
 **Files:** Modify `lean_herdr/dispatch.py`. Create
 `tests/test_dispatch_prereview.py`.
-**Interfaces:** Produces `AwaitRequest.prereview: bool = False`, das Flag
+**Interfaces:** Produces `AwaitRequest.prereview: bool = False`,
+`await_task(..., runner=…, llm_cfg: LlmSettings | None = None)`, das Flag
 `--prereview` an `bin/herdr-dispatch`, und die zwei Schlüssel `prereview` /
 `prereview_note` **neben** `verdict` in der `completed`-Antwort.
-**Consumes:** `lean_herdr.llm.prereview_result` aus Task 5.
+**Consumes:** `lean_herdr.llm.prereview_result` aus Task 5;
+`lean_herdr.settings.{LlmSettings, llm_settings}` aus Task 1.
 
 @call recall_context("llm.prereview_result contract")
 
 ### Die fünf Stellen in `dispatch.py`
 
 Anker: `@symbol AwaitRequest`, `@symbol await_task`, `@symbol build_parser`,
-`@symbol missing_flags`, `@symbol main`. Der Import oben wächst um zwei Zeilen
-(`import subprocess` bei den Stdlib-Importen, `from lean_herdr import llm` bei
-den Projektimporten).
+`@symbol missing_flags`, `@symbol main`. Der Import oben wächst um drei Zeilen:
+`import subprocess` bei den Stdlib-Importen, `from lean_herdr import llm` bei den
+Projektimporten, und `LlmSettings` sowie `llm_settings` in den bestehenden
+`from lean_herdr.settings import (...)`-Block.
 
 **1. `AwaitRequest`** bekommt ein sechstes Feld:
 
@@ -1956,10 +2006,15 @@ den Projektimporten).
         #: every failure of the pre-review's own machinery is `skipped`.
         prereview: bool = False
 
-**2. `await_task()`** bekommt einen injizierbaren Runner in der Signatur, hinter
-`now`:
+**2. `await_task()`** bekommt zwei neue Schlüsselwort-Parameter hinter `now`
+— alle Parameter dort sind bereits keyword-only, also bricht kein Aufrufer:
 
         runner: Any = subprocess.run,
+        #: `[llm]` out of the SAME file main() read for `settings`, and
+        #: validated there -- so a wrong value is `config_error:` on stdout
+        #: instead of a stderr line nobody reads. None means: no file was
+        #: read, take the built-in constants.
+        llm_cfg: LlmSettings | None = None,
 
 und der Rückgabe-Zweig in der Schleife (`dispatch.py:438-440`) wird zu:
 
@@ -1975,11 +2030,7 @@ und der Rückgabe-Zweig in der Schleife (`dispatch.py:438-440`) wird zu:
                         order.description,
                         branch=req.worktree,
                         worktree_list=herdr.worktree_list(root),
-                        # The root this call already resolved, so `[llm]` in
-                        # .config/lean-herdr.toml is read WITHOUT a second
-                        # `git rev-parse` -- and read against the main
-                        # checkout, not the worker's worktree.
-                        root=root,
+                        settings=llm_cfg,
                         runner=runner,
                     )
                 )
@@ -2026,9 +2077,30 @@ Fehler ist statt eines verschluckten Flags:
             ("--prereview", args.prereview or None),
         )
 
-**5. `main()`**, im `AwaitRequest(...)`-Aufruf:
+**5. `main()`**, an zwei Stellen. Der Dateiinhalt wird heute nur an
+`settings_for()` weitergereicht (`dispatch.py:704-705`); er bekommt einen Namen,
+damit `[llm]` aus **derselben** Lesung validiert wird:
+
+            root = canonical_root()
+            raw = read_settings(root / SETTINGS_PATH)
+            settings = settings_for(args.command, raw)
+            # Validated HERE, in the one consumer that has a reader for the
+            # complaint: a SettingsError from this line leaves main() as
+            # `config_error: <reason>` on stdout. llm.file_settings()
+            # deliberately swallows the same error -- there it would cost a
+            # commit -- so without this call a typo in `[llm]` would be
+            # silent everywhere, against settings.py's own promise that a
+            # file which IS there but is wrong never stays silent.
+            llm_cfg = llm_settings(raw)
+
+`read_settings` und `SETTINGS_PATH` stehen bereits im Import-Block, `raw` ist
+neu. Und im `AwaitRequest(...)`-Zweig:
 
         prereview=args.prereview,
+
+dazu, als Argument von `await_task()` selbst neben `settings=settings`:
+
+        llm_cfg=llm_cfg,
 
 ### Die Messung der Dateigröße
 
@@ -2063,6 +2135,7 @@ diesem.
     from lean_herdr.dispatch import AwaitRequest, await_task, build_parser, main, missing_flags
     from lean_herdr.herdr import Herdr
     from lean_herdr.orderlog import append
+    from lean_herdr.settings import LlmSettings
     from tests.doubles import Completed, FakeProc, which_stub
 
     ROOT = Path("/repo")
@@ -2096,7 +2169,7 @@ diesem.
         return tmp_path
 
 
-    def wait(herdr, tmp_path, *, prereview, runner, worktree=BRANCH):
+    def wait(herdr, tmp_path, *, prereview, runner, worktree=BRANCH, llm_cfg=None):
         return await_task(
             AwaitRequest(
                 role="builder", kind="claude", task_id=TASK_ID,
@@ -2107,6 +2180,11 @@ diesem.
             orders_dir=tmp_path,
             sleep=lambda _s: None,
             runner=runner,
+            # NEVER None here: prereview() would then call file_settings(),
+            # which runs a real `git rev-parse` and reads this checkout's own
+            # .config/lean-herdr.toml. In production main() hands the
+            # validated block down; in a test we hand down an empty one.
+            llm_cfg=llm_cfg if llm_cfg is not None else LlmSettings(),
         )
 
 
@@ -2360,7 +2438,7 @@ Und in `## Model choice — your judgement`, unter der Tabelle, ein Absatz:
 
 ### Die README
 
-Im Abschnitt `The work-order path`, hinter den drei Orchestrator-Schritten:
+Im Abschnitt `The work-order path`, hinter der Aufzählung der Kommandos:
 
     The wait call for a builder takes `--prereview`. A small model then reads the
     branch diff -- `wt step diff`: committed, staged, unstaged and untracked
