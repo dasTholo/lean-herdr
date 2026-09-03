@@ -32,9 +32,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         # Resolved late, by NAME. Two reasons, both concrete:
-        # 1. lean_herdr.handlers does not exist until Task 15. An import at the
-        #    module's top would make this very task fail its own test run; this
-        #    way, a missing handler only reports one stderr line.
+        # 1. lean_herdr.handlers may be missing -- a partial install, a broken
+        #    module. An import at the module's top would take every subcommand
+        #    down with it; this way, a missing handler costs one stderr line.
         # 2. A function object bound at import time could no longer be swapped
         #    in the test: a monkeypatch on handlers.handle_pane_detected would
         #    miss the stored entry, and the test would check nothing.

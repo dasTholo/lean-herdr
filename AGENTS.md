@@ -19,6 +19,8 @@
   It becomes English when something rewrites that file or section anyway — and
   then in full, never half.
   The one deliberate sweep ran on 2026-09-02 and left the tree English outside
-  `docs/`; its plan is the one dated 2026-09-02 under `docs/lean-md/plans/`. This
-  rule governs what comes after that sweep, and `tests/test_language.py` now
-  enforces the result.
+  `docs/`; its plan is the 2026-09-02 language plan under `docs/lean-md/plans/`.
+  Two files stay German on purpose — `tests/fixtures/registry.sample.json` and
+  `tests/fixtures/tasks.sample.json` are frozen recordings, and both sit in
+  `EXCEPTIONS` of `tests/test_language.py`. This rule governs what comes after
+  that sweep, and `tests/test_language.py` now enforces the result.

@@ -301,21 +301,26 @@ Prompt-Injection-Abwehr im Feld bestaetigt (der Builder lehnte den anonymen
 Auftrag ab und begruendete es), und den Konstruktionsfehler des Auftragswegs
 offengelegt.
 
-### Blockiert oder offen
+### Blockiert, offen oder seither erledigt
 
-- **Task 12 (Stufe 4, Worktree-Durchlauf mit Merge)** — setzt 10 und 11 voraus,
-  also blockiert, bis dieser Umbau steht. Enthaelt einen **ausstehenden
-  README-Patch**: der Hinweis auf `wt config approvals`. Ohne diese Freigabe
-  ueberspringt worktrunk Projekt-Hooks **stillschweigend** (`wt hook --help`:
+- **Task 12 (Stufe 4, Worktree-Durchlauf mit Merge)** — weiterhin **offen**: setzt
+  10 und 11 voraus, also blockiert, bis dieser Umbau steht. Der **README-Patch**,
+  den der Plan hier vorsah (Plan-Quelle Zeilen 4035-4058) — der Hinweis auf
+  `wt config approvals` —, ist dagegen erledigt: er steht seit `cae3ecd` im
+  `README.md`. Ohne diese Freigabe ueberspringt worktrunk Projekt-Hooks
+  **stillschweigend** (`wt hook --help`:
   *"Declining skips every project command for that operation … and continues
   without them"*), das pre-merge-Testtor aus `.config/wt.toml` laeuft dann gar
-  nicht. Der Plan sieht den Patch in Task 12 vor (Plan-Quelle Zeilen 4035-4058).
-  **Bei der Abnahme von Task 12 pruefen, dass er tatsaechlich passiert ist** — ein
-  Tor, auf das man sich verlaesst und das lautlos uebersprungen wird, ist
-  gefaehrlicher als keines.
-- **Task 14 (`digest.py`)** — offen, haengt an nichts, kann jederzeit laufen.
-- **Task 15 (`handlers.py`)** — offen, setzt 13 und 14 voraus.
-- **Task 16 (opencode-Policy-Adapter)** — offen, haengt an keiner anderen Task.
+  nicht. **Bei der Abnahme von Task 12 prüfen, dass die Freigabe auf der Maschine
+  tatsächlich gesetzt ist** — ein Tor, auf das man sich verlaesst und das lautlos
+  uebersprungen wird, ist gefaehrlicher als keines.
+- **Task 14 (`digest.py`)** — **erledigt**, aber nicht von hier: als Task 9 des
+  Sprach-Plans `docs/lean-md/plans/2026-09-02-lean-herdr-englisch-und-plugin.lmd.md`
+  (`cb16095`, Tests nachgezogen in `359d532`, `tests/test_digest.py`).
+- **Task 15 (`handlers.py`)** — **erledigt** als Task 11 desselben Plans
+  (`1c27e75`, Tests nachgezogen in `8d9069d`, `tests/test_handlers.py`).
+- **Task 16 (opencode-Policy-Adapter)** — **erledigt** als Task 12 desselben Plans
+  (`61df0f3`, gehärtet in `bf0e4a9`, `tests/test_policy_adapter.py`).
 
 ### Unbewiesene Annahmen der Ursprungsspec
 
