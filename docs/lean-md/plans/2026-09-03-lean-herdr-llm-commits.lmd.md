@@ -34,14 +34,19 @@ einer geschätzten Effort-Einstellung, die Task 5 zuerst misst.
 
 ```
 lean_herdr/
-  llm.py        NEU  api_key, complete, fallback_message, generate  (Task 1)
+  llm.py        NEU  api_key, complete, fallback_message, _first,
+                     file_settings, generate                        (Task 1)
                      + wt_diff, prereview, prereview_result         (Task 5)
                      + build_parser, main  (das CLI dahinter)       (Task 2/7)
+  settings.py   ~    ROOT_KEYS + "llm"; EFFORTS, LlmSettings,
+                     LLM_ALLOWED, llm_settings()                    (Task 1)
   dispatch.py   ~    AwaitRequest.prereview; await_task ruft
                      llm.prereview_result(); Parser + missing_flags  (Task 6)
   worktree.py   ~    unverändert — llm.py importiert nur find_worktree()
-  orderlog.py orders.py ordercmd.py report.py bus.py join.py export.py
-  handlers.py herdr.py digest.py config.py settings.py   unberührt
+  bus.py        ~    unverändert — llm.py importiert canonical_root()
+  orderlog.py orders.py ordercmd.py report.py join.py export.py
+  handlers.py herdr.py digest.py config.py                unberührt
+.config/lean-herdr.toml   ~    ein auskommentierter [llm]-Block
 bin/herdr-llm             NEU  dünner Aufruf von lean_herdr.llm.main
 bin/herdr-dispatch        unverändert — die Flags leben in dispatch.build_parser()
 roles/builder.md          ~    Schritt 3 wird konkret: `wt step commit --stage none`
@@ -151,14 +156,30 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
   `build_parser()` / `missing_flags()` / `main()` nach `lean_herdr/dispatchcli.py`
   — derselbe Schnitt, den `ordercmd.py` schon einmal bekommen hat.
 - **Non-Goals** (Ablehnungsgrund im Review, kein Versäumnis): kein eigenes
-  Commit-Template (worktrunk rendert, wir hängen nur `template-append` an); keine
-  Einträge in `.config/lean-herdr.toml` (`settings.py` bleibt unberührt); kein
+  Commit-Template (worktrunk rendert, wir hängen nur `template-append` an); kein
   blockierendes Modell-Urteil vor dem Merge (der pre-merge-Hook bleibt das Tor);
   keine Freigabe durch das kleine Modell (`pass` ist kein `result`, der starke
   Reviewer läuft immer); kein Wrapper-Skript um `wt`; keine Korrektur von
   `list.json-schema`; **keine Änderung an** `_result_for_state()`,
   `session_error()`, `bus.py`, `worktree.py`, `join.py`, `export.py`,
-  `handlers.py`, `herdr.py`, `orderlog.py`, `orders.py`, `settings.py`.
+  `handlers.py`, `herdr.py`, `orderlog.py`, `orders.py`.
+- **Aufgehobenes Non-Goal, auf Betreiberanordnung vom 2026-09-03** — ein Review
+  meldet das NICHT als Abweichung: Spec §9 verbot Konfiguration in
+  `.config/lean-herdr.toml` und wollte `settings.py` unberührt lassen. Der
+  Betreiber hat entschieden, dass Modell und Effort dort konfigurierbar sein
+  sollen — über `settings.SETTINGS_PATH`, das die Datei bereits kennt. Task 1
+  setzt das um. Zwei Folgen, die niemand übersehen darf:
+  (a) `_check_root()` lässt am Top-Level heute nur `default` und `roles` zu; ein
+  `[llm]`-Block bräche ohne die `ROOT_KEYS`-Erweiterung **jeden**
+  `bin/herdr-dispatch`-Aufruf mit `config_error:`. Die Erweiterung geht dem
+  Rest voraus.
+  (b) `bin/herdr-llm generate` läuft in **jedem** Repository der Maschine. Eine
+  kaputte oder fehlende Konfigurationsdatei darf dort nichts kosten außer den
+  Vorgabewerten — `llm.file_settings()` fängt `SettingsError`, `BusError` und
+  `OSError` und meldet den Grund auf stderr. `bin/herdr-dispatch` lässt denselben
+  Fehler dagegen als `config_error:` durch: dort hat er einen Leser.
+  Was **bleibt**: `RoleSettings` wird nicht angefasst, und `[llm]` ist ein Block
+  für sich, den nur `llm.py` liest.
 - **Eine bewusste Abweichung von der Spec, als solche zu behandeln** — ein
   Review meldet sie NICHT als Befund: die Spec (§9) nennt nur
   `$LEAN_HERDR_LLM_MODEL` als Überschreibung. Der Plan gibt der Vorprüfung mit
@@ -179,20 +200,113 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
   setzt 5+6 voraus.
 
 @phase "task-1"
-## Task 1: `lean_herdr/llm.py` — der HTTP-Aufruf und der Generator
+## Task 1: `lean_herdr/llm.py` — der HTTP-Aufruf, die Konfiguration, der Generator
 
-**Files:** Create `lean_herdr/llm.py`, `tests/test_llm.py`.
-**Interfaces:** Produces `lean_herdr.llm.DEFAULT_MODEL`, `MODEL_ENV`, `KEY_ENV`,
-`ENDPOINT`, `AUTH_PATH`, `MAX_PROMPT_BYTES`, `GENERATE_TIMEOUT_S`,
-`GENERATE_EFFORT`, `api_key(env=None, auth_path=None) -> str | None`,
+**Files:** Create `lean_herdr/llm.py`, `tests/test_llm.py`. Modify
+`lean_herdr/settings.py`, `.config/lean-herdr.toml`, `tests/test_settings.py`.
+**Interfaces:** Produces `lean_herdr.settings.EFFORTS`, `LlmSettings`
+(`model`/`prereview_model`/`effort`/`prereview_effort`, alle `str = ""`),
+`LLM_ALLOWED`, `llm_settings(data=None) -> LlmSettings`; und
+`lean_herdr.llm.DEFAULT_MODEL`, `MODEL_ENV`, `KEY_ENV`, `ENDPOINT`, `AUTH_PATH`,
+`MAX_PROMPT_BYTES`, `GENERATE_TIMEOUT_S`, `GENERATE_EFFORT`,
+`api_key(env=None, auth_path=None) -> str | None`,
 `complete(prompt, *, effort, model=None, timeout_s=…, runner=…, env=None,
 auth_path=None) -> str | None`, `fallback_message(prompt) -> str`,
-`generate(prompt, *, model=None, effort=…, timeout_s=…, runner=…, env=None,
-auth_path=None) -> str`.
-**Consumes:** nur die Standardbibliothek. Kein Eintrag in `herdr-plugin.toml` —
-das Modul ist eine Bibliothek, kein Plugin-Handler.
+`_first(*candidates, fallback) -> str`,
+`file_settings(root=None, *, cwd=None) -> LlmSettings`,
+`generate(prompt, *, model=None, effort=None, timeout_s=…, runner=…, env=None,
+auth_path=None, settings=None) -> str`.
+**Consumes:** `lean_herdr.settings.{SETTINGS_PATH, read_settings, SettingsError}`,
+`lean_herdr.bus.{canonical_root, BusError}`, sonst die Standardbibliothek. Kein
+Eintrag in `herdr-plugin.toml` — das Modul ist eine Bibliothek, kein
+Plugin-Handler.
 
-### Der Code
+### Zuerst: `[llm]` in `lean_herdr/settings.py`
+
+`_check_root()` (`settings.py:139-160`) lässt am Top-Level **nur** `default` und
+`roles` zu und wirft für alles andere `SettingsError`. Ein `[llm]`-Block in
+`.config/lean-herdr.toml` würde deshalb heute **jeden** `bin/herdr-dispatch`-Aufruf
+mit `config_error:` scheitern lassen — nicht nur die neuen. Der Schlüssel muss
+also zuerst erlaubt werden, sonst bricht dieser Task den bestehenden Auftragsweg.
+
+@call patch("lean_herdr/settings.py", "ROOT_KEYS und das Ende der Datei")
+
+`ROOT_KEYS` bekommt einen dritten Eintrag:
+
+    #: The only three keys the top level of the file may carry.
+    ROOT_KEYS = ("default", "roles", "llm")
+
+Und ans Ende der Datei, hinter `settings_for()`:
+
+    #: OpenRouter's reasoning levels. A typo would otherwise reach the
+    #: endpoint verbatim, come back as an HTTP error, and be swallowed into
+    #: a fallback commit message -- a wrong value that looks exactly like a
+    #: missing key.
+    EFFORTS = ("minimal", "low", "medium", "high")
+
+
+    @dataclass(frozen=True)
+    class LlmSettings:
+        """`[llm]` -- the commit generator and the pre-review judge.
+
+        Deliberately NOT part of RoleSettings. Those describe how a pane is
+        split and what a worker is called, and dispatch.py reads every one
+        of them. These four are read by llm.py alone -- and by a process
+        worktrunk starts in repositories this project does not own.
+
+        The empty string means "not set", so the resolution chain in llm.py
+        stays a plain first-non-empty. `None` would need a second spelling
+        for the same state and a second check at every level.
+        """
+
+        model: str = ""
+        prereview_model: str = ""
+        effort: str = ""
+        prereview_effort: str = ""
+
+
+    LLM_ALLOWED = frozenset(f.name for f in fields(LlmSettings))
+
+
+    def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
+        """`[llm]` out of the settings file. No section: every default.
+
+        Same strictness as settings_for(): an unknown key, a wrong type or
+        an effort level OpenRouter does not know is a SettingsError, never a
+        silent fallback. Whoever writes `effort = "mininal"` must not go
+        hunting for the bug in the model.
+
+        Note who catches it: `bin/herdr-llm generate` does NOT let this
+        raise (see llm.file_settings), because a failing generation command
+        aborts a commit. `bin/herdr-dispatch` does let it through, as
+        `config_error:` -- there it is an operator error with a reader.
+        """
+        table = _check_root({} if data is None else data)
+        block = table.get("llm")
+        if block is None:
+            return LlmSettings()
+        if not isinstance(block, dict):
+            raise SettingsError(
+                f"llm: section is not a table, but {type(block).__name__}"
+            )
+        unknown = sorted(set(block) - LLM_ALLOWED)
+        if unknown:
+            raise SettingsError(
+                f"llm: unknown keys {unknown}; allowed: {sorted(LLM_ALLOWED)}"
+            )
+        for key, value in block.items():
+            if not isinstance(value, str):
+                raise SettingsError(
+                    f"llm.{key}: {value!r} is {type(value).__name__}, not str"
+                )
+        values = LlmSettings(**block)
+        for key in ("effort", "prereview_effort"):
+            level = getattr(values, key)
+            if level and level not in EFFORTS:
+                raise SettingsError(f"llm.{key}={level!r}, allowed: {list(EFFORTS)}")
+        return values
+
+### Dann: der Code
 
 `lean_herdr/llm.py` (neu):
 
@@ -219,13 +333,30 @@ das Modul ist eine Bibliothek, kein Plugin-Handler.
     import os
     import re
     import subprocess
+    import sys
     import tempfile
     from pathlib import Path
     from typing import Any
 
-`argparse` and `sys` are deliberately NOT imported here — task 2 adds them
-together with the CLI that uses them. Importing them one task early is an F401
-under this project's ruff defaults, and this task's own gate would fail on it.
+    from lean_herdr.bus import BusError, canonical_root
+    from lean_herdr.settings import (
+        SETTINGS_PATH,
+        LlmSettings,
+        SettingsError,
+        llm_settings,
+        read_settings,
+    )
+
+`argparse` is deliberately NOT imported here — task 2 adds it together with the
+CLI that uses it. Importing it one task early is an F401 under this project's
+ruff defaults, and this task's own gate would fail on it. `sys` IS used here:
+`file_settings()` writes its reason to stderr.
+
+The module is therefore not stdlib-only: it reads the project's settings file
+through the module that owns that file, and resolves the repo root through the
+one function the whole project resolves it with (`canonical_root()`, B12). A
+second reader or a second `git rev-parse` would be exactly the two-truths bug
+this codebase keeps catching.
 
     #: OpenRouter's slug for the model measured in the design (spec 2.2).
     #: `$LEAN_HERDR_LLM_MODEL` beats it, so an operator swaps the model
@@ -361,6 +492,9 @@ under this project's ruff defaults, and this task's own gate would fail on it.
         if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
             return None
         key = api_key(environ, auth_path)
+        # NOTE: this function resolves NOTHING but the key. Model and effort
+        # arrive decided -- `_first()` at the call site is the one precedence
+        # rule, and a second chain here would drift from it (M3).
         # A key with a quote, a backslash or a newline in it cannot go
         # into a curl config line without changing what that line means.
         # Refusing is right: no real OpenRouter key looks like this, and a
@@ -369,7 +503,7 @@ under this project's ruff defaults, and this task's own gate would fail on it.
             return None
         body = json.dumps(
             {
-                "model": model or environ.get(MODEL_ENV) or DEFAULT_MODEL,
+                "model": model or DEFAULT_MODEL,
                 "messages": [{"role": "user", "content": prompt}],
                 "reasoning": {"effort": effort},
             }
@@ -429,15 +563,53 @@ under this project's ruff defaults, and this task's own gate would fail on it.
         return f"Changes to {shown}" + (f" and {rest} more" if rest > 0 else "")
 
 
+    def _first(*candidates: str | None, fallback: str) -> str:
+        """The first non-empty candidate -- the ONE precedence rule.
+
+        One function instead of an `or`-chain per caller: two spellings of
+        the same precedence drift apart the day somebody inserts a level.
+        The ORDER stays visible at each call site, because that is the part
+        that actually differs between the generator and the judge.
+        """
+        return next((c for c in candidates if c), fallback)
+
+
+    def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
+        """`[llm]` from `<repo root>/.config/lean-herdr.toml` -- NEVER raises.
+
+        Never, and that is the whole reason this wrapper exists next to
+        `settings.llm_settings()`. worktrunk starts `bin/herdr-llm generate`
+        in EVERY repository on the machine, and a failing generation command
+        aborts the commit (spec 2.3). A missing file, a directory that is
+        not a repository, a broken TOML and a bad value therefore all cost
+        the built-in defaults -- never the commit. The reason goes to
+        stderr, where an operator sees it without the commit paying for it.
+
+        `SETTINGS_PATH` is relative and gets joined onto the repo root, not
+        onto $PWD: the generator runs in the builder's worktree, and a
+        `.config/` lookup from there would miss (settings.py:20-24).
+
+        `root` is handed in by callers that resolved it already -- the wait
+        mode has it. Without it this asks git once, per process.
+        """
+        try:
+            base = Path(root) if root is not None else canonical_root(cwd)
+            return llm_settings(read_settings(base / SETTINGS_PATH))
+        except (SettingsError, BusError, OSError) as exc:
+            print(f"herdr-llm: ignoring the settings file: {exc}", file=sys.stderr)
+            return LlmSettings()
+
+
     def generate(
         prompt: str,
         *,
         model: str | None = None,
-        effort: str = GENERATE_EFFORT,
+        effort: str | None = None,
         timeout_s: float = GENERATE_TIMEOUT_S,
         runner: Any = subprocess.run,
         env: Any = None,
         auth_path: Any = None,
+        settings: LlmSettings | None = None,
     ) -> str:
         """A commit message, always. Never empty, never an exception.
 
@@ -446,11 +618,23 @@ under this project's ruff defaults, and this task's own gate would fail on it.
         2.3). Its own fallback to file names applies only when NO command
         is configured. So this function has exactly one contract: text
         out, whatever went wrong.
+
+        Resolution, in this order: the explicit argument (the CLI flag),
+        then the environment, then `[llm]` in the settings file, then the
+        built-in constant. The environment sits ABOVE the file on purpose:
+        it is the grip an operator has inside a running pane, without
+        editing a file that every repository on this machine reads. The
+        effort has no environment level -- a CLI flag and the file are
+        enough, and a third spelling for a four-value enum is clutter.
         """
+        environ = os.environ if env is None else env
+        cfg = file_settings() if settings is None else settings
         answer = complete(
             prompt,
-            effort=effort,
-            model=model,
+            effort=_first(effort, cfg.effort, fallback=GENERATE_EFFORT),
+            model=_first(
+                model, environ.get(MODEL_ENV), cfg.model, fallback=DEFAULT_MODEL
+            ),
             timeout_s=timeout_s,
             runner=runner,
             env=env,
@@ -476,7 +660,14 @@ under this project's ruff defaults, and this task's own gate would fail on it.
     import pytest
 
     from lean_herdr import llm
+    from lean_herdr.settings import LlmSettings
     from tests.doubles import Completed
+
+    #: Every generate() call in here passes `settings=` explicitly. Without
+    #: it generate() calls file_settings(), which runs `git rev-parse` and
+    #: reads THIS repository's own .config/lean-herdr.toml -- a unit test
+    #: that quietly depends on the checkout it runs in.
+    NO_FILE = LlmSettings()
 
     DIFFSTAT_PROMPT = """<task>write a commit message</task>
     <diffstat>
@@ -584,11 +775,11 @@ under this project's ruff defaults, and this task's own gate would fail on it.
 
 
     def test_the_body_carries_model_and_effort(no_store):
+        """complete() resolves nothing -- it sends what it is handed."""
         spy = SpyRunner(answer("feat(x): y"))
         llm.complete(
-            "prompt", effort="minimal", runner=spy,
-            env={llm.KEY_ENV: "k", llm.MODEL_ENV: "some/other-model"},
-            auth_path=no_store,
+            "prompt", effort="minimal", model="some/other-model", runner=spy,
+            env={llm.KEY_ENV: "k"}, auth_path=no_store,
         )
         body = json.loads(spy.bodies[0])
         assert body["model"] == "some/other-model"
@@ -596,14 +787,71 @@ under this project's ruff defaults, and this task's own gate would fail on it.
         assert body["messages"] == [{"role": "user", "content": "prompt"}]
 
 
-    def test_an_explicit_model_beats_the_environment(no_store):
+    def test_the_precedence_runs_flag_environment_file_constant(no_store):
+        """One test for the whole chain, so a reordering cannot hide."""
+        cfg = LlmSettings(model="file/model", effort="medium")
+        env = {llm.KEY_ENV: "k", llm.MODEL_ENV: "env/model"}
+
+        def sent(**kw):
+            spy = SpyRunner(answer("feat(x): y"))
+            llm.generate(
+                "prompt", runner=spy, env=env, auth_path=no_store,
+                settings=cfg, **kw,
+            )
+            return json.loads(spy.bodies[0])
+
+        assert sent(model="flag/model")["model"] == "flag/model"
+        assert sent()["model"] == "env/model", "the environment beats the file"
+        assert sent(effort="low")["reasoning"] == {"effort": "low"}
+        assert sent()["reasoning"] == {"effort": "medium"}, "the file beats the constant"
+
+
+    def test_without_a_file_and_without_an_environment_the_constants_win(no_store):
         spy = SpyRunner(answer("feat(x): y"))
-        llm.complete(
-            "prompt", effort="minimal", model="explicit/model", runner=spy,
-            env={llm.KEY_ENV: "k", llm.MODEL_ENV: "env/model"},
-            auth_path=no_store,
+        llm.generate(
+            "prompt", runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store,
+            settings=LlmSettings(),
         )
-        assert json.loads(spy.bodies[0])["model"] == "explicit/model"
+        body = json.loads(spy.bodies[0])
+        assert body["model"] == llm.DEFAULT_MODEL
+        assert body["reasoning"] == {"effort": llm.GENERATE_EFFORT}
+
+
+    def test_the_first_non_empty_candidate_wins():
+        assert llm._first(None, "", "third", fallback="f") == "third"
+        assert llm._first(None, "", fallback="f") == "f"
+
+
+    def test_a_broken_settings_file_costs_the_defaults_not_the_commit(tmp_path, capsys):
+        """The hard invariant, at the one place that could break it."""
+        (tmp_path / ".config").mkdir()
+        (tmp_path / ".config" / "lean-herdr.toml").write_text(
+            "[llm]\nmodel = 5\n", encoding="utf-8"
+        )
+        assert llm.file_settings(tmp_path) == LlmSettings()
+        assert "ignoring the settings file" in capsys.readouterr().err
+
+
+    def test_a_directory_that_is_no_repository_costs_the_defaults(tmp_path, capsys):
+        assert llm.file_settings(cwd=tmp_path) == LlmSettings()
+        assert "ignoring the settings file" in capsys.readouterr().err
+
+
+    def test_a_missing_file_is_the_normal_case_and_says_nothing(tmp_path, capsys):
+        assert llm.file_settings(tmp_path) == LlmSettings()
+        assert capsys.readouterr().err == "", "an absent file is not a complaint"
+
+
+    def test_the_file_is_read_relative_to_the_repo_root(tmp_path):
+        (tmp_path / ".config").mkdir()
+        (tmp_path / ".config" / "lean-herdr.toml").write_text(
+            '[llm]\nmodel = "from/file"\nprereview_effort = "medium"\n',
+            encoding="utf-8",
+        )
+        got = llm.file_settings(tmp_path)
+        assert got.model == "from/file"
+        assert got.prereview_effort == "medium"
+        assert got.effort == "", "an unset key stays the empty string"
 
 
     def test_a_fenced_answer_loses_its_fence(no_store):
@@ -647,7 +895,7 @@ under this project's ruff defaults, and this task's own gate would fail on it.
     )
     def test_generate_returns_the_fallback_for_every_failure(spy, no_store):
         got = llm.generate(
-            DIFFSTAT_PROMPT, runner=spy,
+            DIFFSTAT_PROMPT, runner=spy, settings=NO_FILE,
             env={llm.KEY_ENV: "k"}, auth_path=no_store,
         )
         assert got == "Changes to lean_herdr/llm.py, tests/test_llm.py"
@@ -655,7 +903,9 @@ under this project's ruff defaults, and this task's own gate would fail on it.
 
     def test_generate_without_a_key_never_calls_curl(no_store):
         spy = SpyRunner(answer("feat(x): y"))
-        got = llm.generate(DIFFSTAT_PROMPT, runner=spy, env={}, auth_path=no_store)
+        got = llm.generate(
+            DIFFSTAT_PROMPT, runner=spy, env={}, auth_path=no_store, settings=NO_FILE
+        )
         assert spy.calls == []
         assert got.startswith("Changes to ")
 
@@ -681,15 +931,85 @@ under this project's ruff defaults, and this task's own gate would fail on it.
 
     def test_generate_passes_the_measured_effort_by_default(no_store):
         spy = SpyRunner(answer("feat(x): y"))
-        llm.generate("prompt", runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store)
+        llm.generate(
+            "prompt", runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store,
+            settings=NO_FILE,
+        )
         assert json.loads(spy.bodies[0])["reasoning"] == {"effort": "minimal"}
+
+### Die Tests für `[llm]`
+
+An `tests/test_settings.py` anhängen — dort, wo die Strenge dieses Moduls schon
+bewacht wird:
+
+    def test_the_llm_section_is_read_and_defaults_to_empty():
+        from lean_herdr.settings import LlmSettings, llm_settings
+
+        assert llm_settings({}) == LlmSettings()
+        assert llm_settings({"llm": {"model": "a/b"}}).model == "a/b"
+        assert llm_settings({"llm": {"prereview_effort": "medium"}}).effort == ""
+
+
+    def test_the_llm_section_no_longer_breaks_the_whole_file():
+        """Before this task `[llm]` made EVERY herdr-dispatch call fail."""
+        from lean_herdr.settings import settings_for
+
+        assert settings_for("builder", {"llm": {"model": "a/b"}}).profile == "standard"
+
+
+    @pytest.mark.parametrize(
+        "block",
+        [
+            {"modell": "a/b"},
+            {"model": 5},
+            {"effort": "mininal"},
+            {"prereview_effort": "enormous"},
+        ],
+        ids=["unknown-key", "wrong-type", "typo-in-effort", "unknown-effort"],
+    )
+    def test_a_wrong_llm_value_is_loud(block):
+        from lean_herdr.settings import SettingsError, llm_settings
+
+        with pytest.raises(SettingsError):
+            llm_settings({"llm": block})
+
+
+    def test_the_llm_section_must_be_a_table():
+        from lean_herdr.settings import SettingsError, llm_settings
+
+        with pytest.raises(SettingsError, match="not a table"):
+            llm_settings({"llm": "a/b"})
+
+### Die Konfigurationsdatei
+
+`.config/lean-herdr.toml` ist im Repo und trägt heute nur auskommentierte
+Beispiele — genau die Form, die der Kopf der Datei verspricht („Everything here
+is commented out, so the project behaves exactly as it does without this file").
+Der neue Block folgt ihr:
+
+@call patch(".config/lean-herdr.toml", "das Ende der Datei, hinter [roles.reviewer]")
+
+    # [llm]
+    # Reads by lean_herdr/llm.py alone: the commit generator worktrunk calls
+    # through bin/herdr-llm, and the pre-review judge behind --prereview.
+    # Precedence per value: CLI flag > environment > this file > built-in.
+    #
+    # model = "google/gemini-3.8-flash"   # both, unless overridden below
+    # effort = "minimal"                  # minimal | low | medium | high
+    #
+    # The judge is a different job from the commit generator: the generator
+    # formats a diffstat, the judge reads code. Give it its own model here
+    # rather than raising `model` -- that one is paid on every commit.
+    # prereview_model = ""                # empty: share `model`
+    # prereview_effort = "low"
 
 ### Verify & Close
 
-@call verify(lean_herdr/llm.py tests/test_llm.py)
-@call gate(lean_herdr/llm.py tests/test_llm.py)
-@call commit("lean_herdr/llm.py tests/test_llm.py", "feat(llm): call a small model over curl, with a fallback that never fails")
-@call remember_decision("lean_herdr/llm.py: the only HTTP call in lean-herdr. complete() returns None for EVERY failure; generate() always returns text because a failing commit.generation.command aborts the commit. Key goes through a 0600 curl --config file, never argv.")
+@call verify(lean_herdr/llm.py lean_herdr/settings.py .config/lean-herdr.toml tests/test_llm.py tests/test_settings.py)
+@call review_change()
+@call gate(lean_herdr/llm.py lean_herdr/settings.py tests/test_llm.py tests/test_settings.py)
+@call commit("lean_herdr/llm.py lean_herdr/settings.py .config/lean-herdr.toml tests/test_llm.py tests/test_settings.py", "feat(llm): call a small model over curl, configured from .config/lean-herdr.toml")
+@call remember_decision("lean_herdr/llm.py: the only HTTP call in lean-herdr. complete() returns None for EVERY failure and resolves NOTHING but the key; generate() always returns text because a failing commit.generation.command aborts the commit. Key goes through a 0600 curl --config file, never argv. Model and effort resolve flag > environment > [llm] in .config/lean-herdr.toml > built-in constant, via _first() at the call site. file_settings() never raises -- a broken config costs the defaults, not the commit. settings.ROOT_KEYS had to gain 'llm' first, or every herdr-dispatch call would fail with config_error.")
 @phase-end
 
 @phase "task-2"
@@ -712,8 +1032,8 @@ genau **ein** `commit.generation.command`, und dasselbe Kommando bedient den
 Commit des Builders, den Squash des Orchestrators und den Squash innerhalb von
 `wt merge`.
 
-Die zwei Importe, die Task 1 bewusst ausgelassen hat, kommen jetzt oben dazu —
-`import argparse` und `import sys`, alphabetisch in den bestehenden Block.
+Der Import, den Task 1 bewusst ausgelassen hat, kommt jetzt oben dazu —
+`import argparse`, alphabetisch vor `import json`.
 
 Ans Ende von `lean_herdr/llm.py` anhängen:
 
@@ -757,10 +1077,13 @@ Ans Ende von `lean_herdr/llm.py` anhängen:
                         file=sys.stderr,
                     )
                 prompt = sys.stdin.read()
+                # `None` for model and effort, not the constants: generate()
+                # owns the precedence, and passing a constant here would put
+                # the CLI's silence ABOVE the settings file.
                 message = generate(
                     prompt,
                     model=args.model,
-                    effort=args.effort or GENERATE_EFFORT,
+                    effort=args.effort,
                     timeout_s=args.timeout or GENERATE_TIMEOUT_S,
                 )
             except Exception as exc:  # noqa: BLE001 -- a failure would abort the commit
@@ -1037,6 +1360,12 @@ Neuer Abschnitt direkt hinter der `wt config approvals`-Passage
 
         export OPENROUTER_API_KEY=sk-or-...
 
+    Which model, and how hard it thinks, is configured per project in
+    `.config/lean-herdr.toml` under `[llm]` -- the same file the role settings
+    live in. Precedence per value: a CLI flag, then the environment, then that
+    file, then the built-in default. A broken or absent file costs the defaults,
+    never the commit.
+
     **The new attack surface, named:** the builder may now run a command that
     sends the contents of its worktree to a third-party service. That was already
     true of every agent in this project, but here without a model in between that
@@ -1164,9 +1493,12 @@ Expected: PASS.
 `PREREVIEW_EFFORT`, `PREREVIEW_MODEL_ENV`, `DIFF_TIMEOUT_S`, `NOTE_MAX_CHARS`,
 `MAX_DIFF_BYTES`,
 `PREREVIEW_RE`, `PREREVIEW_PROMPT`, `wt_diff(path, *, runner=…, timeout_s=…) ->
-str | None`, `prereview(order, diff, *, …) -> tuple[str, str]`,
-`prereview_result(order, *, branch, worktree_list, runner=…, …) -> dict[str, str]`.
-**Consumes:** `complete()` aus Task 1, `lean_herdr.worktree.find_worktree`.
+str | None`, `prereview(order, diff, *, model=None, effort=None, timeout_s=…,
+runner=…, env=None, auth_path=None, settings=None) -> tuple[str, str]`,
+`prereview_result(order, *, branch, worktree_list, root=None, runner=…, …) ->
+dict[str, str]`.
+**Consumes:** `complete()`, `_first()`, `file_settings()` und
+`settings.LlmSettings` aus Task 1; `lean_herdr.worktree.find_worktree`.
 
 @call recall_context("lean_herdr/llm.py contract")
 
@@ -1304,11 +1636,12 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         diff: str,
         *,
         model: str | None = None,
-        effort: str = PREREVIEW_EFFORT,
+        effort: str | None = None,
         timeout_s: float = PREREVIEW_TIMEOUT_S,
         runner: Any = subprocess.run,
         env: Any = None,
         auth_path: Any = None,
+        settings: LlmSettings | None = None,
     ) -> tuple[str, str]:
         """(`pass` | `reject` | `skipped`, note). Never raises.
 
@@ -1316,18 +1649,31 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         timeout, unparsable answer, empty diff, a diff over the cap. NEVER
         `reject`. That is the technical form of the design decision: the
         model may block, its plumbing may not.
+
+        The judge resolves its own two levels FIRST and falls back to the
+        shared ones: flag, `$LEAN_HERDR_PREREVIEW_MODEL`,
+        `[llm].prereview_model`, `$LEAN_HERDR_LLM_MODEL`, `[llm].model`,
+        constant. The effort does NOT fall back to `[llm].effort` -- that
+        one is the commit generator's `minimal`, and inheriting it would
+        quietly make the judge as thoughtless as the formatter.
         """
         if not diff.strip():
             return "skipped", "empty_diff"
         if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
             return "skipped", "diff_too_large"
         environ = os.environ if env is None else env
+        cfg = file_settings() if settings is None else settings
         answer = complete(
             PREREVIEW_PROMPT.format(order=order, diff=diff),
-            effort=effort,
-            # None falls through to complete()'s own chain:
-            # $LEAN_HERDR_LLM_MODEL, then DEFAULT_MODEL.
-            model=model or environ.get(PREREVIEW_MODEL_ENV) or None,
+            effort=_first(effort, cfg.prereview_effort, fallback=PREREVIEW_EFFORT),
+            model=_first(
+                model,
+                environ.get(PREREVIEW_MODEL_ENV),
+                cfg.prereview_model,
+                environ.get(MODEL_ENV),
+                cfg.model,
+                fallback=DEFAULT_MODEL,
+            ),
             timeout_s=timeout_s,
             runner=runner,
             env=env,
@@ -1347,6 +1693,7 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         *,
         branch: str | None,
         worktree_list: Any,
+        root: Any = None,
         runner: Any = subprocess.run,
         **kwargs: Any,
     ) -> dict[str, str]:
@@ -1377,6 +1724,13 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         diff = wt_diff(path, runner=runner)
         if diff is None:
             return _skip("diff_failed")
+        # `root` comes from the wait mode, which resolved it through
+        # canonical_root() before its poll loop. Handing it down means the
+        # settings file is found without a second `git rev-parse` -- and
+        # found relative to the MAIN checkout, not to the worker's worktree.
+        kwargs.setdefault(
+            "settings", file_settings(root) if root is not None else None
+        )
         ruling, note = prereview(order, diff, runner=runner, **kwargs)
         return {"prereview": ruling, "prereview_note": note}
 
@@ -1445,41 +1799,54 @@ An `tests/test_llm.py` anhängen:
         assert spy.calls == []
 
 
-    def test_the_judge_may_run_on_a_model_of_its_own(no_store):
+    def judged(no_store, *, cfg=None, env=None, **kw):
+        """One prereview call; returns the request body that was sent."""
+        spy = SpyRunner(answer("PREREVIEW: pass"))
+        llm.prereview(
+            "an order", "diff", runner=spy, auth_path=no_store,
+            settings=cfg if cfg is not None else NO_FILE,
+            env={llm.KEY_ENV: "k", **(env or {})},
+            **kw,
+        )
+        return json.loads(spy.bodies[0])
+
+
+    def test_the_judges_precedence_runs_all_six_levels(no_store):
         """Raising the judge must not raise the commit generator's bill."""
-        spy = SpyRunner(answer("PREREVIEW: pass"))
-        llm.prereview(
-            "an order", "diff", runner=spy, auth_path=no_store,
-            env={
-                llm.KEY_ENV: "k",
-                llm.MODEL_ENV: "tiny/commit-model",
-                llm.PREREVIEW_MODEL_ENV: "bigger/judge-model",
-            },
+        cfg = LlmSettings(
+            model="file/shared", prereview_model="file/judge",
+            effort="minimal", prereview_effort="medium",
         )
-        assert json.loads(spy.bodies[0])["model"] == "bigger/judge-model"
+        both = {
+            llm.MODEL_ENV: "env/shared",
+            llm.PREREVIEW_MODEL_ENV: "env/judge",
+        }
+        assert judged(no_store, cfg=cfg, env=both, model="flag/m")["model"] == "flag/m"
+        assert judged(no_store, cfg=cfg, env=both)["model"] == "env/judge"
+        assert judged(no_store, cfg=cfg, env={llm.MODEL_ENV: "env/shared"})[
+            "model"
+        ] == "file/judge", "its own file key beats the shared environment"
+        assert judged(
+            no_store, cfg=LlmSettings(model="file/shared"),
+            env={llm.MODEL_ENV: "env/shared"},
+        )["model"] == "env/shared"
+        assert judged(no_store, cfg=LlmSettings(model="file/shared"))[
+            "model"
+        ] == "file/shared", "with nothing of its own the judge shares the model"
+        assert judged(no_store)["model"] == llm.DEFAULT_MODEL
 
 
-    def test_without_its_own_variable_the_judge_shares_the_model(no_store):
-        spy = SpyRunner(answer("PREREVIEW: pass"))
-        llm.prereview(
-            "an order", "diff", runner=spy, auth_path=no_store,
-            env={llm.KEY_ENV: "k", llm.MODEL_ENV: "tiny/commit-model"},
-        )
-        assert json.loads(spy.bodies[0])["model"] == "tiny/commit-model"
-
-
-    def test_an_explicit_model_beats_both_variables(no_store):
-        spy = SpyRunner(answer("PREREVIEW: pass"))
-        llm.prereview(
-            "an order", "diff", model="cli/flag-model", runner=spy,
-            auth_path=no_store,
-            env={
-                llm.KEY_ENV: "k",
-                llm.MODEL_ENV: "tiny/commit-model",
-                llm.PREREVIEW_MODEL_ENV: "bigger/judge-model",
-            },
-        )
-        assert json.loads(spy.bodies[0])["model"] == "cli/flag-model"
+    def test_the_judge_does_not_inherit_the_commit_generators_effort(no_store):
+        """`[llm].effort` is the formatter's `minimal`. Inheriting it would
+        make the judge as thoughtless as the formatter, silently."""
+        cfg = LlmSettings(effort="minimal")
+        assert judged(no_store, cfg=cfg)["reasoning"] == {
+            "effort": llm.PREREVIEW_EFFORT
+        }
+        assert judged(
+            no_store, cfg=LlmSettings(effort="minimal", prereview_effort="high")
+        )["reasoning"] == {"effort": "high"}
+        assert judged(no_store, cfg=cfg, effort="low")["reasoning"] == {"effort": "low"}
 
 
     def test_the_note_is_cut_at_the_cap(no_store):
@@ -1560,7 +1927,7 @@ An `tests/test_llm.py` anhängen:
 @call review_change()
 @call gate(lean_herdr/llm.py tests/test_llm.py)
 @call commit("lean_herdr/llm.py tests/test_llm.py", "feat(llm): judge a branch diff before the expensive reviewer runs")
-@call remember_decision("llm.prereview() returns pass|reject|skipped; EVERY failure of its own machinery is skipped, never reject. prereview_result() resolves the worktree itself via find_worktree -- never dispatch._worker_root(), whose repo-root fallback would judge a stranger's diff. Measured PREREVIEW_EFFORT: <the value from step 0>.")
+@call remember_decision("llm.prereview() returns pass|reject|skipped; EVERY failure of its own machinery is skipped, never reject. prereview_result() resolves the worktree itself via find_worktree -- never dispatch._worker_root(), whose repo-root fallback would judge a stranger's diff -- and takes `root` so [llm] is read against the MAIN checkout without a second git call. The judge's model chain: flag, $LEAN_HERDR_PREREVIEW_MODEL, [llm].prereview_model, $LEAN_HERDR_LLM_MODEL, [llm].model, constant; its effort does NOT inherit [llm].effort. Measured PREREVIEW_EFFORT: <the value from step 0>.")
 @phase-end
 
 @phase "task-6"
@@ -1608,6 +1975,11 @@ und der Rückgabe-Zweig in der Schleife (`dispatch.py:438-440`) wird zu:
                         order.description,
                         branch=req.worktree,
                         worktree_list=herdr.worktree_list(root),
+                        # The root this call already resolved, so `[llm]` in
+                        # .config/lean-herdr.toml is read WITHOUT a second
+                        # `git rev-parse` -- and read against the main
+                        # checkout, not the worker's worktree.
+                        root=root,
                         runner=runner,
                     )
                 )
@@ -1875,11 +2247,14 @@ samt ihrem Kommentar. Der `generate`-Zweig darüber bleibt unangetastet:
         if diff is None:
             print(f"herdr-llm: `wt -C {args.path} step diff` failed", file=sys.stderr)
             return 1
+        # No `settings=`: prereview() resolves the file itself, from the
+        # repository the operator is standing in. `--model`/`--effort` stay
+        # None when unset, so the file keeps its place in the chain.
         ruling, note = prereview(
             args.order,
             diff,
             model=args.model,
-            effort=args.effort or PREREVIEW_EFFORT,
+            effort=args.effort,
             timeout_s=args.timeout or PREREVIEW_TIMEOUT_S,
         )
         sys.stdout.write(ruling + "\n")
@@ -2004,13 +2379,22 @@ Im Abschnitt `The work-order path`, hinter den drei Orchestrator-Schritten:
     the commit generator formats a diffstat and is happy with the smallest model
     there is, the judge reads code.
 
-        export LEAN_HERDR_LLM_MODEL=google/gemini-3.8-flash    # both, if set
-        export LEAN_HERDR_PREREVIEW_MODEL=<something stronger>  # the judge only
+        # .config/lean-herdr.toml -- the durable place
+        [llm]
+        model = "google/gemini-3.8-flash"   # both
+        prereview_model = ""                # the judge only; empty: share `model`
+        prereview_effort = "low"            # the judge thinks harder than the formatter
 
-    Precedence: `--model` on the CLI, then `$LEAN_HERDR_PREREVIEW_MODEL` (judge
-    only), then `$LEAN_HERDR_LLM_MODEL`, then the built-in default. Setting only
-    the shared variable to raise the judge would raise the commit generator's
-    bill on every single commit -- the builder inherits the pane's environment.
+        # or ad hoc, for one pane, without touching a file every repo reads
+        export LEAN_HERDR_PREREVIEW_MODEL=<something stronger>
+
+    Precedence for the judge's model: `--model` on the CLI, then
+    `$LEAN_HERDR_PREREVIEW_MODEL`, then `[llm].prereview_model`, then
+    `$LEAN_HERDR_LLM_MODEL`, then `[llm].model`, then the built-in default. Its
+    effort deliberately does NOT fall back to `[llm].effort`: that one is the
+    commit generator's `minimal`, and inheriting it would make the judge as
+    thoughtless as the formatter. Raising only the shared `model` to raise the
+    judge would raise the commit generator's bill on every single commit.
 
     The same judgement by hand, without creating an order:
 
