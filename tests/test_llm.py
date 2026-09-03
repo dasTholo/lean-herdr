@@ -803,6 +803,73 @@ def test_a_decode_error_the_replacement_missed_is_skipped_not_a_crash(no_store):
     ) is None
 
 
+def test_the_flags_reach_prereview(monkeypatch):
+    """The twin of `test_the_flags_reach_generate`, for the other mode.
+
+    `--order` is the one whose loss is silent: prereview() answers an
+    empty order with `skipped` / `no_order`, so every manual run would
+    keep exiting 0 with a plausible word on stdout and judge nothing.
+    """
+    fetched: dict[str, object] = {}
+    judged_with: dict[str, object] = {}
+
+    def fake_wt_diff(path, **kwargs):
+        fetched["path"] = path
+        fetched.update(kwargs)
+        return "diff --git a/x b/x"
+
+    def fake_prereview(order, diff, **kwargs):
+        judged_with["order"] = order
+        judged_with["diff"] = diff
+        judged_with.update(kwargs)
+        return "pass", ""
+
+    monkeypatch.setattr(llm, "wt_diff", fake_wt_diff)
+    monkeypatch.setattr(llm, "prereview", fake_prereview)
+    argv = [
+        "prereview", "-C", "/worktrees/feat-x", "--order", "add a row parser",
+        "--model", "vendor/m", "--effort", "high", "--timeout", "5",
+    ]
+    assert llm.main(argv) == 0
+    assert fetched == {"path": "/worktrees/feat-x", "timeout_s": 5.0}
+    assert judged_with == {
+        "order": "add a row parser",
+        "diff": "diff --git a/x b/x",
+        "model": "vendor/m",
+        "effort": "high",
+        "timeout_s": 5.0,
+    }
+
+
+def test_the_absent_prereview_flags_stay_none_and_the_defaults_differ(monkeypatch):
+    """A constant passed from here would put the CLI's silence above the file.
+
+    And the two defaults this mode falls back to are NOT one number:
+    `wt step diff` gets 30 seconds, the model call 60.
+    """
+    fetched: dict[str, object] = {}
+    judged_with: dict[str, object] = {}
+
+    def fake_wt_diff(path, **kwargs):
+        fetched["path"] = path
+        fetched.update(kwargs)
+        return "diff"
+
+    def fake_prereview(order, _diff, **kwargs):
+        judged_with["order"] = order
+        judged_with.update(kwargs)
+        return "pass", ""
+
+    monkeypatch.setattr(llm, "wt_diff", fake_wt_diff)
+    monkeypatch.setattr(llm, "prereview", fake_prereview)
+    assert llm.main(["prereview"]) == 0
+    assert fetched == {"path": ".", "timeout_s": llm.DIFF_TIMEOUT_S}
+    assert judged_with["order"] == ""
+    assert judged_with["model"] is None
+    assert judged_with["effort"] is None
+    assert judged_with["timeout_s"] == llm.PREREVIEW_TIMEOUT_S
+
+
 @pytest.mark.integration
 def test_the_real_chain_answers_at_all(tmp_path):
     """The one test that reaches the network -- never in CI.
