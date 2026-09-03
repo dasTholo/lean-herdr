@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import subprocess
 import sys
 import time
 from collections.abc import Callable
@@ -17,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
+from lean_herdr import llm
 from lean_herdr.bus import (
     BusError,
     agents_in_registry,
@@ -47,8 +49,10 @@ from lean_herdr.settings import (
     DEFAULT_PROFILE,
     PROFILE_BY_ROLE,
     SETTINGS_PATH,
+    LlmSettings,
     RoleSettings,
     SettingsError,
+    llm_settings,
     read_settings,
     settings_for,
 )
@@ -304,6 +308,10 @@ class AwaitRequest:
     task_id: str
     worktree: str | None = None
     timeout_ms: int = DEFAULT_TIMEOUT_MS
+    #: Run the cheap pre-review over the branch diff once the order is
+    #: `completed`. Never a gate: only `reject` changes anything, and
+    #: every failure of the pre-review's own machinery is `skipped`.
+    prereview: bool = False
 
 
 def verdict(message: str | None) -> str | None:
@@ -392,6 +400,12 @@ def await_task(
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
     settings: RoleSettings | None = None,
+    runner: Any = subprocess.run,
+    #: `[llm]` out of the SAME file main() read for `settings`, and
+    #: validated there -- so a wrong value is `config_error:` on stdout
+    #: instead of a stderr line nobody reads. None means: no file was
+    #: read, take the built-in constants.
+    llm_cfg: LlmSettings | None = None,
 ) -> dict[str, Any]:
     """Wait for the event the worker writes itself.
 
@@ -437,6 +451,20 @@ def await_task(
         name = order.to_agent or derived
         outcome = _result_for_state(order)
         if outcome is not None:
+            if req.prereview and order.state == "completed":
+                # Beside `verdict`, never instead of it: that key belongs
+                # to the strong reviewer and its VERDIKT: protocol, and a
+                # second writer on it would be exactly the confusion
+                # VERDICT_RE exists to prevent.
+                outcome.update(
+                    llm.prereview_result(
+                        order.description,
+                        branch=req.worktree,
+                        worktree_list=herdr.worktree_list(root),
+                        settings=llm_cfg,
+                        runner=runner,
+                    )
+                )
             return outcome
         if not has_rung:
             # Exactly once, and without --wait: whoever sleeps through the
@@ -536,6 +564,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--worktree", default=None, help="branch; the pane runs in its worktree"
     )
     p.add_argument(
+        "--prereview",
+        action="store_true",
+        help="only with --await and --worktree: judge the branch diff first",
+    )
+    p.add_argument(
         "--profile", default=None, help="overrides the role's default profile"
     )
     # `default=None`, not the number: only that tells a `--timeout-ms` given
@@ -594,6 +627,9 @@ def missing_flags(args: argparse.Namespace) -> str | None:
             ("--profile", args.profile),
             ("--worktree", args.worktree),
             ("--timeout-ms", args.timeout_ms),
+            # `store_true` hands out False, not None -- `or None` is what
+            # makes _given() see it at all.
+            ("--prereview", args.prereview or None),
         )
         if stray:
             return f"`{args.command}` does not take {stray}"
@@ -666,6 +702,8 @@ def missing_flags(args: argparse.Namespace) -> str | None:
             return f"--await does not take {stray}"
         if args.timeout_ms is not None and args.timeout_ms <= 0:
             return f"--timeout-ms must be positive, not {args.timeout_ms}"
+        if args.prereview and not args.worktree:
+            return "--prereview needs --worktree"
         return None
     missing = [
         flag
@@ -676,7 +714,11 @@ def missing_flags(args: argparse.Namespace) -> str | None:
         return f"build mode needs {' and '.join(missing)}"
     # `--task-id` belongs to `--await`; in build mode argparse takes it and
     # the mode drops it without a word. Last gap of the stray-flag doctrine.
-    stray = _given(("--task-id", args.task_id), ("--timeout-ms", args.timeout_ms))
+    stray = _given(
+        ("--task-id", args.task_id),
+        ("--timeout-ms", args.timeout_ms),
+        ("--prereview", args.prereview or None),
+    )
     return f"build mode does not take {stray}" if stray else None
 
 
@@ -702,7 +744,16 @@ def main(argv: list[str] | None = None) -> int:
             # `config_error: <reason>` -- an operator's wrong config value is
             # not a crash.
             root = canonical_root()
-            settings = settings_for(args.command, read_settings(root / SETTINGS_PATH))
+            raw = read_settings(root / SETTINGS_PATH)
+            settings = settings_for(args.command, raw)
+            # Validated HERE, in the one consumer that has a reader for the
+            # complaint: a SettingsError from this line leaves main() as
+            # `config_error: <reason>` on stdout. llm.file_settings()
+            # deliberately swallows the same error -- there it would cost a
+            # commit -- so without this call a typo in `[llm]` would be
+            # silent everywhere, against settings.py's own promise that a
+            # file which IS there but is wrong never stays silent.
+            llm_cfg = llm_settings(raw)
             sender = args.from_agent or ORCHESTRATOR_AGENT
             if args.command == "order":
                 result = create_order(
@@ -732,10 +783,12 @@ def main(argv: list[str] | None = None) -> int:
                         task_id=args.task_id,
                         worktree=args.worktree,
                         timeout_ms=args.timeout_ms or DEFAULT_TIMEOUT_MS,
+                        prereview=args.prereview,
                     ),
                     herdr=Herdr(),
                     root=root,
                     settings=settings,
+                    llm_cfg=llm_cfg,
                 )
             else:
                 result = dispatch(
