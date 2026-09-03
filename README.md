@@ -123,6 +123,50 @@ and the worker answers with
 Nothing removes an order. A non-terminal one left lying is the evidence
 that a run broke off; `cancel` closes it.
 
+The wait call for a builder takes `--prereview`. A small model then reads the
+branch diff -- `wt step diff`: committed, staged, unstaged and untracked
+against the merge base, exactly what `wt merge` would take -- and answers in
+the same JSON line, beside `verdict`:
+
+    {"ok": true, "state": "completed", "prereview": "reject",
+     "prereview_note": "new logic in parse_row() with no test beside it"}
+
+Only `reject` changes anything. `pass` and `skipped` are the same to the
+orchestrator: the strong reviewer runs either way. Every failure of the
+pre-review itself -- no key, timeout, an unresolvable worktree -- is
+`skipped` with a reason, never a rejection.
+
+`--timeout-ms` does not cover the pre-review: it starts once the wait has
+already met that timeout and carries timeouts of its own -- 30 seconds for
+`wt step diff`, 60 for the judgement, so up to 90 seconds on top.
+
+The judge may run on a model of its own. The two jobs are not the same one:
+the commit generator formats a diffstat and is happy with the smallest model
+there is, the judge reads code.
+
+    # .config/lean-herdr.toml -- the durable place
+    [llm]
+    model = "google/gemini-3.8-flash"   # both
+    prereview_model = ""                # the judge only; empty: share `model`
+    prereview_effort = "low"            # the judge thinks harder than the formatter
+
+    # or ad hoc, for one pane, without touching a file every repo reads
+    export LEAN_HERDR_PREREVIEW_MODEL=<something stronger>
+
+Precedence for the judge's model: `--model` on the CLI, then
+`$LEAN_HERDR_PREREVIEW_MODEL`, then `[llm].prereview_model`, then
+`$LEAN_HERDR_LLM_MODEL`, then `[llm].model`, then the built-in default. Its
+effort deliberately does NOT fall back to `[llm].effort`: that one is the
+commit generator's `minimal`, and inheriting it would make the judge as
+thoughtless as the formatter. Raising only the shared `model` to raise the
+judge would raise the commit generator's bill on every single commit.
+
+The same judgement by hand, without creating an order:
+
+    bin/herdr-llm prereview -C <worktree> --order "<what it was supposed to do>"
+
+Exit 1 on a rejection, 0 on `pass` and on `skipped`.
+
 ## What else ships here
 
 - `herdr-plugin.toml` — the Herdr plugin: it shows the lean-ctx context per

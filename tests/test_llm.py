@@ -624,3 +624,54 @@ def test_the_resolved_path_is_the_one_the_diff_runs_in(no_store):
     )
     assert got == {"prereview": "reject", "prereview_note": "no test"}
     assert seen[0] == ["wt", "-C", "/right", "step", "diff"]
+
+
+def test_the_cli_rejects_with_exit_one(monkeypatch, capsys):
+    monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: "diff --git a/x b/x")
+    monkeypatch.setattr(
+        llm, "prereview", lambda *a, **kw: ("reject", "no test beside new logic")
+    )
+    assert llm.main(["prereview", "-C", "/worktrees/feat-x"]) == 1
+    out = capsys.readouterr().out
+    assert out == "reject\nno test beside new logic\n"
+
+
+def test_the_cli_passes_and_skips_with_exit_zero(monkeypatch, capsys):
+    monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: "diff")
+    for ruling in ("pass", "skipped"):
+        # `fixed=ruling` binds now, not at call time -- ruff B023.
+        monkeypatch.setattr(
+            llm, "prereview", lambda *a, fixed=ruling, **kw: (fixed, "")
+        )
+        assert llm.main(["prereview"]) == 0
+        assert capsys.readouterr().out == f"{ruling}\n"
+
+
+def test_a_failing_wt_diff_says_so_and_judges_nothing(monkeypatch, capsys):
+    monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        llm, "prereview",
+        lambda *a, **kw: pytest.fail("nothing may be judged without a diff"),
+    )
+    assert llm.main(["prereview", "-C", "/gone"]) == 1
+    assert "step diff` failed" in capsys.readouterr().err
+
+
+@pytest.mark.integration
+def test_the_real_chain_answers_at_all(tmp_path):
+    """The one test that reaches the network -- never in CI.
+
+    Everything else in this file injects `runner`. This one proves the
+    pieces fit together in the real world: a real key, a real curl, a
+    real OpenRouter answer. It costs a fraction of a cent.
+    """
+    import shutil
+
+    if shutil.which("curl") is None:
+        pytest.skip("curl not installed")
+    if llm.api_key() is None:
+        pytest.skip("no OpenRouter key on this machine")
+    got = llm.complete(
+        "Answer with exactly the word: pong", effort=llm.GENERATE_EFFORT,
+    )
+    assert got is not None and "pong" in got.lower()

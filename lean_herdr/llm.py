@@ -594,7 +594,15 @@ def build_parser() -> argparse.ArgumentParser:
         prog="herdr-llm",
         description="Commit messages from a small model -- worktrunk's generator.",
     )
-    p.add_argument("mode", choices=("generate",))
+    p.add_argument("mode", choices=("generate", "prereview"))
+    p.add_argument(
+        "-C", dest="path", default=".",
+        help="prereview: the worktree to judge (default: the current one)",
+    )
+    p.add_argument(
+        "--order", default="",
+        help="prereview: the order text the diff is supposed to answer",
+    )
     p.add_argument(
         "--model", default=None,
         help="beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
@@ -623,6 +631,10 @@ def main(argv: list[str] | None = None) -> int:
     non-zero code is argparse's own usage error -- a typo in the
     operator's user config, which is a state that SHOULD be loud, and
     which shows up on the very first commit.
+
+    `prereview` is the manual entry point and MAY end with 1: there the
+    exit code carries the ruling -- 1 on `reject`, 0 on `pass` and on
+    `skipped` -- so the mode is usable in a shell chain.
     """
     args = build_parser().parse_args(argv)
     if args.mode == "generate":
@@ -649,8 +661,23 @@ def main(argv: list[str] | None = None) -> int:
             message = fallback_message(prompt)
         sys.stdout.write(message.rstrip("\n") + "\n")
         return 0
-    # Unreachable while `choices` names one mode -- and a placeholder:
-    # task 7 replaces exactly this line with the prereview branch. Until
-    # then it is a raise rather than a fall-through, so a second mode
-    # added without a branch cannot exit 0 with an empty stdout.
-    raise AssertionError(f"unhandled mode: {args.mode}")
+    diff = wt_diff(args.path, timeout_s=args.timeout or DIFF_TIMEOUT_S)
+    if diff is None:
+        print(f"herdr-llm: `wt -C {args.path} step diff` failed", file=sys.stderr)
+        return 1
+    # No `settings=`: prereview() resolves the file itself, from the
+    # repository the operator is standing in. `--model`/`--effort` stay
+    # None when unset, so the file keeps its place in the chain.
+    ruling, note = prereview(
+        args.order,
+        diff,
+        model=args.model,
+        effort=args.effort,
+        timeout_s=args.timeout or PREREVIEW_TIMEOUT_S,
+    )
+    sys.stdout.write(ruling + "\n")
+    if note:
+        sys.stdout.write(note + "\n")
+    # Exit 1 on a rejection, so the mode is usable in a shell chain.
+    # `skipped` is 0: a withheld ruling is not a finding.
+    return 1 if ruling == "reject" else 0

@@ -50,12 +50,38 @@ It costs you one model step, however long the work takes.
 The reviewer's value is that it is a different model — different blind spots.
 Never take the same model as for the builder.
 
+The pre-review is not a third worker: it is a flag on the builder's wait
+call, and the model behind it is small and cheap. It may block, it may never
+approve -- the strong reviewer runs in every case, `pass` or not.
+
 ## Sequence per task
 
 1. Settle the branch name.
 2. Build the builder (step 1) — with `--worktree <branch>` if code is
    produced. Create the order (step 2), let it wait (step 3).
-3. `ok: true`? Then the same three steps for the reviewer on the same branch.
+3. `ok: true`? Read `prereview` first, if you asked for it.
+
+   The builder's wait call may carry `--prereview`:
+
+       bin/herdr-dispatch builder --await --kind claude --task-id o-… \
+         --worktree <branch> --prereview
+
+   It costs you nothing extra -- you read that JSON line anyway. The key
+   stands beside `verdict`, never instead of it, and takes one of three
+   values:
+
+   | `prereview` | What you do |
+   |---|---|
+   | `reject` | round 2 with the builder, BEFORE any reviewer is built |
+   | `pass` | build the reviewer -- `pass` is not an approval |
+   | `skipped` | build the reviewer -- the pre-review withheld its ruling |
+
+   A `reject` is one follow-up order to the same builder, with `--after o-…`,
+   carrying `prereview_note` verbatim. On THAT round you do **not** pass
+   `--prereview` again: that limits a stubborn small model to exactly one
+   rejection, without a counter anywhere.
+
+   Then the same three steps for the reviewer on the same branch.
 4. The reviewer's ruling is in `verdict`: `result` or `reject`. No prose
    parsing — if nothing is there, the reviewer broke its format; treat that
    like `reject` and tell it so.
