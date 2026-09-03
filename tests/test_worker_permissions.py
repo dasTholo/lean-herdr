@@ -153,6 +153,45 @@ def test_the_claude_builder_may_commit_through_worktrunk():
     assert "Bash(wt step commit:*)" in claude_allow()
 
 
+#: The Claude harness spells the same grant differently, so the two files
+#: cannot share one list. These three are the ones `roles/builder.md` makes
+#: mandatory: stage, test, commit. `wt step commit --stage none` commits the
+#: INDEX, so without `git add` the commit is empty and the role text cannot
+#: be followed at all -- and an agent told to do TDD has to run a test.
+#:
+#: The two harnesses are deliberately NOT at parity: opencode also grants the
+#: builder `uv run ruff*`, `git commit*`, `git diff*` and `git status*`, which
+#: the Claude side does not (operator decision, 2026-09-03). Nothing in
+#: `roles/builder.md` makes those mandatory -- `wt step commit` replaces
+#: `git commit`, and the rest are conveniences -- so the narrower gate stands.
+CLAUDE_BUILDER_TOOLING = (
+    "Bash(git add:*)",
+    "Bash(uv run pytest:*)",
+    "Bash(wt step commit:*)",
+)
+
+
+def test_the_claude_builder_may_do_what_its_role_text_prescribes():
+    """Half a pair is worse than none: it fails one step later, silently.
+
+    The branch that made `git add` load-bearing granted only the commit
+    itself here, so a Claude builder reached its first `git add` and
+    stopped at a permission prompt no one is sitting at -- which the
+    orchestrator sees as `no_reply`, with nothing naming the cause.
+    """
+    allow = claude_allow()
+    for pattern in CLAUDE_BUILDER_TOOLING:
+        assert pattern in allow, f"the Claude builder cannot run `{pattern}`"
+
+
+def test_the_claude_builders_gate_is_not_a_blank_cheque():
+    """The other half of the operator's decision, pinned on this side too."""
+    allow = claude_allow()
+    for forbidden in ("Bash(git:*)", "Bash(git push:*)", "Bash(uv:*)",
+                      "Bash(uv run:*)", "Bash(rm:*)", "Bash(curl:*)"):
+        assert forbidden not in allow, f"{forbidden} widens the builder's gate"
+
+
 def test_no_permission_file_hands_out_worktrunk_wholesale():
     """`wt *` on a worker is the whole tool, merge and push included."""
     for entry in claude_allow():

@@ -7,6 +7,8 @@
       "Bash(bin/herdr-report done:*)",
       "Bash(bin/herdr-report fail:*)",
       "Bash(bin/herdr-report ask:*)",
+      "Bash(git add:*)",
+      "Bash(uv run pytest:*)",
       "Bash(wt step commit:*)"
     ]
   }
