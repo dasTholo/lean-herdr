@@ -303,12 +303,57 @@ def test_generate_writes_one_line_and_exits_zero(monkeypatch, capsys, tmp_path):
     store = tmp_path / "auth.json"
     store.write_text(json.dumps({"openrouter": {"key": "k"}}))
     monkeypatch.setattr(llm, "AUTH_PATH", store)
+    # Empty, so the store is what decides -- on a machine that exports
+    # $OPENROUTER_API_KEY the file would otherwise never be consulted.
+    monkeypatch.setattr(llm.os, "environ", {})
     monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
     monkeypatch.setattr(
         llm, "generate", lambda *a, **kw: "feat(llm): add the generator"
     )
     assert llm.main(["generate"]) == 0
-    assert capsys.readouterr().out == "feat(llm): add the generator\n"
+    captured = capsys.readouterr()
+    assert captured.out == "feat(llm): add the generator\n"
+    assert captured.err == "", "a key in the store means no missing-key notice"
+
+
+def test_the_flags_reach_generate(monkeypatch, tmp_path):
+    """The whole job of this CLI: three flags onto three keyword arguments."""
+    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(llm.os, "environ", {llm.KEY_ENV: "k"})
+    monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
+    seen: dict[str, object] = {}
+
+    def spy(prompt, **kwargs):
+        seen["prompt"] = prompt
+        seen.update(kwargs)
+        return "feat(x): y"
+
+    monkeypatch.setattr(llm, "generate", spy)
+    argv = ["generate", "--model", "vendor/m", "--effort", "high", "--timeout", "5"]
+    assert llm.main(argv) == 0
+    assert seen == {
+        "prompt": DIFFSTAT_PROMPT,
+        "model": "vendor/m",
+        "effort": "high",
+        "timeout_s": 5.0,
+    }
+
+
+def test_the_absent_flags_stay_none_so_generate_owns_the_precedence(
+    monkeypatch, tmp_path
+):
+    """A constant passed from here would put the CLI's silence above the file."""
+    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(llm.os, "environ", {llm.KEY_ENV: "k"})
+    monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        llm, "generate", lambda prompt, **kw: (seen.update(kw), "feat(x): y")[1]
+    )
+    assert llm.main(["generate"]) == 0
+    assert seen["model"] is None
+    assert seen["effort"] is None
+    assert seen["timeout_s"] == llm.GENERATE_TIMEOUT_S
 
 
 def test_generate_exits_zero_even_when_everything_breaks(monkeypatch, capsys, tmp_path):

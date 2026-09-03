@@ -46,9 +46,13 @@ MODEL_ENV = "LEAN_HERDR_LLM_MODEL"
 KEY_ENV = "OPENROUTER_API_KEY"
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
-# THE TWO CHAINS. Every other place that describes them copies THIS block
-# instead of paraphrasing it: .config/lean-herdr.toml, the argparse help
-# texts, and the README at two places.
+# THE TWO CHAINS. This block is the authority; the four other places that
+# describe them -- .config/lean-herdr.toml, the argparse help texts, and the
+# README at two places -- keep these levels in this order, and name them the
+# way their own medium names things (inside the `[llm]` table the key is
+# `model`, not `[llm].model`; for an operator the floor is "the built-in
+# default", not `DEFAULT_MODEL`). A level dropped, added or reordered is a
+# defect; a name fitted to its medium is not.
 #
 #     generate()  model:   --model  >  $LEAN_HERDR_LLM_MODEL  >  [llm].model
 #                          >  DEFAULT_MODEL

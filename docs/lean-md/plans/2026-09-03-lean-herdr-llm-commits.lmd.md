@@ -1093,15 +1093,16 @@ Ans Ende von `lean_herdr/llm.py` anhängen:
         p.add_argument("mode", choices=("generate",))
         p.add_argument(
             "--model", default=None,
-            help="beats $LEAN_HERDR_LLM_MODEL and [llm] in "
-                 ".config/lean-herdr.toml; see --help of that file",
+            help="beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
+                 ".config/lean-herdr.toml, then the built-in default",
         )
         p.add_argument(
             # EFFORTS, not a second spelling of the same four words: the
             # settings validator rejects anything outside it, and two lists
             # would disagree the day a fifth level shows up.
             "--effort", default=None, choices=EFFORTS,
-            help="beats [llm].effort; no environment level exists",
+            help="beats [llm].effort, then the built-in default; "
+                 "no environment level exists",
         )
         p.add_argument("--timeout", type=float, default=None, help="seconds")
         return p
