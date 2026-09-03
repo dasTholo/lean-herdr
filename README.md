@@ -62,7 +62,11 @@ that message into `main`.
 
 `stage` sits under `[commit]`, not at the top level — a bare `stage = "none"`
 is reported as *"User config has unknown field stage (will be ignored)"* and
-does nothing (measured on worktrunk 0.76.0).
+does nothing (measured on worktrunk 0.76.0). Being user config, it is
+machine-wide: `wt step commit`, `wt step squash` and `wt merge` stop staging
+for you in **every** repository. The direction is the safe one — they commit
+what you staged and never more — but it is a habit change everywhere, not
+just here.
 
 **The path is absolute, never `bin/herdr-llm`.** That file governs every
 repository on the machine; a relative path would run into `sh: not found`

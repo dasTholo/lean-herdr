@@ -1293,8 +1293,12 @@ Neuer Block, wörtlich (die Projektstimme; worktrunk rendert Aufgabe, Format,
 Diffstat und Diff selbst — wir hängen nur an, wir ersetzen nichts):
 
     # Appended to worktrunk's own commit prompt -- we write no template of our
-    # own (spec 9). Needs `wt config approvals add` once, the same gate the
-    # pre-merge hook above goes through.
+    # own (spec 9). Needs `wt config approvals add` once, through the same
+    # approval store as the pre-merge hook above -- but a stricter gate:
+    # an unapproved hook is skipped silently, an unapproved fragment fails the
+    # whole command (`Cannot prompt for approval in non-interactive
+    # environment`, exit 1). Both agent paths pass `--yes`, which consents for
+    # that one run without recording anything.
     [commit.generation]
     template-append = """
     Project voice:
@@ -1394,10 +1398,19 @@ Neuer Abschnitt direkt hinter der `wt config approvals`-Passage
     that message into `main`.
 
         # ~/.config/worktrunk/config.toml
+        [commit]
         stage = "none"          # shared by step commit, step squash AND merge
 
         [commit.generation]
         command = "/home/you/Scripts/lean-herdr/bin/herdr-llm generate"
+
+    `stage` sits under `[commit]`, not at the top level -- a bare `stage = "none"`
+    is reported as *"User config has unknown field stage (will be ignored)"* and
+    does nothing (measured on worktrunk 0.76.0). Being user config, it is
+    machine-wide: `wt step commit`, `wt step squash` and `wt merge` stop staging
+    for you in **every** repository. The direction is the safe one -- they commit
+    what you staged and never more -- but it is a habit change everywhere, not
+    just here.
 
     **The path is absolute, never `bin/herdr-llm`.** That file governs every
     repository on the machine; a relative path would run into `sh: not found`
@@ -1436,7 +1449,7 @@ Neuer Abschnitt direkt hinter der `wt config approvals`-Passage
 
 @call verify(.config/wt.toml roles/builder.md opencode.jsonc .claude/settings.json tests/test_worker_permissions.py README.md)
 @call gate(.config/wt.toml roles/builder.md opencode.jsonc .claude/settings.json tests/test_worker_permissions.py README.md)
-@call commit(".config/wt.toml roles/builder.md opencode.jsonc .claude/settings.json tests/test_worker_permissions.py README.md", "feat(builder): commit through `wt step commit --stage none`, with the project voice")
+@call commit(".config/wt.toml roles/builder.md opencode.jsonc .claude/settings.json tests/test_worker_permissions.py README.md", "feat(builder): commit through `wt step commit --stage none`")
 @call remember_decision("The builder commits with `wt step commit --stage none --yes` and stages explicitly. Permission is `wt step commit *` only -- never `wt *`. The generator lives in worktrunk's MACHINE-WIDE user config with an ABSOLUTE path, because a failing generation command is fatal in every other repo too.")
 @phase-end
 

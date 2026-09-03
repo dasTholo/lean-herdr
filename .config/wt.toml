@@ -15,8 +15,12 @@ test = "uv run pytest -q"
 json-schema = 1
 
 # Appended to worktrunk's own commit prompt -- we write no template of our
-# own (spec 9). Needs `wt config approvals add` once, the same gate the
-# pre-merge hook above goes through.
+# own (spec 9). Needs `wt config approvals add` once, through the same
+# approval store as the pre-merge hook above -- but a stricter gate:
+# an unapproved hook is skipped silently, an unapproved fragment fails the
+# whole command (`Cannot prompt for approval in non-interactive
+# environment`, exit 1). Both agent paths pass `--yes`, which consents for
+# that one run without recording anything.
 [commit.generation]
 template-append = """
 Project voice:
