@@ -45,11 +45,13 @@
       "prompt": "{file:./roles/builder.md}",
       "steps": 60,
       "permission": {
-        // roles/builder.md prescribes "TDD, small commits". With the report
-        // patterns alone the builder could run neither a test nor a commit
-        // and would fail on its first step -- so exactly the gate that role
-        // text demands is granted, and nothing wider. No `git push`, no
-        // bare `git *`, no wildcard behind `bin/herdr-report`.
+        // roles/builder.md prescribes TDD and commits through
+        // `wt step commit --stage none`. With the report patterns alone the
+        // builder could run neither a test nor a commit and would fail on
+        // its first step -- so exactly the gate that role text demands is
+        // granted, and nothing wider. No `git push`, no bare `git *`, no
+        // wildcard behind `bin/herdr-report`, and one worktrunk subcommand
+        // rather than `wt *`, which would carry merge and push with it.
         "bash": {
           "*": "deny",
           "bin/herdr-report next": "allow",
@@ -63,7 +65,8 @@
           "git add*": "allow",
           "git commit*": "allow",
           "git diff*": "allow",
-          "git status*": "allow"
+          "git status*": "allow",
+          "wt step commit *": "allow"
         }
       }
     },

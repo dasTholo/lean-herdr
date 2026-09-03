@@ -23,10 +23,11 @@ from tests.test_config_files import load_jsonc
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ("builder", "reviewer")
 
-#: The builder's own gate. roles/builder.md prescribes "TDD, small
-#: commits", and `bash: {"*": "deny"}` plus the report patterns let it do
-#: neither -- an opencode builder would fail on its first `uv run pytest`.
-#: Exactly this list, nothing wider.
+#: The builder's own gate. roles/builder.md prescribes TDD and commits via
+#: `wt step commit --stage none`, and `bash: {"*": "deny"}` plus the report
+#: patterns let it do neither -- an opencode builder would fail on its first
+#: `uv run pytest` and again on its first commit. Exactly this list, nothing
+#: wider: `wt step commit *`, not `wt *`, and not `wt step *`.
 BUILDER_TOOLING = (
     "uv run pytest*",
     "uv run ruff*",
@@ -34,6 +35,7 @@ BUILDER_TOOLING = (
     "git commit*",
     "git diff*",
     "git status*",
+    "wt step commit *",
 )
 
 
@@ -137,8 +139,24 @@ def test_the_builder_may_run_the_gate_its_role_text_demands():
 def test_the_builders_gate_is_not_a_blank_cheque():
     """`nothing more` is half the operator's decision -- pin that half too."""
     allowed = opencode()["agent"]["builder"]["permission"]["bash"]
-    for forbidden in ("git push*", "git *", "uv *", "uv run *", "rm*", "curl*"):
+    for forbidden in ("git push*", "git *", "uv *", "uv run *", "rm*", "curl*",
+                      "wt *", "wt step *"):
         assert forbidden not in allowed, f"{forbidden} widens the builder's gate"
+
+
+def test_the_claude_builder_may_commit_through_worktrunk():
+    """The same gate as the opencode builder, on the other harness.
+
+    Without this line a Claude Code builder is stopped at its first
+    commit by a permission prompt no one is sitting at.
+    """
+    assert "Bash(wt step commit:*)" in claude_allow()
+
+
+def test_no_permission_file_hands_out_worktrunk_wholesale():
+    """`wt *` on a worker is the whole tool, merge and push included."""
+    for entry in claude_allow():
+        assert entry not in ("Bash(wt:*)", "Bash(wt step:*)"), entry
 
 
 def test_the_reviewer_still_may_not_write():

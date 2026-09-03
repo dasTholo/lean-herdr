@@ -13,3 +13,16 @@ test = "uv run pytest -q"
 # though this design never parses `wt list`.
 [list]
 json-schema = 1
+
+# Appended to worktrunk's own commit prompt -- we write no template of our
+# own (spec 9). Needs `wt config approvals add` once, the same gate the
+# pre-merge hook above goes through.
+[commit.generation]
+template-append = """
+Project voice:
+- Conventional Commits with a scope: `type(scope): subject`.
+- English, imperative, no trailing period, subject under 72 characters.
+- Describe WHAT changes, not what it is good for.
+- A body only for a material change, and then measured facts, not intentions.
+- Never mention the tool, the model or the agent that wrote this.
+"""

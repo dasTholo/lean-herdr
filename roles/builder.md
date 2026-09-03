@@ -53,7 +53,18 @@ guarantee, same as the sender check above.
    whoever skips it leaves the wait sitting on `created` until the timeout, and
    the run comes back as `no_reply`.
 
-3. Work: TDD, small commits, no refactoring outside the order.
+3. Work: TDD, no refactoring outside the order. Commit in small steps:
+
+       git add <the paths this order asked for>
+       wt step commit --stage none --yes
+
+   Stage explicitly what the order asked for -- never `git add -A`, never
+   `git add .`. Untracked files stay untracked: nothing you did not name
+   reaches the commit. An empty index fails loudly (`✗ Nothing to commit`) --
+   that is the reminder to stage, not an error to work around.
+
+   The commit message is written for you by the operator's configured
+   generator. You do not pass `-m`, and you do not second-guess it.
 
 4. Finish:
 

@@ -6,7 +6,8 @@
       "Bash(bin/herdr-report start:*)",
       "Bash(bin/herdr-report done:*)",
       "Bash(bin/herdr-report fail:*)",
-      "Bash(bin/herdr-report ask:*)"
+      "Bash(bin/herdr-report ask:*)",
+      "Bash(wt step commit:*)"
     ]
   }
 }

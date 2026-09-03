@@ -48,6 +48,55 @@ would then not run at all:
     wt config approvals list   # expectation: "state": "approved"
     wt config approvals add    # if "approval_required"
 
+Plus the commit generator, in worktrunk's **user** config. This one file is
+not optional bookkeeping: without `[commit.generation]` worktrunk writes
+`Changes to a.txt` from the file names, and `wt merge` squashes with exactly
+that message into `main`.
+
+    # ~/.config/worktrunk/config.toml
+    [commit]
+    stage = "none"          # shared by step commit, step squash AND merge
+
+    [commit.generation]
+    command = "/home/you/Scripts/lean-herdr/bin/herdr-llm generate"
+
+`stage` sits under `[commit]`, not at the top level — a bare `stage = "none"`
+is reported as *"User config has unknown field stage (will be ignored)"* and
+does nothing (measured on worktrunk 0.76.0).
+
+**The path is absolute, never `bin/herdr-llm`.** That file governs every
+repository on the machine; a relative path would run into `sh: not found`
+(exit 127) everywhere else, and a failing generation command is fatal, not a
+silent fallback — it would break `wt step commit` and `wt merge` in all your
+other projects. The generator is repo-agnostic: it only formats what
+worktrunk hands it on stdin, so one absolute path serves every repository
+sensibly.
+
+worktrunk also knows `[projects."<id>"]` blocks. Whether
+`commit.generation.command` is allowed inside one is untested; if it were, the
+generator could be scoped to this repository instead of the whole machine.
+The absolute path works either way and stays the recommendation.
+
+The key is read from `$OPENROUTER_API_KEY`, else from opencode's own store at
+`~/.local/share/opencode/auth.json`. With neither, commits fall back to file
+names and nothing breaks.
+
+    export OPENROUTER_API_KEY=<your key>
+
+Which model, and how hard it thinks, is configured per project in
+`.config/lean-herdr.toml` under `[llm]` — the same file the role settings
+live in. For the commit generator: `--model` beats `$LEAN_HERDR_LLM_MODEL`,
+which beats `[llm].model`, which beats the built-in; `--effort` beats
+`[llm].effort`, which beats the built-in `minimal`. The pre-review judge has
+keys of its own — see the work-order section. A broken or absent file costs
+the defaults, never the commit.
+
+**The new attack surface, named:** the builder may now run a command that
+sends the contents of its worktree to a third-party service. That was already
+true of every agent in this project, but here without a model in between that
+could refuse. In a repository with secrets in it, do not configure the
+generator.
+
 Then check — Herdr does not reject unknown plugin events, it only warns:
 
     herdr plugin list        # expectation: no line with `warning:`
