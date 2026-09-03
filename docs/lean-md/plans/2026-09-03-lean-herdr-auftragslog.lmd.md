@@ -163,6 +163,40 @@ Gemessene Grundlagen dieses Plans (Spec §3, alle am 2026-09-03 gegen
   lean-ctx, keine Migration alter `ctx_task`-Auftraege, **keine Aenderung an**
   `session_error()`, `bus.py`, `worktree.py`, `join.py`, `export.py`,
   `handlers.py`, `herdr.py`, `digest.py`, `config.py`, `settings.py`.
+- **Nachtrag 2026-09-03 (Live-Durchlauf 8d, Betreiberentscheidung).** Ein
+  echter Durchlauf mit `--worktree feat/probe` — genau der aus 8d — hat zwei
+  Fehler in `worktree.py` freigelegt, die den Auftragsweg dieses Plans fuer
+  jede noch nicht offene Branch strukturell blockieren. Kein Test hatte sie
+  gefangen, weil die Testdoppel eine Antwortform vorgaben, die das echte
+  Herdr nie liefert. Gemessen gegen Herdr 0.8.2 / wt 0.76.0:
+  (a) `_open_workspace` las die Workspace-ID an `result.open_workspace_id` /
+  `result.workspace_id` — Felder, die eine `worktree open`-Antwort nie
+  traegt, sondern nur ein `worktree_list`-Eintrag. Der erste `worktree open`
+  fuer eine neue Branch schlug deshalb immer mit
+  `worktree_open_failed: no workspace_id` fehl; ein zweiter Aufruf fuer
+  dieselbe Branch nahm danach den Listing-Pfad und gelang — ein Fehler, der
+  sich selbst zu reparieren schien. (b) `wt_switch` rief
+  `wt switch --create <branch>` ohne `--base`; wt's eigene Vorgabe zweigt
+  dann vom Default-Branch ab. Ein frisch erzeugter Arbeiter-Worktree lag
+  folglich auf `main` (`707ceb5`), ohne `bin/herdr-report`,
+  `.claude/settings.json` oder `lean_herdr/orderlog.py` — der Auftragsweg
+  ist selbstreferentiell, ein Arbeiter ohne `bin/herdr-report` kann sich nie
+  zurueckmelden und laeuft in den Timeout (`no_reply`). Der Betreiber hat
+  die Behebung trotz des Non-Goals oben ausdruecklich angeordnet:
+  `_open_workspace` liest die ID jetzt entlang der tatsaechlichen
+  Antwortform (`result.workspace.workspace_id` zuerst, dann
+  `result.worktree.open_workspace_id`, dann `result.root_pane`; die alten
+  Top-Level-Felder bleiben als letzter Rueckfall, und eine Nur-Tab-Antwort
+  bekommt eine eigene, konkrete Fehlermeldung statt der nichtssagenden
+  „no workspace_id"). `wt_switch` bekommt einen `base`-Parameter mit
+  Vorgabe `@` (das aktuelle HEAD, nicht der Default-Branch) — kein
+  CLI-Flag dafuer (YAGNI), die neue Vorgabe ist bereits das richtige
+  Verhalten. Live nachgewiesen mit einer frischen Branch
+  `feat/probe-fix-check`: Workspace-ID `w3` erfolgreich geoeffnet, HEAD des
+  neuen Worktrees `bf14399…` (= die eigene Branch, nicht `main`), danach
+  vollstaendig aufgeraeumt (`worktree remove`, `git worktree prune`,
+  Branch geloescht). `feat/probe`/Workspace `w2` aus dem urspruenglichen
+  8d-Durchlauf blieben unberuehrt.
 - **Ausserhalb dieses Plans, unveraendert offen** (aus
   `lean-herdr-abschluss-review-befunde-a631ab4`): I2, I3, I4, I7, I8, I11 und
   M2. Uebernommen sind M3 (Global Constraints), M5 (Task 7), M9 (Task 6),
@@ -4438,6 +4472,16 @@ echten Auftrag, von Hand:
       --message "Add a one-line docstring to lean_herdr/__init__.py. Nothing else."
     bin/herdr-dispatch builder --await --kind claude --task-id <task_id> \
       --worktree feat/probe
+
+**Vorbedingung, nachtraeglich ergaenzt.** Dieser Durchlauf setzt voraus, dass
+`ensure_worktree` fuer eine noch nicht offene Branch tatsaechlich eine
+Workspace-ID liefert und der neue Worktree vom aktuellen HEAD abzweigt statt
+von `main` — sonst fehlt `bin/herdr-report`, und der Arbeiter kann sich nie
+zurueckmelden. Zum Zeitpunkt, als dieser Task geschrieben wurde, galt beides
+nicht (`worktree.py` stand im Non-Goal oben); der allererste Durchlauf genau
+dieser drei Zeilen mit `--worktree feat/probe` hat das aufgedeckt und ist die
+Quelle der Messung im Nachtrag der Global Constraints. Wer diesen Durchlauf
+heute wiederholt, tut es gegen die dort behobene Fassung.
 
 Expected: `{"ok":true,…,"state":"completed",…}`, und das Log unter
 `<lean-ctx data dir>/lean-herdr/lean-herdr/orders/<task_id>/events/` traegt
