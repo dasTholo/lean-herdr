@@ -658,7 +658,15 @@ def build_parser() -> argparse.ArgumentParser:
              "No environment level exists for either",
     )
     p.add_argument(
-        "--timeout", type=_positive_seconds, default=None, help="seconds"
+        # One flag, and in prereview mode it caps TWO subprocesses whose own
+        # defaults differ by a factor of two. `--timeout 40` therefore raises
+        # the diff's limit and lowers the model's at once, and a value chosen
+        # for the model alone can starve `wt step diff` on a big branch.
+        "--timeout", type=_positive_seconds, default=None,
+        help="seconds, per subprocess. generate: the model call (default "
+             f"{GENERATE_TIMEOUT_S:g}). prereview: BOTH `wt step diff` "
+             f"(default {DIFF_TIMEOUT_S:g}) and the model call (default "
+             f"{PREREVIEW_TIMEOUT_S:g}) get this one value",
     )
     return p
 

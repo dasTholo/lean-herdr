@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Commit messages for worktrunk. Output: text on stdout, exit 0."""
+"""worktrunk's commit messages, and the pre-review by hand.
+
+`generate` writes text on stdout and ALWAYS exits 0: worktrunk treats a
+failing `commit.generation.command` as fatal and does not commit.
+`prereview` writes its ruling on stdout and MAY exit 1 -- there the exit
+code carries the ruling, 1 on `reject` and 0 on `pass` and on `skipped`,
+so the mode is usable in a shell chain.
+"""
 
 import sys
 from pathlib import Path

@@ -1129,7 +1129,14 @@ Ans Ende von `lean_herdr/llm.py` anhängen:
                  "no environment level exists",
         )
         p.add_argument(
-            "--timeout", type=_positive_seconds, default=None, help="seconds"
+            # Task 7 gibt diesem Flag einen zweiten Modus, in dem es ZWEI
+            # Subprozesse deckelt, deren Vorgaben um das Doppelte
+            # auseinanderliegen -- der Hilfetext muss das dann sagen.
+            "--timeout", type=_positive_seconds, default=None,
+            help="seconds, per subprocess. generate: the model call (default "
+                 f"{GENERATE_TIMEOUT_S:g}). prereview: BOTH `wt step diff` "
+                 f"(default {DIFF_TIMEOUT_S:g}) and the model call (default "
+                 f"{PREREVIEW_TIMEOUT_S:g}) get this one value",
         )
         return p
 
@@ -1181,6 +1188,9 @@ worktrunk-User-Config: das Skript findet sein Paket über den eigenen Dateipfad,
 nicht über `$PWD`.
 
     #!/usr/bin/env python3
+    # Task 7 setzt den zweiten Modus daneben -- siehe dort. Dieser Docstring
+    # ist dann der Vertrag am Einstiegspunkt fuer BEIDE, und `exit 0` gilt
+    # nur noch fuer `generate`.
     """Commit messages for worktrunk. Output: text on stdout, exit 0."""
 
     import sys
@@ -2426,6 +2436,19 @@ samt ihrem Kommentar. Der `generate`-Zweig darüber bleibt unangetastet:
 
 Die Docstring-Zeile von `main()` bekommt den Zusatz, den Task 2 schon
 vorwegnimmt: `prereview` ist der manuelle Einstiegspunkt und darf mit 1 enden.
+
+Und derselbe Zusatz noch einmal eine Ebene hoeher: der Modul-Docstring von
+`bin/herdr-llm` ist der Vertrag, den ein Betreiber zuerst liest, und sein
+`exit 0` gilt ab hier nur noch fuer `generate`.
+
+    """worktrunk's commit messages, and the pre-review by hand.
+
+    `generate` writes text on stdout and ALWAYS exits 0: worktrunk treats a
+    failing `commit.generation.command` as fatal and does not commit.
+    `prereview` writes its ruling on stdout and MAY exit 1 -- there the exit
+    code carries the ruling, 1 on `reject` and 0 on `pass` and on `skipped`,
+    so the mode is usable in a shell chain.
+    """
 
 ### Die Tests
 
