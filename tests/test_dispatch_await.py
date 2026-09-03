@@ -583,6 +583,10 @@ def test_cancel_of_an_unknown_order_is_not_found(tmp_path):
          "`answer` does not take --to"),
         (["builder", "--to", "b"], "--to belongs to a log command"),
         (["builder", "--model", "m", "--role-file", "r"], "--kind is required"),
+        (["remember", "--key", "k", "--message", "x", "--to", "builder"],
+         "`remember` does not take --to"),
+        (["order", "--to", "b", "--message", "x", "--key", "k"],
+         "--key belongs to `remember`"),
     ],
 )
 def test_the_modes_do_not_take_each_others_flags(argv, expected, capsys):
@@ -730,6 +734,37 @@ def test_main_routes_cancel_into_cancel_order(main_root, capsys):
     order = fold(read_events(task, orders=state_dir(main_root)))
     assert order.state == "canceled"
     assert message_from(order, ORCHESTRATOR_AGENT) == "run broke off"
+
+
+def test_main_routes_remember_into_remember_branch(main_root, capsys, monkeypatch):
+    """The fourth end-to-end routing test (5ff483b covered order/answer/
+    cancel) -- dispatch.py:694 was a MISS under sys.settrace, the same gap
+    that review raised for the other three. A transposed --key/--message
+    would ship green without this. `LeanCtx` is swapped for a recording
+    stub -- the CLI never lets a client override through, unlike
+    remember_branch() itself, so this is the only seam available."""
+    calls = []
+
+    class Recording:
+        def __init__(self, root):
+            self.root = root
+
+        def knowledge_remember(self, *, key, value, category="decisions"):
+            calls.append({"key": key, "value": value, "category": category})
+            return CtxResponse(True)
+
+    monkeypatch.setattr("lean_herdr.dispatch.LeanCtx", Recording)
+
+    code = main(["remember", "--key", "lean-herdr/feat-x", "--message", "one sentence"])
+
+    assert code == 0
+    result = _one_json_line(capsys)
+    assert result["ok"] is True
+    assert result["key"] == "lean-herdr/feat-x"
+    assert result["remembered"] is True
+    assert calls == [
+        {"key": "lean-herdr/feat-x", "value": "one sentence", "category": "decisions"}
+    ]
 
 
 def test_remember_reports_success_even_when_lean_ctx_is_missing():

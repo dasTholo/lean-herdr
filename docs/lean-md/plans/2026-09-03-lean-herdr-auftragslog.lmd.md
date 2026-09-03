@@ -2968,11 +2968,31 @@ Parser: ein Flag mehr.
 
     p.add_argument("--key", default=None, help="required with `remember`")
 
+Und der Hilfetext des positional `command`-Arguments (§3e) bekommt das fuenfte
+Wort dazu -- sonst fehlt `remember` in `--help`, obwohl es ein echtes
+Kommando ist:
+
+    help="builder | reviewer | orchestrator | order | answer | cancel | remember",
+
 `missing_flags()` — **unmittelbar hinter dem `order`-Block und VOR dem
 Durchfall auf `answer`/`cancel`**: der verlangt `--task-id`, das `remember` nicht
-hat, und wuerde es sonst abfangen.
+hat, und wuerde es sonst abfangen. Aus demselben Grund, aus dem 5de8781
+`order`s `--task-id` nachgeruestet hat, braucht der eigene Zweig eine eigene
+Streuflag-Pruefung: sonst kehrt er zurueck, BEVOR die gemeinsame Pruefung von
+`answer`/`cancel` weiter unten laeuft, und `herdr-dispatch remember --key k
+--message x --to builder` schluckt `--to` (ebenso `--after`, `--task-id`,
+`--from`) stillschweigend. Die Reihenfolge der Tupel folgt der
+Parser-Definition, wie schon bei der Streuflag-Pruefung des Log-Zweigs oben:
 
             if args.command == "remember":
+                stray = _given(
+                    ("--task-id", args.task_id),
+                    ("--to", args.to),
+                    ("--after", args.after),
+                    ("--from", args.from_agent),
+                )
+                if stray:
+                    return f"`{args.command}` does not take {stray}"
                 missing = [
                     flag
                     for flag, value in (
@@ -3058,6 +3078,44 @@ Fixture `fake`, die `lean_herdr.leanctx.shutil.which` faelscht (ohne sie liest
     def test_remember_needs_a_key_and_a_message(capsys):
         assert main(["remember", "--message", "x"]) == 0
         assert "remember needs --key" in json.loads(capsys.readouterr().out)["error"]
+
+Review-Befund I3 (dasselbe Muster wie 5de8781 fuer `order`s `--task-id`) und
+I2 (die `--key`-Guard-Zeile hatte keinen Test): zwei weitere Faelle in
+derselben `test_the_modes_do_not_take_each_others_flags`:
+
+    (["remember", "--key", "k", "--message", "x", "--to", "builder"],
+     "`remember` does not take --to"),
+    (["order", "--to", "b", "--message", "x", "--key", "k"],
+     "--key belongs to `remember`"),
+
+Review-Befund I1 (dieselbe Luecke, die 5ff483b fuer `order`/`answer`/`cancel`
+schon geschlossen hat): `main()`s Weg in `remember_branch()` lief unter
+keinem Test durch. Ueber die CLI gibt es keinen `client`-Parameter wie bei
+`remember_branch()` direkt -- gefaelscht wird deshalb `LeanCtx` selbst:
+
+    def test_main_routes_remember_into_remember_branch(main_root, capsys, monkeypatch):
+        calls = []
+
+        class Recording:
+            def __init__(self, root):
+                self.root = root
+
+            def knowledge_remember(self, *, key, value, category="decisions"):
+                calls.append({"key": key, "value": value, "category": category})
+                return CtxResponse(True)
+
+        monkeypatch.setattr("lean_herdr.dispatch.LeanCtx", Recording)
+
+        code = main(["remember", "--key", "lean-herdr/feat-x", "--message", "one sentence"])
+
+        assert code == 0
+        result = _one_json_line(capsys)
+        assert result["ok"] is True
+        assert result["key"] == "lean-herdr/feat-x"
+        assert result["remembered"] is True
+        assert calls == [
+            {"key": "lean-herdr/feat-x", "value": "one sentence", "category": "decisions"}
+        ]
 
 @call tdd(-k remember_writes_into_the_decisions_category)
 

@@ -490,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "command",
-        help="builder | reviewer | orchestrator | order | answer | cancel",
+        help="builder | reviewer | orchestrator | order | answer | cancel | remember",
     )
     # No longer `required=True`: `order` and `cancel` take no kind, and
     # argparse would refuse a perfectly valid call. missing_flags() enforces it
@@ -588,6 +588,14 @@ def missing_flags(args: argparse.Namespace) -> str | None:
             ]
             return f"order needs {' and '.join(missing)}" if missing else None
         if args.command == "remember":
+            stray = _given(
+                ("--task-id", args.task_id),
+                ("--to", args.to),
+                ("--after", args.after),
+                ("--from", args.from_agent),
+            )
+            if stray:
+                return f"`{args.command}` does not take {stray}"
             missing = [
                 flag
                 for flag, value in (
