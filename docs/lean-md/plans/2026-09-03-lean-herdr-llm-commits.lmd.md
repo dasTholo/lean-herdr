@@ -186,11 +186,10 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
   Grund: eine gemeinsame Einstellung bedient beide Verbraucher, und wer den
   Richter auf ein stärkeres Modell heben wollte, hätte damit auch den
   Commit-Generator gehoben — für jeden einzelnen Commit.
-- **DIE ZWEI KETTEN, einmal und wörtlich.** Fünf Stellen beschreiben sie (der
+- **DIE ZWEI KETTEN, einmal und maßgeblich.** Fünf Stellen beschreiben sie (der
   Konstanten-Kommentar in `llm.py`, `.config/lean-herdr.toml`, die
-  `argparse`-Hilfetexte, und die README an zwei Stellen). Alle fünf schreiben
-  **das** hier ab, nicht ihre eigene Paraphrase — eine abweichende Beschreibung
-  ist ein Review-Befund:
+  `argparse`-Hilfetexte, und die README an zwei Stellen). Alle fünf geben
+  **das** hier wieder:
 
       generate()  model:   --model  >  $LEAN_HERDR_LLM_MODEL  >  [llm].model
                            >  DEFAULT_MODEL
@@ -209,6 +208,17 @@ Gemessene Grundlagen dieses Plans (Spec §2, alle am 2026-09-03 gegen
   gedankenlos wie den Formatierer); und **die Umgebung steht über der Datei**
   (sie ist der Griff in einer laufenden Pane, ohne eine Datei anzufassen, die
   jedes Repository dieser Maschine liest).
+
+  **Was „wiedergeben" heißt — Betreiber-Entscheidung vom 2026-09-03**, sie
+  ersetzt die frühere Forderung nach wörtlichem Abschreiben: **Ebenen und
+  Reihenfolge sind überall exakt dieselben, die Benennung folgt der jeweiligen
+  Umgebung.** Innerhalb der `[llm]`-Tabelle heißt der Schlüssel `model`, nicht
+  `[llm].model`; für den Operator heißt der Boden `built-in`, nicht
+  `DEFAULT_MODEL`; in den `argparse`-Hilfetexten stehen die Flagnamen, wie
+  `argparse` sie schreibt. Ein Review-Befund ist deshalb **nur**, wenn eine
+  Ebene fehlt, eine dazukommt oder die Reihenfolge abweicht — nicht, wenn ein
+  Name der Umgebung angepasst ist. Der `[llm]`-Block, den Task 1 geliefert hat,
+  ist die Vorlage für diese Anpassung und bleibt, wie er ist.
 - **Sprachtor:** `tests/test_language.py` greift für die neuen Dateien
   automatisch — alles außerhalb `docs/` ist Englisch, `roles/*.md` und
   `README.md` eingeschlossen.
