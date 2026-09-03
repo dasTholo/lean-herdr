@@ -558,6 +558,21 @@ def test_an_unresolvable_worktree_is_skipped_not_rejected():
     )["prereview_note"] == "no_branch"
 
 
+def test_prereview_itself_refuses_to_judge_without_an_order(no_store):
+    """`bin/herdr-llm prereview` without --order reaches prereview() direct.
+
+    prereview_result() has its own no_order guard, but the manual entry
+    point does not go through it -- and argparse defaults --order to "".
+    The guard belongs to whoever builds the prompt.
+    """
+    spy = SpyRunner(answer("PREREVIEW: reject\nnothing matches the order"))
+    assert llm.prereview(
+        "", "diff --git a/x b/x\n+print('debug')",
+        runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+    ) == ("skipped", "no_order")
+    assert spy.calls == [], "no model may be asked to judge against nothing"
+
+
 def test_an_empty_order_is_skipped_not_rejected():
     """An order log whose first event is not `created` leaves description "".
 

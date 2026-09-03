@@ -136,9 +136,12 @@ orchestrator: the strong reviewer runs either way. Every failure of the
 pre-review itself -- no key, timeout, an unresolvable worktree -- is
 `skipped` with a reason, never a rejection.
 
-`--timeout-ms` does not cover the pre-review: it starts once the wait has
-already met that timeout and carries timeouts of its own -- 30 seconds for
-`wt step diff`, 60 for the judgement, so up to 90 seconds on top.
+`--timeout-ms` does not cover the pre-review. The judgement runs only where
+the wait ended in `completed` -- a run that hits the timeout never reaches it
+-- and it then carries timeouts of its own: 30 seconds for `wt step diff`, 60
+for the judgement. So a `completed` answer can take up to 90 seconds longer
+than `--timeout-ms` alone suggests, and a timed-out one exactly as long as
+before.
 
 The judge may run on a model of its own. The two jobs are not the same one:
 the commit generator formats a diffstat and is happy with the smallest model

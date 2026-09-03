@@ -490,6 +490,15 @@ def prereview(
     one is the commit generator's `minimal`, and inheriting it would
     quietly make the judge as thoughtless as the formatter.
     """
+    if not order.strip():
+        # Whoever builds the prompt owns this guard. prereview_result()
+        # has its own, earlier, to spare the `wt step diff` -- but the
+        # manual CLI never passes through it, and argparse defaults
+        # `--order` to "". An empty <order> block against a prompt that
+        # lists "changes the order does not cover" as a ground for
+        # rejection is a reject waiting to happen, on a branch nobody
+        # described.
+        return "skipped", "no_order"
     if not diff.strip():
         return "skipped", "empty_diff"
     if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
@@ -592,7 +601,10 @@ def _positive_seconds(text: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="herdr-llm",
-        description="Commit messages from a small model -- worktrunk's generator.",
+        description=(
+            "A small model, twice: `generate` writes worktrunk's commit "
+            "messages, `prereview` judges a branch diff against its order."
+        ),
     )
     p.add_argument("mode", choices=("generate", "prereview"))
     p.add_argument(
@@ -604,17 +616,25 @@ def build_parser() -> argparse.ArgumentParser:
         help="prereview: the order text the diff is supposed to answer",
     )
     p.add_argument(
+        # Both modes, and their chains differ -- the judge has two levels
+        # of its own directly below the flag. Naming only the generator's
+        # would tell an operator who set $LEAN_HERDR_PREREVIEW_MODEL the
+        # opposite of the truth.
         "--model", default=None,
-        help="beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
-             ".config/lean-herdr.toml, then the built-in default",
+        help="generate: beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
+             ".config/lean-herdr.toml, then the built-in default. "
+             "prereview: beats $LEAN_HERDR_PREREVIEW_MODEL, then "
+             "[llm].prereview_model, then those same three",
     )
     p.add_argument(
         # EFFORTS, not a second spelling of the same four words: the
         # settings validator rejects anything outside it, and two lists
         # would disagree the day a fifth level shows up.
         "--effort", default=None, choices=EFFORTS,
-        help="beats [llm].effort, then the built-in default; "
-             "no environment level exists",
+        help="generate: beats [llm].effort, then the built-in default. "
+             "prereview: beats [llm].prereview_effort, then its own "
+             "built-in -- it does NOT inherit [llm].effort. "
+             "No environment level exists for either",
     )
     p.add_argument(
         "--timeout", type=_positive_seconds, default=None, help="seconds"

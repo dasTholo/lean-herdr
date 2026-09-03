@@ -1102,6 +1102,8 @@ Ans Ende von `lean_herdr/llm.py` anhängen:
     def build_parser() -> argparse.ArgumentParser:
         p = argparse.ArgumentParser(
             prog="herdr-llm",
+            # Task 7 macht daraus beide Modi -- siehe dort. Die --model- und
+            # --effort-Hilfetexte muessen dann ebenfalls BEIDE Ketten nennen.
             description="Commit messages from a small model -- worktrunk's generator.",
         )
         p.add_argument("mode", choices=("generate",))
@@ -1742,6 +1744,15 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
         one is the commit generator's `minimal`, and inheriting it would
         quietly make the judge as thoughtless as the formatter.
         """
+        if not order.strip():
+            # Wer den Prompt baut, besitzt diesen Waechter. prereview_result()
+            # hat einen eigenen, frueheren, um das `wt step diff` zu sparen --
+            # aber das manuelle CLI laeuft nicht durch ihn, und argparse setzt
+            # `--order` auf "". Ein leerer <order>-Block gegen einen Prompt,
+            # der "changes the order does not cover" als Ablehnungsgrund
+            # fuehrt, ist eine Ablehnung mit Ansage -- auf einer Branch, die
+            # niemand beschrieben hat.
+            return "skipped", "no_order"
         if not diff.strip():
             return "skipped", "empty_diff"
         if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
