@@ -88,7 +88,11 @@ def test_the_package_parses_on_the_python3_the_manifest_may_meet():
     assert all(e["command"][0] == "python3" for e in manifest()["events"]), (
         "the floor below only matters as long as the manifest spawns python3"
     )
-    sources = [*sorted((ROOT / "lean_herdr").glob("*.py")), ROOT / "bin" / "herdr-dispatch"]
+    sources = [
+        *sorted((ROOT / "lean_herdr").glob("*.py")),
+        ROOT / "bin" / "herdr-dispatch",
+        ROOT / "bin" / "herdr-report",
+    ]
     offenders = []
     for path in sources:
         try:
