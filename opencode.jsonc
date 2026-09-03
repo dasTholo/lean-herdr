@@ -45,6 +45,11 @@
       "prompt": "{file:./roles/builder.md}",
       "steps": 60,
       "permission": {
+        // roles/builder.md prescribes "TDD, small commits". With the report
+        // patterns alone the builder could run neither a test nor a commit
+        // and would fail on its first step -- so exactly the gate that role
+        // text demands is granted, and nothing wider. No `git push`, no
+        // bare `git *`, no wildcard behind `bin/herdr-report`.
         "bash": {
           "*": "deny",
           "bin/herdr-report next": "allow",
@@ -52,7 +57,13 @@
           "bin/herdr-report start *": "allow",
           "bin/herdr-report done *": "allow",
           "bin/herdr-report fail *": "allow",
-          "bin/herdr-report ask *": "allow"
+          "bin/herdr-report ask *": "allow",
+          "uv run pytest*": "allow",
+          "uv run ruff*": "allow",
+          "git add*": "allow",
+          "git commit*": "allow",
+          "git diff*": "allow",
+          "git status*": "allow"
         }
       }
     },
