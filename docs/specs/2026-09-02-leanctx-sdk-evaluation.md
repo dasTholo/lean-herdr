@@ -1,7 +1,13 @@
 # leanctx-sdk 1.0.0 — Bewertung für den Auftragsweg von lean-herdr
 
-**Status:** gemessen; Entscheidung getroffen — **Option A** (bei `ctx_task`
-bleiben), eingetragen in Abschnitt 7 der bezogenen Spec
+**Status:** gemessen; Entscheidung vom 2026-09-02 (**Option A**, bei `ctx_task`
+bleiben) — **überholt durch die Gegenprüfung vom 2026-09-03**, siehe
+`2026-09-03-lean-herdr-auftragslog-design.md`. Dort ist gemessen: E-4 ist durch
+PR #10 aufgelöst, E-7 geschlossen und nachgewiesen, E-1 für die neuen Agent
+Tools umgekehrt (exakter Laufzeit-Pin auf 3.10.1), E-2 bestätigt — und **E-5
+und E-6 sind widerlegt**: beide hingen an der Art der Benutzung, nicht an der
+SDK. Die Befunde unten bleiben als Messung des Standes vom 2026-09-02 gültig;
+die Optionen in Abschnitt 6 sind es nicht mehr.
 **Bezug:** `2026-09-01-lean-herdr-ctx-task-design.md` (Auftragsweg auf `ctx_task`)
 **Anlass:** Thinkery AG hat die `leanctx-sdk` in Version 1.0.0 veröffentlicht
 (<https://github.com/Thinkery-AG/leanctx-sdk>). Frage des Betreibers: hilft sie
