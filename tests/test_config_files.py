@@ -63,7 +63,10 @@ def test_readme_names_every_runtime_dependency():
     for requirement in (
         "uv", "python3", "worktrunk", "herdr-worktrunk", "fzf", "jq",
         "lean-ctx allow herdr", "lean-ctx allow wt",
-        "lean-ctx allow bin/herdr-report",
+        # The path form was never able to match: the gate normalises to the
+        # basename and every allowlist entry is a bare name (measured on
+        # lean-ctx 3.10.1). The README names the spelling that CAN match.
+        "lean-ctx allow herdr-report",
         "wt config approvals", "warning:",
         # The work-order path, both halves of it. `ctx_task` used to stand
         # here; it is gone from the project, so requiring it would pin the

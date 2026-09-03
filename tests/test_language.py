@@ -67,8 +67,11 @@ FROZEN_IDS = {
 #: `VERDIKT` is the literal of dispatch.VERDICT_RE: roles/reviewer.md writes
 #: it, every review ever written carries it, and the orchestrator reads it
 #: as a machine value. It is a protocol word, not prose -- and without this
-#: entry the day somebody adds `verdikt` to GERMAN_WORDS turns eleven lines
-#: in five files red for a token that is deliberately spelled this way.
+#: entry, the day somebody adds `verdikt` to GERMAN_WORDS every line in the
+#: tree that carries the literal turns red for a token that is deliberately
+#: spelled this way. No count here on purpose: the previous wording named
+#: one ("eleven lines in five files") and was wrong by the time it was
+#: read.
 PROTOCOL_TOKENS = ("VERDIKT",)
 
 _TOKEN = re.compile(r"[A-Za-zÄÖÜäöüß]+")

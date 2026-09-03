@@ -22,16 +22,24 @@ Herdr installs no toolchains — these things must be present:
 | `opencode` >= 1.18.25 | orchestrator and reviewer | see the opencode project |
 | Claude Code >= 2.1.252 | builder | see the Claude Code project |
 
-Three approvals in lean-ctx, without which an agent under shell gating can
-steer neither Herdr nor worktrunk, and cannot fetch its own orders:
+Two approvals in lean-ctx, without which an agent under shell gating can
+steer neither Herdr nor worktrunk:
 
     lean-ctx allow herdr
     lean-ctx allow wt
-    lean-ctx allow bin/herdr-report
 
-Without the third one a lean-ctx-bound worker cannot fetch its order, and
-the failure is silent: the orchestrator sees nothing and runs into
-`no_reply`.
+`bin/herdr-report` needs no third line — measured against lean-ctx 3.10.1,
+not assumed. The gate normalises a command to its **basename** before it
+compares: `/usr/bin/tail --version` is refused as *"'tail' is not in the
+shell allowlist"*, and `bin/herdr-nonexistent-xyz` as
+*"'herdr-nonexistent-xyz' is not in the shell allowlist"*. `lean-ctx allow`
+takes a bare `<cmd>` and every entry in the effective list is a bare name,
+so a path-shaped entry `bin/herdr-report` would be compared against
+nothing at all. What actually carries the call is that the script exists
+inside the project root: `bin/herdr-report --help` runs through the gate
+with `herdr-report` absent from the allowlist, by the relative and by the
+absolute path alike. Should a worker ever be refused here anyway, the
+spelling that can match is `lean-ctx allow herdr-report` — never the path.
 
 Plus one approval in worktrunk. Without it `wt` skips the project hooks from
 `.config/wt.toml` **silently** and reports success — the pre-merge test gate
@@ -91,6 +99,17 @@ pane under another name and the constant still stamps `orch`: pass
 `--from <name>` on every `order`, `answer` and `cancel` call, and set
 `ORCHESTRATOR = <name>` in both role files. The two must agree, or every
 order is refused.
+
+That rename turns one test red:
+`tests/test_roles.py::test_the_role_prompts_trust_the_name_dispatch_actually_stamps`
+holds the `ORCHESTRATOR = …` line of both role files against the constant
+`dispatch.ORCHESTRATOR_AGENT`, and the rename moves only the role files.
+Either rename the anchor itself — `ORCHESTRATOR["name"]` in
+`lean_herdr/handlers.py`, which the constant is imported from — and then
+the test is green again and no `--from` is needed at all; or keep
+`--from` and accept that one red test for as long as the rename lasts. Do
+not "fix" it by loosening the test: it is the only guard that the sender
+the workers trust and the sender dispatch stamps are the same string.
 
 Unlike the `ctx_task` path this replaced, the name is a claim, not a proof:
 the log stamps what the writer passes. The rule catches a stray order, not a
