@@ -398,6 +398,23 @@ def test_main_loads_the_config_once_for_both_modes(monkeypatch, tmp_path):
     assert agent_name("builder", "feat/auth", settings=seen[0]) == "feat-auth.builder"
 
 
+def _no_launch(monkeypatch):
+    """Make the real launch path unreachable, loudly.
+
+    A config-error test proves that main() STOPS before doing anything.
+    Proving it by letting the launch path stand and trusting the guard is
+    a trap: on 2026-09-03 a guard was momentarily removed to check that a
+    test bites, main() ran on, and `dispatch()` split a real pane in the
+    operator's live Herdr workspace and started a real `claude` there.
+    A test may never be one edit away from that.
+    """
+    def stop(*_a, **_kw):
+        raise AssertionError("main() reached the launch path past a config error")
+
+    monkeypatch.setattr("lean_herdr.dispatch.dispatch", stop)
+    monkeypatch.setattr("lean_herdr.dispatch.await_task", stop)
+
+
 def test_a_broken_config_is_one_json_line_with_ok_false(monkeypatch, tmp_path, capsys):
     """A present-but-wrong config is an error -- never a silent fallback.
 
@@ -410,6 +427,7 @@ def test_a_broken_config_is_one_json_line_with_ok_false(monkeypatch, tmp_path, c
     root = tmp_path / "repo"
     _write_config(root, '[default]\ndirection = "links"\n')
     monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    _no_launch(monkeypatch)
 
     code = main(
         ["builder", "--kind", "claude", "--model", "sonnet",
@@ -433,6 +451,7 @@ def test_a_broken_config_is_a_config_error_in_await_mode_too(
     root = tmp_path / "repo"
     _write_config(root, '[default]\ndirection = "links"\n')
     monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    _no_launch(monkeypatch)
 
     code = main(["builder", "--kind", "claude", "--await", "--task-id", "T1"])
 
@@ -456,6 +475,7 @@ def test_a_broken_llm_block_is_a_config_error_too(monkeypatch, tmp_path, capsys)
     root = tmp_path / "repo"
     _write_config(root, '[llm]\neffort = "enormous"\n')
     monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    _no_launch(monkeypatch)
 
     code = main(
         ["builder", "--kind", "claude", "--model", "sonnet",
