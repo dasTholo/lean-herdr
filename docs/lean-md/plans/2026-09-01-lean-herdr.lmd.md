@@ -8,6 +8,14 @@ crp: compact
 
 # lean-herdr — Implementierungsplan
 
+> **Eingefroren am 2026-09-02.** Die Code-Blöcke zeigen den Stand bei Abnahme.
+> Seit dem Sprach-Durchgang ist der Baum die Wahrheit, nicht mehr dieser Plan —
+> als Vergleichsgrundlage taugt er nicht. Seine drei offenen Tasks 14, 15 und 16
+> wurden **nicht** von hier ausgeführt, sondern aus
+> `docs/lean-md/plans/2026-09-02-lean-herdr-englisch-und-plugin.lmd.md`
+> (dort Task 9, 11 und 12), wo ihr Code übersetzt und gegen die heutigen Module
+> geprüft steht. Task 12 (Stufe-4-Durchlauf) bleibt offen.
+
 Quelle: `docs/specs/2026-09-01-lean-herdr-design.md` (v0.4.0). Ein Plan über alle
 fünf Stufen der Ausführbarkeit. Render je Task:
 `lean-md render docs/lean-md/plans/2026-09-01-lean-herdr.lmd.md --phase task-N`.

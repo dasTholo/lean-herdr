@@ -338,8 +338,9 @@ offengelegt.
 
 - `parse_registry()` hat kognitive Komplexitaet 17 ueber der Projektschwelle 15 —
   vom Betreiber abgenommen, der Brief-Code bleibt Vergleichsgrundlage.
-- Der Plan-Code ist durchgehend **deutsch benannt**; der Betreiber uebersetzt am
-  Stueck nach dem Lauf, mit der gruenen Suite als Netz. Eigene Ergaenzungen
-  ausserhalb des Plans werden englisch benannt.
+- Der Plan-Code war durchgehend **deutsch benannt**. Der Durchgang fand am
+  2026-09-02 statt (`docs/lean-md/plans/2026-09-02-lean-herdr-englisch-und-plugin.lmd.md`);
+  seither ist alles außerhalb `docs/` englisch und `tests/test_language.py` hält
+  es so.
 - `@reformat` wird nicht ausgefuehrt: das Qualitaetstor ist `ruff check`, **nicht**
   `ruff format --check` — sonst schriebe der Formatter den woertlichen Plan-Code um.

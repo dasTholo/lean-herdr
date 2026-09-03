@@ -32,7 +32,7 @@ Zwei Dinge, die zusammengehoeren, weil das eine das andere sonst zurueckdreht:
 | frische Regression aus dem `ctx_task`-Lauf | `dispatch.py:303-307` traegt `eintrag` und `pfad` in einer sonst vollstaendig englischen Datei |
 | Uebersetzung hat **keine** dateiuebergreifende Wirkung | nur `parse_zeit` kreuzt Modulgrenzen; Kommentare und Locals sind lokal |
 | das Loeschen von `leanctx.py` **bricht Task 15** | `from lean_herdr.leanctx import LeanCtx, newest_handoff` (Planzeile 4849); `_kontext()` ist ganz auf `session_resume()` / `handoff_list()` / `handoff_show()` gebaut (4896-4910); `CtxAntwort` unterscheidet dort die drei Faelle Fehler/leer/Inhalt (4885, 5279); die `welt`-Fixture monkeypatcht `lean_herdr.leanctx.*` (5061, 5071-5073, 5117, 5123-5125). Task 14 und 16 sind frei davon. |
-| `__main__.py` ist heute unbenutzbar | `__main__.py:41` importiert `lean_herdr.handlers`, das es nicht gibt — jedes Subkommando endet im `ModuleNotFoundError`. Task 15 schliesst das. |
+| `__main__.py` bleibt ohne `handlers.py` wirkungslos | `__main__.py:41` importiert `lean_herdr.handlers` **innerhalb** des `try` mit `except Exception`; jedes Subkommando endet mit exit 0 und einer stderr-Zeile — kein `ModuleNotFoundError` nach außen. `test_manifest.py::test_main_survives_a_missing_handlers_module` nagelt genau das fest. Task 15 macht die Subkommandos wirksam, es repariert keinen Absturz. |
 | Plan-Code von Task 14/15/16 ist halb deutsch | Produktionsnamen englisch (`strip_frame`, `render_digest`, `summary_token`), Testnamen deutsch (`test_der_fertige_digest_wird_uebernommen_nicht_nachgebaut`), Fixture `welt` |
 
 ## 3. Umfang
