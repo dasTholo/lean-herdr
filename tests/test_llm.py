@@ -49,12 +49,14 @@ class SpyRunner:
         self.config_modes: list[int] = []
         self.bodies: list[str] = []
         self.paths: list[Path] = []
+        self.timeouts: list[float | None] = []
         self.reply = reply
         self.returncode = returncode
         self.raises = raises
 
     def __call__(self, cmd, **kwargs):
         self.calls.append(list(cmd))
+        self.timeouts.append(kwargs.get("timeout"))
         # Only a curl call carries these. The same double also stands in
         # for `wt step diff` in task 5, and reaching for --config there
         # would raise a ValueError the code under test does not catch.
@@ -554,6 +556,25 @@ def test_an_unresolvable_worktree_is_skipped_not_rejected():
     assert llm.prereview_result(
         "an order", branch=None, worktree_list=worktrees(), runner=runner,
     )["prereview_note"] == "no_branch"
+
+
+def test_wt_diff_carries_its_own_timeout():
+    """A lost timeout here hangs the wait mode on a wedged `wt`."""
+    spy = SpyRunner()
+    llm.wt_diff("/x", runner=spy)
+    assert spy.timeouts == [llm.DIFF_TIMEOUT_S]
+
+
+def test_a_diff_that_never_arrives_is_skipped_not_rejected():
+    """`wt step diff` failing is the machine's fault, never the branch's."""
+    def runner(*_a, **_kw):
+        return Completed(returncode=1)
+
+    assert llm.prereview_result(
+        "an order", branch="feat/x",
+        worktree_list=worktrees({"branch": "feat/x", "path": "/w"}),
+        runner=runner,
+    ) == {"prereview": "skipped", "prereview_note": "diff_failed"}
 
 
 def test_a_garbage_worktree_list_is_skipped_not_a_crash():

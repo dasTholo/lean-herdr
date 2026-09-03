@@ -11,8 +11,11 @@ network.
 `worktree.wt_switch()`. No test in this repository reaches the
 network.
 
-Stdlib only, and no entry in herdr-plugin.toml: this is a library and
-a CLI, not a plugin handler.
+Stdlib plus `worktree.find_worktree()`, and no entry in
+herdr-plugin.toml: this is a library and a CLI, not a plugin handler.
+No third-party dependency -- the module starts on every commit in every
+repository on the machine, so its import cost stays a handful of stdlib
+names.
 """
 
 from __future__ import annotations
@@ -99,9 +102,10 @@ FALLBACK_FILES = 3
 PREREVIEW_TIMEOUT_S = 60.0
 DIFF_TIMEOUT_S = 30.0
 
-#: A model of its own for the judge. Precedence: an explicit `model=`
-#: (the CLI's --model), then this, then $LEAN_HERDR_LLM_MODEL, then
-#: DEFAULT_MODEL. Without it the two jobs would be stuck on one
+#: A model of its own for the judge. It is the second of six levels --
+#: `model=` (the CLI's --model), this, `[llm].prereview_model`,
+#: $LEAN_HERDR_LLM_MODEL, `[llm].model`, DEFAULT_MODEL; the block above
+#: is the authority. Without it the two jobs would be stuck on one
 #: variable, and they are not the same job: the commit path formats a
 #: diffstat and is happy with the smallest model there is, the judge
 #: reads code. The builder inherits the pane's environment, so moving

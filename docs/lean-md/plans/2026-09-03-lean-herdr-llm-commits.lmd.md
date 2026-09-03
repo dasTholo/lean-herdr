@@ -354,7 +354,8 @@ Und ans Ende der Datei, hinter `settings_for()`:
     `worktree.wt_switch()`. No test in this repository reaches the
     network.
 
-    Stdlib only, and no entry in herdr-plugin.toml: this is a library and
+    Stdlib plus `worktree.find_worktree()` from task 5 on, and no entry in
+    herdr-plugin.toml: this is a library and
     a CLI, not a plugin handler.
     """
 
@@ -1613,7 +1614,8 @@ An `lean_herdr/llm.py` anhängen (die neuen Konstanten oben zu den anderen):
     DIFF_TIMEOUT_S = 30.0
 
     #: A model of its own for the judge. Precedence: an explicit `model=`
-    #: (the CLI's --model), then this, then $LEAN_HERDR_LLM_MODEL, then
+    #: It is the second of six levels -- `model=` (the CLI's --model), this,
+    #: `[llm].prereview_model`, $LEAN_HERDR_LLM_MODEL, `[llm].model`, then
     #: DEFAULT_MODEL. Without it the two jobs would be stuck on one
     #: variable, and they are not the same job: the commit path formats a
     #: diffstat and is happy with the smallest model there is, the judge
@@ -2003,7 +2005,7 @@ An `tests/test_llm.py` anhängen:
 @call review_change()
 @call gate(lean_herdr/llm.py tests/test_llm.py)
 @call commit("lean_herdr/llm.py tests/test_llm.py", "feat(llm): judge a branch diff before the expensive reviewer runs")
-@call remember_decision("llm.prereview() returns pass|reject|skipped; EVERY failure of its own machinery is skipped, never reject. prereview_result() resolves the worktree itself via find_worktree -- never dispatch._worker_root(), whose repo-root fallback would judge a stranger's diff -- and takes `root` so [llm] is read against the MAIN checkout without a second git call. The judge's model chain: flag, $LEAN_HERDR_PREREVIEW_MODEL, [llm].prereview_model, $LEAN_HERDR_LLM_MODEL, [llm].model, constant; its effort does NOT inherit [llm].effort. Measured PREREVIEW_EFFORT: <the value from step 0>.")
+@call remember_decision("llm.prereview() returns pass|reject|skipped; EVERY failure of its own machinery is skipped, never reject. prereview_result() resolves the worktree itself via find_worktree -- never dispatch._worker_root(), whose repo-root fallback would judge a stranger's diff -- and takes `settings` so [llm] is read once by dispatch.main() against the MAIN checkout, without a second git call. The judge's model chain: flag, $LEAN_HERDR_PREREVIEW_MODEL, [llm].prereview_model, $LEAN_HERDR_LLM_MODEL, [llm].model, constant; its effort does NOT inherit [llm].effort. Measured PREREVIEW_EFFORT: <the value from step 0>.")
 @phase-end
 
 @phase "task-6"
