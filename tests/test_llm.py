@@ -750,7 +750,7 @@ def test_the_diff_is_fetched_with_a_lenient_decode():
 
 
 def test_the_model_call_is_made_with_a_lenient_decode(no_store):
-    """`curl -sS` mixes its own stderr in, and that is not UTF-8 by promise."""
+    """`capture_output` decodes stderr too, and `-sS` writes curl's errors there."""
     spy = DecodingRunner(json.dumps(answer("feat(x): y")).encode("utf-8"))
     got = llm.complete(
         "prompt", effort="minimal", runner=spy,

@@ -309,10 +309,12 @@ def complete(
             ["curl", "-sS", "--config", str(config), "--data-binary", f"@{payload}"],
             capture_output=True,
             text=True,
-            # `text=True` decodes STRICTLY by default, and `-sS` mixes
-            # curl's own error line into what we read. One byte that is
-            # not UTF-8 would raise UnicodeDecodeError out of a function
-            # whose whole contract is "never raises".
+            # `text=True` decodes STRICTLY by default, and it decodes
+            # BOTH pipes -- so curl's own error line, which `-sS` puts on
+            # stderr, is read here too even though only stdout is used.
+            # One byte that is not UTF-8 on either would raise
+            # UnicodeDecodeError out of a function whose whole contract
+            # is "never raises".
             errors="replace",
             timeout=timeout_s,
         )

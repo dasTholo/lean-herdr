@@ -574,10 +574,12 @@ this codebase keeps catching.
                 ["curl", "-sS", "--config", str(config), "--data-binary", f"@{payload}"],
                 capture_output=True,
                 text=True,
-                # `text=True` dekodiert per Vorgabe STRIKT, und `-sS` mischt
-                # curls eigene Fehlerzeile in das, was wir lesen. Ein einziges
-                # Byte, das kein UTF-8 ist, wuerde UnicodeDecodeError aus einer
-                # Funktion werfen, deren ganzer Vertrag "wirft nie" lautet.
+                # `text=True` dekodiert per Vorgabe STRIKT, und es dekodiert
+                # BEIDE Pipes -- curls eigene Fehlerzeile, die `-sS` auf
+                # stderr schreibt, wird hier also mitgelesen, obwohl nur
+                # stdout benutzt wird. Ein einziges Byte, das kein UTF-8 ist,
+                # wuerde auf beiden UnicodeDecodeError aus einer Funktion
+                # werfen, deren ganzer Vertrag "wirft nie" lautet.
                 errors="replace",
                 timeout=timeout_s,
             )
