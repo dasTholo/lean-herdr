@@ -2573,11 +2573,13 @@ Im Abschnitt `The work-order path`, hinter der Aufzählung der Kommandos:
 
     Precedence for the judge's model: `--model` on the CLI, then
     `$LEAN_HERDR_PREREVIEW_MODEL`, then `[llm].prereview_model`, then
-    `$LEAN_HERDR_LLM_MODEL`, then `[llm].model`, then the built-in default. Its
-    effort deliberately does NOT fall back to `[llm].effort`: that one is the
-    commit generator's `minimal`, and inheriting it would make the judge as
-    thoughtless as the formatter. Raising only the shared `model` to raise the
-    judge would raise the commit generator's bill on every single commit.
+    `$LEAN_HERDR_LLM_MODEL`, then `[llm].model`, then the built-in default.
+    For its effort: `--effort`, then `[llm].prereview_effort`, then the built-in
+    `low` — three levels, and no environment one for either mode's effort. It
+    deliberately does NOT fall back to `[llm].effort`: that one is the commit
+    generator's `minimal`, and inheriting it would make the judge as thoughtless
+    as the formatter. Raising only the shared `model` to raise the judge would
+    raise the commit generator's bill on every single commit.
 
     The same judgement by hand, without creating an order:
 
