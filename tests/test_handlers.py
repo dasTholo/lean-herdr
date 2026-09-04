@@ -246,6 +246,31 @@ def test_bootstrap_does_not_start_a_second_orchestrator(world):
     assert "already running" in " ".join(note), note
 
 
+def test_bootstrap_without_git_on_the_path_notifies_like_every_other_failure(
+    world, monkeypatch
+):
+    """`canonical_root()` shells out to git -- no git is a bare OSError.
+
+    initcmd.py reads that same call the same way and answers it with
+    `init_stopped`. Caught here only as `(BusError, SettingsError)` it
+    escapes to `__main__`'s catch-all instead, and the operator gets a
+    stderr line in the plugin log where every other failure path in this
+    handler shows a notification.
+    """
+    h_proc, _, tmp_path = world
+    monkeypatch.setattr(
+        "lean_herdr.handlers.canonical_root",
+        lambda cwd: (_ for _ in ()).throw(
+            FileNotFoundError(2, "No such file or directory", "git")
+        ),
+    )
+    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+    )))
+    note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
+    assert "git" in " ".join(note), note
+
+
 def test_importing_handlers_does_not_drag_in_the_workspace_subtree():
     """Every plugin event pays for this import -- and one of them fires constantly.
 

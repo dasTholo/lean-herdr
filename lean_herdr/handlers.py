@@ -222,7 +222,13 @@ def handle_bootstrap(cfg: Config) -> None:
             workspace_id=workspace,
             ready_timeout_s=min(role.ready_timeout_s, KEYSTROKE_READY_TIMEOUT_S),
         )
-    except (BusError, SettingsError) as exc:
+    # `OSError` beside the two named ones, because `canonical_root()` shells
+    # out to git: with no git on the PATH that is a bare FileNotFoundError
+    # and NOT a BusError. `initcmd.workspace_init` reads the same call the
+    # same way. Left out it escapes to `__main__`'s catch-all, and this one
+    # failure reaches the operator as a stderr line in the plugin log while
+    # every other one here shows a notification.
+    except (BusError, SettingsError, OSError) as exc:
         herdr.run("notification", "show", "--message", f"lean-herdr: {exc}")
         return
     if result.get("already_running"):
