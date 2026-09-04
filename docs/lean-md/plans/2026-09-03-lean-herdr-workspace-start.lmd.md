@@ -178,7 +178,7 @@ Regression dieses Umbaus haelt:
   `canonical_root()`. Absolut oder auf `$PWD` verankert laedt die Config
   stillschweigend nicht mehr, sobald der Aufruf aus einem Unterverzeichnis oder
   einer Worktree kommt (`settings.py:18-22`).
-- **Der Python-Syntax-Floor bleibt 3.11 fuer `lean_herdr/*.py`.** Die
+- **Der Python-Syntax-Floor bleibt 3.14 fuer `lean_herdr/*.py`.** Die
   Plugin-Handler starten ein nacktes `python3`, den Interpreter des Hosts.
   `cli.py`, `workspace.py` und `initcmd.py` fallen unter denselben Glob in
   `test_manifest.py`; von den **drei** `bin/`-Eintraegen dort verlassen nur
