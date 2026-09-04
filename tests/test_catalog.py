@@ -140,6 +140,70 @@ def test_recommend_picks_the_first_survivor(thresholds, efforts, expected):
     assert (None if picked is None else picked["id"]) == expected
 
 
+def test_recommend_takes_the_given_order_and_does_not_re_sort():
+    """The M3 rule, and the only test that can catch it breaking.
+
+    `fetch()` asked the server for `pricing-low-to-high`, so the first
+    survivor IS the cheapest one and `recommend()` must not order anything
+    itself -- a second ordering rule is one that can drift from the
+    server's. Every other test in this file is blind to that: the fixture
+    is already in ascending price order, so an implementation that sorted
+    by price would agree with all of them.
+
+    So this one hands the list in REVERSED. The expected answer is the
+    entry that comes first in the argument, which is now the most
+    expensive one. A `recommend` that re-sorted would return
+    `cheap/no-benchmarks` here and fail.
+    """
+    picked = catalog.recommend(
+        list(reversed(sample())), thresholds=ModelsSettings(), efforts=()
+    )
+    assert picked is not None
+    assert picked["id"] == "good/all-clear", "the order given is the order used"
+
+
+@pytest.mark.parametrize(
+    "junk",
+    [float("nan"), float("inf"), "NaN", "Infinity", "-inf"],
+    ids=["nan", "inf", "nan-string", "infinity-string", "negative-inf"],
+)
+def test_a_non_finite_index_does_not_clear_a_floor(junk):
+    """Junk evidence must not beat missing evidence.
+
+    Every comparison against a NaN is False, so `nan < floor` is False and
+    a NaN index would sail past a threshold that a model with NO index at
+    all is rejected for. `json.loads` accepts a bare `NaN` or `Infinity`,
+    so this comes off the wire, not just out of a hand-built dict. An
+    infinity is refused with it: a catalogue claiming an unbounded score
+    is not evidence either.
+    """
+    entry = {
+        "id": "junk/evidence",
+        "context_length": 128000,
+        "pricing": {"prompt": "0.00000001"},
+        "reasoning": {"supported_efforts": ["minimal", "low"]},
+        "benchmarks": {"artificial_analysis": {"coding_index": junk}},
+    }
+    picked = catalog.recommend(
+        [entry], thresholds=ModelsSettings(min_coding_index=30.0), efforts=()
+    )
+    assert picked is None
+
+
+def test_a_non_finite_price_does_not_clear_a_cap():
+    """The same hole on the other threshold: `nan > cap` is False too."""
+    entry = {
+        "id": "junk/price",
+        "context_length": 128000,
+        "pricing": {"prompt": "NaN"},
+        "reasoning": {"supported_efforts": ["minimal"]},
+    }
+    picked = catalog.recommend(
+        [entry], thresholds=ModelsSettings(max_prompt_price=1e-8), efforts=()
+    )
+    assert picked is None
+
+
 def test_a_model_without_benchmarks_fails_a_set_index_threshold():
     """Missing evidence is not a pass.
 

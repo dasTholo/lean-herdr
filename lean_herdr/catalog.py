@@ -16,6 +16,7 @@ round and only that way: catalog -> openrouter, catalog -> settings.
 from __future__ import annotations
 
 import json
+import math
 import re
 import urllib.parse
 from collections.abc import Sequence
@@ -90,17 +91,27 @@ def _number(value: Any) -> float | None:
     The string branch is not defensive programming: `pricing.prompt`
     arrives as `"0.0000001"`, a string, while `context_length` arrives as
     an int. Both are compared against a float threshold here.
+
+    NaN and the infinities are NOT numbers for this purpose, and that is
+    the same rule as MISSING EVIDENCE IS NOT A PASS one level up. Every
+    comparison against a NaN is False, so a NaN index would CLEAR a floor
+    and a NaN price would CLEAR a cap -- junk evidence doing exactly what
+    absent evidence is forbidden to do. `json.loads` accepts a bare `NaN`
+    or `Infinity` by default, so this arrives from a third party, not only
+    from a hand-built dict.
     """
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str):
+        number = float(value)
+    elif isinstance(value, str):
         try:
-            return float(value)
+            number = float(value)
         except ValueError:
             return None
-    return None
+    else:
+        return None
+    return number if math.isfinite(number) else None
 
 
 def _clears(
