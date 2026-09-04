@@ -8,8 +8,10 @@ from lean_herdr.herdr import (
     AGENT_START_ATTEMPTS,
     AGENT_START_INTERVAL_S,
     DEFAULT_TIMEOUT_S,
+    FIRST_START_TIMEOUT_MS,
     HERDR_MAX_TIMEOUT_MS,
     Herdr,
+    start_agent,
     timeout_ms_for,
 )
 from tests.doubles import Clock, Completed, FakeProc, ScriptedProc, which_stub
@@ -332,3 +334,112 @@ def test_a_start_that_sat_out_its_budget_is_not_repeated(monkeypatch):
     )
     assert len(proc.calls) == 1, proc.flat()
     assert naps == []
+
+
+#: The helper's happy path and its two failures, all against a Clock: the
+#: distinction it makes is DURATION, and a test that slept those seconds
+#: would take a minute to say what these say in none.
+def _helper(proc: Any, clock: Clock) -> dict[str, Any]:
+    return start_agent(
+        Herdr(runner=proc),
+        "orch",
+        kind="opencode",
+        pane="w8:p5",
+        agent_args=["--agent", "orchestrator"],
+        retry_timeout_ms=45_000,
+        sleep=clock.sleep,
+        now=clock.now,
+    )
+
+
+def test_a_start_that_works_costs_neither_a_key_nor_a_second_attempt(monkeypatch):
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(clock=clock, script={("agent", "start"): (3.4, [STARTED])})
+    assert _helper(proc, clock) == {"ok": True, "reply": STARTED}
+    assert not proc.called_with("pane", "send-keys"), proc.flat()
+    assert len(proc.calls) == 1
+
+
+def test_a_hung_start_is_aborted_and_the_second_attempt_carries_it(monkeypatch):
+    """The measured cure: `ctrl-c`, then the very same start in 3.4 s."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={
+            # First call sits out the whole `--timeout` and answers
+            # nothing; the second one -- the project is warm now -- works.
+            ("agent", "start"): (12.0, [{}, STARTED]),
+            ("agent", "list"): (0.0, [{"result": {"agents": []}}]),
+        },
+    )
+    assert _helper(proc, clock) == {
+        "ok": True,
+        "reply": STARTED,
+        "retried": True,
+    }
+    assert proc.called_with("pane", "send-keys", "w8:p5", "ctrl-c")
+    starts = [c for c in proc.calls if c[1:3] == ["agent", "start"]]
+    assert len(starts) == 2
+    assert starts[0][starts[0].index("--timeout") + 1] == str(
+        FIRST_START_TIMEOUT_MS
+    )
+    assert starts[1][starts[1].index("--timeout") + 1] == "45000"
+
+
+def test_a_refusal_is_named_at_once_and_costs_no_second_attempt(monkeypatch):
+    """0.0 s is Herdr saying no -- a name it does not know, a kind it has not."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(clock=clock, script={("agent", "start"): (0.0, [{}])})
+    assert _helper(proc, clock) == {"ok": False, "error": "agent_start_failed"}
+    assert not proc.called_with("pane", "send-keys"), proc.flat()
+
+
+def test_a_second_attempt_that_fails_too_is_opencode_stuck(monkeypatch):
+    """The honest exit of the residual risk: `ctrl-c` may not reach it."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={
+            ("agent", "start"): (12.0, [{}]),
+            # The pane stays taken: the hung process never let go.
+            ("agent", "list"): (
+                0.0,
+                [{"result": {"agents": [{"name": "orch", "pane_id": "w8:p5"}]}}],
+            ),
+        },
+    )
+    assert _helper(proc, clock) == {"ok": False, "error": "opencode_stuck"}
+    keys = [c for c in proc.calls if c[1:3] == ["pane", "send-keys"]]
+    assert len(keys) == 2, "a second ctrl-c after half the deadline"
+
+
+def test_without_a_retry_budget_the_hang_is_reported_at_once(monkeypatch):
+    """The keystroke's path: it runs in Herdr's handler process.
+
+    There a hang is a deliberately accepted false alarm
+    (handlers.KEYSTROKE_READY_TIMEOUT_S) -- blocking that process for a
+    second attempt would be the very thing the cap exists to prevent.
+    Nothing is lost: the aborted first attempt warms the project anyway,
+    so the next press carries.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(clock=clock, script={("agent", "start"): (6.0, [{}])})
+    assert start_agent(
+        Herdr(runner=proc),
+        "orch",
+        kind="opencode",
+        pane="w8:p5",
+        first_timeout_ms=6_000,
+        retry_timeout_ms=0,
+        sleep=clock.sleep,
+        now=clock.now,
+    ) == {"ok": False, "error": "opencode_stuck"}
+    assert len(proc.calls) == 1, proc.flat()
+    assert not proc.called_with("pane", "send-keys"), (
+        "no key, no poll, no second attempt -- the handler must come back"
+    )

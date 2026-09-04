@@ -52,6 +52,15 @@ HERDR_MAX_TIMEOUT_MS = 300_000
 #: the two failures apart.
 AGENT_START_REFUSAL_S = AGENT_START_ATTEMPTS * AGENT_START_INTERVAL_S + 1.0
 
+#: The FIRST attempt's budget. A warm start measures 3.4-3.9 s (2026-09-04),
+#: so this is room to spare -- and short enough not to sit out a hang for
+#: the full `ready_timeout_s` before doing anything about it.
+FIRST_START_TIMEOUT_MS = 12_000
+
+#: How long `ctrl-c` gets to clear the pane before the second attempt.
+PANE_FREE_TIMEOUT_S = 6.0
+PANE_FREE_INTERVAL_S = 0.5
+
 
 def timeout_ms_for(seconds: float) -> int:
     """A budget in seconds as Herdr's `--timeout`, capped at its maximum."""
@@ -311,3 +320,121 @@ class Herdr:
         return self.run(
             "worktree", "open", "--cwd", str(cwd), "--path", str(path), "--label", label
         )
+
+
+def _free_pane(
+    herdr: Herdr,
+    pane: str,
+    *,
+    sleep: Callable[[float], None],
+    now: Callable[[], float],
+) -> None:
+    """`ctrl-c` the pane, then wait until no agent claims it any more.
+
+    The pane STAYS. Aborting the process rather than closing the tile is
+    what keeps the layout still and the pane id in the result stable --
+    closing and re-splitting would change both.
+
+    A second `ctrl-c` follows after half the deadline: a hung opencode
+    never drew its surface and therefore never grabbed the key, while one
+    that did draw it did.
+
+    The wait STARTS with a sleep, and that order is the whole point. A
+    hung start never got as far as being an agent, so `agent_list()`
+    carries no entry for this pane to begin with -- polling first would
+    return on the spot, give `ctrl-c` no time to land at all and make
+    both PANE_FREE_TIMEOUT_S and the second key dead code. The deadline
+    is a ceiling, not a promise: when it passes with the pane still
+    taken, this returns anyway and lets the second attempt say so.
+    """
+    herdr.pane_send_keys(pane, "ctrl-c")
+    deadline = now() + PANE_FREE_TIMEOUT_S
+    again_at = now() + PANE_FREE_TIMEOUT_S / 2
+    again = False
+    while True:
+        sleep(PANE_FREE_INTERVAL_S)
+        if not any(a.get("pane_id") == pane for a in herdr.agent_list()):
+            return
+        if now() >= deadline:
+            return
+        if not again and now() >= again_at:
+            herdr.pane_send_keys(pane, "ctrl-c")
+            again = True
+
+
+def start_agent(
+    herdr: Herdr,
+    name: str,
+    *,
+    kind: str,
+    pane: str,
+    agent_args: Sequence[str] = (),
+    first_timeout_ms: int = FIRST_START_TIMEOUT_MS,
+    retry_timeout_ms: int,
+    sleep: Callable[[float], None] = time.sleep,
+    now: Callable[[], float] = time.monotonic,
+) -> dict[str, Any]:
+    """Start an agent, with a second attempt for opencode's first bootstrap.
+
+    opencode's FIRST bootstrap in a project that carries a project plugin
+    hangs -- and `workspace init` writes exactly such a plugin. Measured
+    2026-09-04: the process stops right after loading the project config
+    and never paints anything, not even after 300 s. A bootstrap that got
+    far enough and was then ABORTED warms the project; the next start
+    measures 3.4 s. So the aborted first attempt IS the warm-up, and the
+    second one needs no special path at all.
+
+    The detector is Herdr's own `--timeout`, never a poll of ours: it is
+    documented, and Herdr knows before we do whether the agent is ready
+    for input.
+
+    Three answers, because they are three different repairs:
+
+        {"ok": True, "reply": ...}            it is running
+        {"ok": False, "error": "agent_start_failed"}   Herdr refused
+        {"ok": False, "error": "opencode_stuck"}       the start hangs
+
+    A refusal is answered at once and gets NO second attempt: it arrives
+    after 0.0 s, the transient half of it was already repeated
+    AGENT_START_ATTEMPTS times inside `agent_start`, and a `ctrl-c` into a
+    pane where nothing runs is a gesture into the void.
+
+    `retry_timeout_ms <= 0` switches the second attempt off entirely and
+    turns the hang straight into `opencode_stuck`. That is for a caller
+    that must not block: the keystroke runs inside Herdr's handler
+    process (handlers.KEYSTROKE_READY_TIMEOUT_S), and there a hang is a
+    deliberately accepted false alarm. It still pays nothing for the
+    choice -- the aborted first attempt warms the project either way, so
+    the next press is the one that carries.
+
+    Never raises; the caller reads `ok`.
+    """
+    started_at = now()
+    reply = herdr.agent_start(
+        name,
+        kind=kind,
+        pane=pane,
+        agent_args=agent_args,
+        timeout_ms=first_timeout_ms,
+        sleep=sleep,
+        now=now,
+    )
+    if reply:
+        return {"ok": True, "reply": reply}
+    if now() - started_at < AGENT_START_REFUSAL_S:
+        return {"ok": False, "error": "agent_start_failed"}
+    if retry_timeout_ms <= 0:
+        return {"ok": False, "error": "opencode_stuck"}
+    _free_pane(herdr, pane, sleep=sleep, now=now)
+    reply = herdr.agent_start(
+        name,
+        kind=kind,
+        pane=pane,
+        agent_args=agent_args,
+        timeout_ms=retry_timeout_ms,
+        sleep=sleep,
+        now=now,
+    )
+    if reply:
+        return {"ok": True, "reply": reply, "retried": True}
+    return {"ok": False, "error": "opencode_stuck"}
