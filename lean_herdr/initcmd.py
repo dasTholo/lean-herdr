@@ -312,6 +312,13 @@ def workspace_init(
     try:
         data = read_settings(base / SETTINGS_PATH)
         kind = settings_for("orchestrator", data).kind
+        # `_warnings` below hands `data` to `settings.model_warnings`, which
+        # reads [roles.builder] and [roles.reviewer] -- blocks the line above
+        # never touches. Validating them HERE is what keeps the promise the
+        # except branch makes: a config we cannot read costs the warm-up, not
+        # the written/skipped report. Calling it twice is free; it reads two
+        # already-parsed tables and touches nothing.
+        model_warnings(data)
     except SettingsError as exc:
         # A config we cannot read is not a reason to fail `init` -- the files
         # are already written. It only means we cannot tell whether opencode
