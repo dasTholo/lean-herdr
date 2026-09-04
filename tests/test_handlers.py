@@ -21,6 +21,30 @@ RESUME = (
 )
 LEDGER = "Handoff Ledgers (1):\n  1. /handoffs/new.json"
 
+#: Seconds from an opencode orchestrator appearing in a Herdr pane to its
+#: lean-ctx MCP server registering, measured 2026-09-04 out of /proc start
+#: times. The first start in a project took 363.6 s; every one after that
+#: took this. The keystroke cap has to clear the warm case or it reports
+#: `no_agent_id` on a run that worked.
+MEASURED_WARM_START_S = 3.0
+
+
+def test_the_keystroke_waits_longer_than_the_agent_takes_to_register():
+    """The cap was 2.0 s against a 3.0 s warm start -- always a false alarm.
+
+    Both bounds matter, so both are asserted: too low and the keystroke
+    lies about a working orchestrator; too high and a Herdr plugin handler
+    blocks on a wait that belongs to `workspace up`.
+    """
+    from lean_herdr.settings import RoleSettings
+
+    assert handlers.KEYSTROKE_READY_TIMEOUT_S > MEASURED_WARM_START_S, (
+        "the keystroke would give up before the agent it just started can register"
+    )
+    assert handlers.KEYSTROKE_READY_TIMEOUT_S < RoleSettings.ready_timeout_s, (
+        "a plugin handler must not sit out the full `up` wait"
+    )
+
 
 @pytest.fixture
 def world(monkeypatch, tmp_path):

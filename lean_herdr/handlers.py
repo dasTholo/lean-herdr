@@ -34,7 +34,16 @@ TOKEN = "ctx"
 #: the wrong place to sit out `[roles.orchestrator].ready_timeout_s` (45 s
 #: by default). `lean-herdr workspace up` keeps the full wait -- its caller
 #: reads the id off stdout and has a use for it.
-KEYSTROKE_READY_TIMEOUT_S = 2.0
+#:
+#: Measured 2026-09-04, an opencode orchestrator in a Herdr pane, from the
+#: process appearing to its lean-ctx MCP server registering: **3.0 s warm**,
+#: 363.6 s on the FIRST start in a project. The cap stood at 2.0 s and was
+#: therefore below even the warm case -- the keystroke reported `no_agent_id`
+#: on a run that had worked. Six is twice the measurement and still an order
+#: of magnitude under the 45 s a handler must not sit out. The cold start
+#: stays a false alarm; it happens once per project, and covering it would
+#: mean blocking the handler for minutes.
+KEYSTROKE_READY_TIMEOUT_S = 6.0
 
 
 def _note(text: str) -> None:
