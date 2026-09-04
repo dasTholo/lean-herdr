@@ -349,6 +349,43 @@ def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
     return values
 
 
+def llm_settings_layered(
+    root: str | Path, data: dict[str, Any] | None = None
+) -> LlmSettings:
+    """`models.auto.toml` UNDER `config.toml`. One function, both consumers.
+
+    The overlay is what the daily check wrote; `[llm]` in config.toml is
+    what the operator wrote, and the operator wins. That order is the
+    whole reason the overlay is a second FILE and not surgery on the
+    first: an explicit `model` in config.toml survives every check, and
+    no automatic run has to parse and preserve a human's line.
+
+    An empty string in the foreground still means "not set" -- the same
+    rule `llm._first()` follows -- so `model = ""` in config.toml lets the
+    overlay through instead of blanking it.
+
+    `data` is config.toml ALREADY READ. `dispatch.main()` hands it in
+    because it read the file for its RoleSettings anyway, and
+    `test_main_loads_the_config_once_for_both_modes` counts that read.
+
+    BOTH consumers must call this -- `llm.file_settings()` and
+    `dispatch.main()`. If only one read the overlay, the commit generator
+    and the pre-review judge would run on different models the moment one
+    exists: exactly the drift the THE TWO CHAINS block exists to prevent.
+    """
+    base = Path(root)
+    below = llm_settings(read_settings(base / OVERLAY_PATH))
+    above = llm_settings(
+        read_settings(base / SETTINGS_PATH) if data is None else data
+    )
+    return LlmSettings(
+        **{
+            f.name: getattr(above, f.name) or getattr(below, f.name)
+            for f in fields(LlmSettings)
+        }
+    )
+
+
 @dataclass(frozen=True)
 class ModelsSettings:
     """`[models]` -- what the daily catalogue check is allowed to do.

@@ -85,10 +85,12 @@ names and nothing breaks.
 Which model, and how hard it thinks, is configured per project in
 `.lean-ctx/lean-herdr/config.toml` under `[llm]` — the same file the role
 settings live in. For the commit generator: `--model` beats
-`$LEAN_HERDR_LLM_MODEL`, which beats `[llm].model`, which beats the built-in;
-`--effort` beats `[llm].effort`, which beats the built-in `minimal`. The
-pre-review judge has keys of its own — see the work-order section. A broken
-or absent file costs the defaults, never the commit.
+`$LEAN_HERDR_LLM_MODEL`, which beats `[llm].model`, which beats the same key
+in `models.auto.toml` beside it, which beats the built-in; `--effort` beats
+`[llm].effort`, which beats the built-in `minimal`. The pre-review judge has
+keys of its own — see the work-order section. `models.auto.toml` is what
+`lean-herdr models` writes, and it loses to every line an operator wrote by
+hand. Either file broken or absent costs the defaults, never the commit.
 
 **The new attack surface, named:** the builder may now run a command that
 sends the contents of its worktree to a third-party service. That was already
@@ -153,7 +155,8 @@ there is, the judge reads code.
 
 Precedence for the judge's model: `--model` on the CLI, then
 `$LEAN_HERDR_PREREVIEW_MODEL`, then `[llm].prereview_model`, then
-`$LEAN_HERDR_LLM_MODEL`, then `[llm].model`, then the built-in default.
+`$LEAN_HERDR_LLM_MODEL`, then `[llm].model`, then the same key in
+`models.auto.toml` beside the config, then the built-in default.
 For its effort: `--effort`, then `[llm].prereview_effort`, then the built-in
 `low` — three levels, and no environment one for either mode's effort. It
 deliberately does NOT fall back to `[llm].effort`: that one is the commit

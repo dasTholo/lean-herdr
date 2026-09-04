@@ -34,11 +34,9 @@ from lean_herdr.bus import BusError, canonical_root
 from lean_herdr.openrouter import ENDPOINT, api_key
 from lean_herdr.settings import (
     EFFORTS,
-    SETTINGS_PATH,
     LlmSettings,
     SettingsError,
-    llm_settings,
-    read_settings,
+    llm_settings_layered,
 )
 from lean_herdr.worktree import find_worktree
 
@@ -58,12 +56,13 @@ MODEL_ENV = "LEAN_HERDR_LLM_MODEL"
 # defect; a name fitted to its medium is not.
 #
 #     generate()  model:   --model  >  $LEAN_HERDR_LLM_MODEL  >  [llm].model
-#                          >  DEFAULT_MODEL
+#                          >  models.auto.toml [llm].model  >  DEFAULT_MODEL
 #     generate()  effort:  --effort  >  [llm].effort  >  GENERATE_EFFORT
 #
 #     prereview() model:   --model  >  $LEAN_HERDR_PREREVIEW_MODEL
 #                          >  [llm].prereview_model  >  $LEAN_HERDR_LLM_MODEL
-#                          >  [llm].model  >  DEFAULT_MODEL
+#                          >  [llm].model  >  models.auto.toml [llm].model
+#                          >  DEFAULT_MODEL
 #     prereview() effort:  --effort  >  [llm].prereview_effort
 #                          >  PREREVIEW_EFFORT
 #
@@ -74,6 +73,11 @@ MODEL_ENV = "LEAN_HERDR_LLM_MODEL"
 # as quietly thoughtless as the formatter); and the environment sits
 # ABOVE the file (it is the grip inside a running pane, without touching
 # a file that every repository on this machine reads).
+#
+# The overlay sits BELOW config.toml on purpose and is not a fifth
+# spelling of the same thing: it is what a machine wrote, and the
+# operator's own line has to beat it. `llm_settings_layered()` is the one
+# place that merges the two; the levels above it never see two files.
 
 #: Above this the call is not made at all. A runaway diff would cost
 #: real money for an answer nobody can use, and the fallback is free.
@@ -329,10 +333,14 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
 
     `root` is handed in by callers that resolved it already -- the wait
     mode has it. Without it this asks git once, per process.
+
+    Two files now, one rule: `models.auto.toml` below, `config.toml` above.
+    The error tolerance covers both -- a broken overlay costs the defaults,
+    never the commit.
     """
     try:
         base = Path(root) if root is not None else canonical_root(cwd)
-        return llm_settings(read_settings(base / SETTINGS_PATH))
+        return llm_settings_layered(base)
     except (
         SettingsError, BusError, OSError, subprocess.SubprocessError, ValueError
     ) as exc:
@@ -596,9 +604,10 @@ def build_parser() -> argparse.ArgumentParser:
         # opposite of the truth.
         "--model", default=None,
         help="generate: beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
-             ".lean-ctx/lean-herdr/config.toml, then the built-in default. "
+             ".lean-ctx/lean-herdr/config.toml, then the same key in "
+             "models.auto.toml beside it, then the built-in default. "
              "prereview: beats $LEAN_HERDR_PREREVIEW_MODEL, then "
-             "[llm].prereview_model, then those same three",
+             "[llm].prereview_model, then those same four",
     )
     p.add_argument(
         # EFFORTS, not a second spelling of the same four words: the

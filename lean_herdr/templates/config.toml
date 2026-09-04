@@ -39,14 +39,16 @@
 # only where a line below says so.
 #
 # The commit generator:
-#   model:  --model > $LEAN_HERDR_LLM_MODEL > model > built-in
+#   model:  --model > $LEAN_HERDR_LLM_MODEL > model
+#           > models.auto.toml model > built-in
 #   effort: --effort > effort > built-in "minimal"
 # model = "google/gemini-3.8-flash"   # the judge falls back to this
 # effort = "minimal"                  # THE GENERATOR ONLY -- not the judge
 #
 # The pre-review judge:
 #   model:  --model > $LEAN_HERDR_PREREVIEW_MODEL > prereview_model
-#           > $LEAN_HERDR_LLM_MODEL > model > built-in
+#           > $LEAN_HERDR_LLM_MODEL > model > models.auto.toml model
+#           > built-in
 #   effort: --effort > prereview_effort > built-in
 # prereview_model = ""                # empty: share `model` above
 # prereview_effort = "low"            # `effort` above is NOT inherited
@@ -54,6 +56,8 @@
 # Raising `model` to make the judge smarter raises the generator's bill
 # on every commit; give the judge `prereview_model` instead.
 # `effort` and `prereview_effort`: minimal | low | medium | high.
+# `models.auto.toml` beside this file is written by `lean-herdr models`
+# and loses to every line here. See [models] below.
 
 # [workspace] describes the pane `lean-herdr workspace up` opens for the
 # orchestrator. `kind` and `model` moved to [roles.orchestrator].

@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from lean_herdr import llm, openrouter
-from lean_herdr.settings import SETTINGS_PATH, LlmSettings
+from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH, LlmSettings
 from tests.doubles import Completed
 
 #: Every generate() call in here passes `settings=` explicitly. Without
@@ -255,6 +255,32 @@ def test_an_undecodable_repo_root_costs_the_defaults_not_the_run(monkeypatch, ca
 def test_a_missing_file_is_the_normal_case_and_says_nothing(tmp_path, capsys):
     assert llm.file_settings(tmp_path) == LlmSettings()
     assert capsys.readouterr().err == "", "an absent file is not a complaint"
+
+
+def test_a_broken_overlay_costs_the_defaults_not_the_commit(tmp_path, capsys):
+    """The same hard invariant, now over TWO files.
+
+    `models.auto.toml` is written by a machine, and a machine that writes
+    nonsense must not be able to abort every commit in this repository.
+    """
+    path = tmp_path / OVERLAY_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[llm]\nmodel = 5\n", encoding="utf-8")
+    assert llm.file_settings(tmp_path) == LlmSettings()
+    assert "ignoring the settings file" in capsys.readouterr().err
+
+
+def test_the_overlay_is_read_under_config_toml(tmp_path):
+    """Both files reach `generate()`, and the operator's line wins."""
+    _write_config(tmp_path, '[llm]\nmodel = "by/hand"\n')
+    overlay = tmp_path / OVERLAY_PATH
+    overlay.write_text(
+        '[llm]\nmodel = "auto/pick"\nprereview_model = "auto/judge"\n',
+        encoding="utf-8",
+    )
+    got = llm.file_settings(tmp_path)
+    assert got.model == "by/hand"
+    assert got.prereview_model == "auto/judge"
 
 
 def test_the_file_is_read_relative_to_the_repo_root(tmp_path):

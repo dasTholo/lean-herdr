@@ -60,7 +60,7 @@ from lean_herdr.settings import (
     LlmSettings,
     RoleSettings,
     SettingsError,
-    llm_settings,
+    llm_settings_layered,
     model_warnings,
     read_settings,
     settings_for,
@@ -784,7 +784,13 @@ def main(argv: list[str] | None = None) -> int:
         # `config_error: <reason>` on stdout. llm.file_settings() deliberately
         # swallows the same error -- there it would cost a commit -- so without
         # this call a typo in `[llm]` would be silent everywhere.
-        llm_cfg = llm_settings(raw)
+        #
+        # The SAME layering llm.file_settings() applies, out of the same
+        # function. Read the overlay in only one of the two and the commit
+        # generator and the pre-review judge would run on different models
+        # as soon as one exists. `raw` is handed in so config.toml is still
+        # read exactly once (test_main_loads_the_config_once_for_both_modes).
+        llm_cfg = llm_settings_layered(root, raw)
         if args.command not in LOG_COMMANDS:
             # Precedence, at ONE place, and only for the role modes:
             #   kind:  --kind  > [roles.<role>].kind  -> else missing_flags()

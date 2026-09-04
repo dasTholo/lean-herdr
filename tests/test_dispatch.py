@@ -18,6 +18,7 @@ from lean_herdr.dispatch import (
 from lean_herdr.herdr import FIRST_START_TIMEOUT_MS, Herdr, timeout_ms_for
 from lean_herdr.report import resolve_agent
 from lean_herdr.settings import (
+    OVERLAY_PATH,
     SETTINGS_PATH,
     RoleSettings,
     read_settings,
@@ -573,6 +574,63 @@ def test_a_broken_llm_block_is_a_config_error_too(monkeypatch, tmp_path, capsys)
     assert result["ok"] is False
     assert result["error"].startswith("config_error:"), result["error"]
     assert "effort" in result["error"], result["error"]
+
+
+def test_a_broken_overlay_is_a_config_error_too(monkeypatch, tmp_path, capsys):
+    """`models.auto.toml` is read here through the SAME function as in
+    llm.file_settings() -- and here, unlike there, it has a reader.
+
+    The generator swallows a broken overlay, because a machine-written file
+    must not cost a commit. The orchestrator gets told instead, so the
+    operator learns the daily check wrote nonsense on the next dispatch.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    (root / OVERLAY_PATH).write_text('[llm]\neffort = "enormous"\n', encoding="utf-8")
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    _no_launch(monkeypatch)
+
+    code = main(
+        ["builder", "--kind", "claude", "--model", "sonnet",
+         "--role-file", "roles/builder.md"]
+    )
+
+    assert code == 0
+    lines = capsys.readouterr().out.strip().splitlines()
+    assert len(lines) == 1
+    result = json.loads(lines[0])
+    assert result["ok"] is False
+    assert result["error"].startswith("config_error:"), result["error"]
+    assert "effort" in result["error"], result["error"]
+
+
+def test_the_overlay_reaches_dispatch_under_config_toml(monkeypatch, tmp_path):
+    """The layering llm.file_settings() applies, out of the same function.
+
+    Read the overlay in only one of the two and the commit generator and
+    the pre-review judge would run on different models the moment one
+    exists.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, '[llm]\nmodel = "by/hand"\n')
+    (root / OVERLAY_PATH).write_text(
+        '[llm]\nmodel = "auto/pick"\nprereview_model = "auto/judge"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    seen = []
+
+    def spy(_request, **kwargs):
+        seen.append(kwargs["llm_cfg"])
+        return {"ok": True}
+
+    monkeypatch.setattr("lean_herdr.dispatch.dispatch", spy)
+    monkeypatch.setattr("lean_herdr.dispatch.await_task", spy)
+
+    main(["builder", "--kind", "claude", "--await", "--task-id", "T1"])
+
+    assert seen[0].model == "by/hand"
+    assert seen[0].prereview_model == "auto/judge"
 
 
 def test_a_broken_config_wins_over_a_usage_error(monkeypatch, tmp_path, capsys):

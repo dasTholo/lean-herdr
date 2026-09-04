@@ -226,6 +226,115 @@ def test_the_llm_section_must_be_a_table():
         llm_settings({"llm": "a/b"})
 
 
+def _write_llm_files(root, *, config=None, overlay=None):
+    """Both files where settings.py says they live, never at a literal.
+
+    A fixture that spells the path out itself tests the missing-file path
+    under a name that promises the opposite the day one of them moves.
+    """
+    from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
+
+    for relative, text in ((SETTINGS_PATH, config), (OVERLAY_PATH, overlay)):
+        if text is None:
+            continue
+        path = root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+
+
+def test_neither_file_is_every_default(tmp_path):
+    """Both files are optional, exactly like the single one was."""
+    from lean_herdr.settings import LlmSettings, llm_settings_layered
+
+    assert llm_settings_layered(tmp_path) == LlmSettings()
+
+
+def test_the_overlay_alone_reaches_the_caller(tmp_path):
+    from lean_herdr.settings import llm_settings_layered
+
+    _write_llm_files(tmp_path, overlay='[llm]\nmodel = "auto/pick"\n')
+    assert llm_settings_layered(tmp_path).model == "auto/pick"
+
+
+def test_config_toml_alone_reaches_the_caller(tmp_path):
+    from lean_herdr.settings import llm_settings_layered
+
+    _write_llm_files(tmp_path, config='[llm]\nmodel = "by/hand"\n')
+    assert llm_settings_layered(tmp_path).model == "by/hand"
+
+
+def test_config_toml_beats_the_overlay_field_by_field(tmp_path):
+    """The operator's hand survives every daily check -- per FIELD, not per file.
+
+    The overlay is what a machine wrote. A merge that took the whole
+    foreground table the moment it had one key would silently drop the
+    three the check filled in, and the reverse would drop the operator's.
+    """
+    from lean_herdr.settings import llm_settings_layered
+
+    _write_llm_files(
+        tmp_path,
+        config='[llm]\nmodel = "by/hand"\nprereview_effort = "high"\n',
+        overlay=(
+            '[llm]\nmodel = "auto/pick"\nprereview_model = "auto/judge"\n'
+            'effort = "low"\nprereview_effort = "minimal"\n'
+        ),
+    )
+    got = llm_settings_layered(tmp_path)
+    assert got.model == "by/hand", "config.toml wins where it speaks"
+    assert got.prereview_effort == "high"
+    assert got.prereview_model == "auto/judge", "and loses where it is silent"
+    assert got.effort == "low"
+
+
+def test_an_empty_value_in_the_foreground_lets_the_overlay_through(tmp_path):
+    """`model = ""` is "not set" here too -- the rule `llm._first()` follows.
+
+    Blanking the key instead would leave the operator no way back to the
+    overlay short of deleting the line.
+    """
+    from lean_herdr.settings import llm_settings_layered
+
+    _write_llm_files(
+        tmp_path,
+        config='[llm]\nmodel = ""\n',
+        overlay='[llm]\nmodel = "auto/pick"\n',
+    )
+    assert llm_settings_layered(tmp_path).model == "auto/pick"
+
+
+def test_handed_in_data_spares_the_second_read_of_config_toml(tmp_path):
+    """`data` is config.toml ALREADY READ -- dispatch.main() hands it in.
+
+    The proof that the file is not read a second time: it says one thing,
+    `data` says another, and `data` wins.
+    """
+    from lean_herdr.settings import llm_settings_layered
+
+    _write_llm_files(
+        tmp_path,
+        config='[llm]\nmodel = "from/disk"\n',
+        overlay='[llm]\nmodel = "auto/pick"\n',
+    )
+    got = llm_settings_layered(tmp_path, {"llm": {"model": "from/data"}})
+    assert got.model == "from/data"
+
+
+@pytest.mark.parametrize(
+    "text",
+    ['[llm]\nmodel = 5\n', '[llm]\nmodel = "unclosed\n'],
+    ids=["wrong-type", "malformed-toml"],
+)
+def test_a_broken_overlay_is_loud_here(tmp_path, text):
+    """Loud in settings.py. `llm.file_settings()` is the one place that
+    swallows it, and it does so for both files at once."""
+    from lean_herdr.settings import SettingsError, llm_settings_layered
+
+    _write_llm_files(tmp_path, overlay=text)
+    with pytest.raises(SettingsError):
+        llm_settings_layered(tmp_path)
+
+
 def test_an_unknown_workspace_key_does_not_stay_silent():
     with pytest.raises(SettingsError, match="unknown keys"):
         workspace_settings({"workspace": {"labl": "x"}})
