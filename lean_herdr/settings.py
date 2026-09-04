@@ -204,7 +204,7 @@ def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
 
 
 def _check_root(table: Any) -> dict[str, Any]:
-    """Top level: `[default]`, `[roles]`, `[llm]`, `[workspace]`; `roles` a table.
+    """Top level: everything in `ROOT_KEYS`, and `roles` a table if present.
 
     Reading just the known sections would let `[defaults]`, `[role.x]` or
     a key without any section header evaporate in silence -- the operator gets
