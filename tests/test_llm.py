@@ -1,18 +1,24 @@
 """The one network call in this tree -- and not one test reaches it.
 
-`runner` is injected everywhere; `SpyRunner` reads the curl config
-while curl would be running, which is the only moment the file still
-exists.
+`request` is injected for the model call; the spy sees the header and the
+body as ARGUMENTS. Its predecessor had to read a curl config file off the
+disk while curl would have been running, which was the only moment that
+file still existed.
+
+`SpyRunner` below it stays, and it is not a leftover: `wt_diff()` still
+runs a real subprocess, so it still needs a `subprocess.run` double. Two
+seams, two doubles -- that is the shape of the module now.
 """
 
 import json
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
 
-from lean_herdr import llm
+from lean_herdr import llm, openrouter
 from lean_herdr.settings import SETTINGS_PATH, LlmSettings
 from tests.doubles import Completed
 
@@ -37,20 +43,15 @@ def answer(text: str) -> dict:
 
 
 class SpyRunner:
-    """Replaces subprocess.run and inspects the temp files in flight.
+    """Replaces subprocess.run -- and after the urllib move, only for `wt`.
 
-    The interesting facts about the call -- the key is not in argv,
-    the config is 0600, both files are gone afterwards -- can only be
-    checked from inside the call, because the `finally` removes them
-    the moment it returns.
+    The model call has its own seam now (`SpyRequest`). What is left for
+    this one is `wt_diff()`, which still starts a real subprocess: the
+    argv it was handed, and the timeout it was given.
     """
 
     def __init__(self, reply=None, returncode=0, raises=None):
         self.calls: list[list[str]] = []
-        self.config_texts: list[str] = []
-        self.config_modes: list[int] = []
-        self.bodies: list[str] = []
-        self.paths: list[Path] = []
         self.timeouts: list[float | None] = []
         self.reply = reply
         self.returncode = returncode
@@ -59,20 +60,38 @@ class SpyRunner:
     def __call__(self, cmd, **kwargs):
         self.calls.append(list(cmd))
         self.timeouts.append(kwargs.get("timeout"))
-        # Only a curl call carries these. The same double also stands in
-        # for `wt step diff` in task 5, and reaching for --config there
-        # would raise a ValueError the code under test does not catch.
-        if "--config" in cmd:
-            config = Path(cmd[cmd.index("--config") + 1])
-            body = Path(cmd[cmd.index("--data-binary") + 1].removeprefix("@"))
-            self.paths.extend((config, body))
-            self.config_texts.append(config.read_text(encoding="utf-8"))
-            self.config_modes.append(config.stat().st_mode & 0o777)
-            self.bodies.append(body.read_text(encoding="utf-8"))
         if self.raises is not None:
             raise self.raises
         out = "" if self.reply is None else json.dumps(self.reply)
         return Completed(returncode=self.returncode, stdout=out)
+
+
+class SpyRequest:
+    """Replaces openrouter.request and records what it was handed.
+
+    Everything the old SpyRunner could only learn from a temp file --
+    that the key is in the header and not in argv, that the body is the
+    payload we built -- is a plain argument here.
+    """
+
+    def __init__(self, reply=None, raises=None):
+        self.urls: list[str] = []
+        self.methods: list[str] = []
+        self.headers: list[dict] = []
+        self.bodies: list[str | None] = []
+        self.timeouts: list[float] = []
+        self.reply = reply
+        self.raises = raises
+
+    def __call__(self, url, *, method="GET", headers=None, body=None, timeout_s):
+        self.urls.append(url)
+        self.methods.append(method)
+        self.headers.append(dict(headers or {}))
+        self.bodies.append(body)
+        self.timeouts.append(timeout_s)
+        if self.raises is not None:
+            raise self.raises
+        return None if self.reply is None else json.dumps(self.reply)
 
 
 #: What CPython raises when `text=True` meets a byte that is not UTF-8:
@@ -123,60 +142,30 @@ def no_store(tmp_path):
     return tmp_path / "absent" / "auth.json"
 
 
-def test_the_env_key_beats_the_opencode_store(tmp_path):
-    store = tmp_path / "auth.json"
-    store.write_text(json.dumps({"openrouter": {"key": "from-store"}}))
-    assert llm.api_key({llm.KEY_ENV: "from-env"}, store) == "from-env"
+def test_the_key_travels_in_a_header_and_never_in_a_file(no_store):
+    """The promise the 0600 curl config used to make, kept without a file.
 
-
-def test_the_store_answers_when_the_env_is_empty(tmp_path):
-    store = tmp_path / "auth.json"
-    store.write_text(json.dumps({"openrouter": {"key": "from-store"}}))
-    assert llm.api_key({}, store) == "from-store"
-    assert llm.api_key({llm.KEY_ENV: "   "}, store) == "from-store"
-
-
-def test_no_key_anywhere_is_none_not_a_crash(no_store):
-    assert llm.api_key({}, no_store) is None
-
-
-def test_a_malformed_store_is_none_not_a_crash(tmp_path):
-    store = tmp_path / "auth.json"
-    store.write_text("{ not json")
-    assert llm.api_key({}, store) is None
-    store.write_text(json.dumps({"openrouter": "a string"}))
-    assert llm.api_key({}, store) is None
-
-
-def test_the_key_never_reaches_argv(no_store):
-    spy = SpyRunner(answer("feat(x): y"))
+    The key goes into an Authorization header inside this process. It
+    reaches neither argv nor the filesystem -- and the url, the one part
+    of this call that a proxy or a log could see, does not carry it.
+    """
+    spy = SpyRequest(answer("feat(x): y"))
     llm.complete(
-        "prompt", effort="minimal", runner=spy,
-        env={llm.KEY_ENV: "sk-secret-42"}, auth_path=no_store,
+        "prompt", effort="minimal", request=spy,
+        env={openrouter.KEY_ENV: "sk-secret-42"}, auth_path=no_store,
     )
-    flat = " ".join(spy.calls[0])
-    assert "sk-secret-42" not in flat, flat
-    assert "Bearer" not in flat, flat
-    assert "sk-secret-42" in spy.config_texts[0]
-
-
-def test_the_config_file_is_0600_and_gone_afterwards(no_store):
-    spy = SpyRunner(answer("feat(x): y"))
-    llm.complete(
-        "prompt", effort="minimal", runner=spy,
-        env={llm.KEY_ENV: "sk-secret-42"}, auth_path=no_store,
-    )
-    assert spy.config_modes == [0o600]
-    for path in spy.paths:
-        assert not path.exists(), f"{path} was left behind"
+    assert spy.headers[0]["Authorization"] == "Bearer sk-secret-42"
+    assert "sk-secret-42" not in spy.urls[0]
+    assert spy.urls == [openrouter.ENDPOINT]
+    assert spy.methods == ["POST"]
 
 
 def test_the_body_carries_model_and_effort(no_store):
     """complete() resolves nothing -- it sends what it is handed."""
-    spy = SpyRunner(answer("feat(x): y"))
+    spy = SpyRequest(answer("feat(x): y"))
     llm.complete(
-        "prompt", effort="minimal", model="some/other-model", runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt", effort="minimal", model="some/other-model", request=spy,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
     )
     body = json.loads(spy.bodies[0])
     assert body["model"] == "some/other-model"
@@ -187,12 +176,12 @@ def test_the_body_carries_model_and_effort(no_store):
 def test_the_precedence_runs_flag_environment_file_constant(no_store):
     """One test for the whole chain, so a reordering cannot hide."""
     cfg = LlmSettings(model="file/model", effort="medium")
-    env = {llm.KEY_ENV: "k", llm.MODEL_ENV: "env/model"}
+    env = {openrouter.KEY_ENV: "k", llm.MODEL_ENV: "env/model"}
 
     def sent(**kw):
-        spy = SpyRunner(answer("feat(x): y"))
+        spy = SpyRequest(answer("feat(x): y"))
         llm.generate(
-            "prompt", runner=spy, env=env, auth_path=no_store,
+            "prompt", request=spy, env=env, auth_path=no_store,
             settings=cfg, **kw,
         )
         return json.loads(spy.bodies[0])
@@ -204,9 +193,9 @@ def test_the_precedence_runs_flag_environment_file_constant(no_store):
 
 
 def test_without_a_file_and_without_an_environment_the_constants_win(no_store):
-    spy = SpyRunner(answer("feat(x): y"))
+    spy = SpyRequest(answer("feat(x): y"))
     llm.generate(
-        "prompt", runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt", request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
         settings=LlmSettings(),
     )
     body = json.loads(spy.bodies[0])
@@ -279,10 +268,10 @@ def test_the_file_is_read_relative_to_the_repo_root(tmp_path):
 
 
 def test_a_fenced_answer_loses_its_fence(no_store):
-    spy = SpyRunner(answer("```\nfix(parser): add null check\n```"))
+    spy = SpyRequest(answer("```\nfix(parser): add null check\n```"))
     got = llm.complete(
-        "prompt", effort="minimal", runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt", effort="minimal", request=spy,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
     )
     assert got == "fix(parser): add null check"
 
@@ -310,53 +299,59 @@ def test_the_fallback_survives_a_prompt_with_no_diffstat():
 @pytest.mark.parametrize(
     "spy",
     [
-        SpyRunner(answer("x"), returncode=7),
-        SpyRunner(reply={"error": {"message": "rate limited"}}),
-        SpyRunner(answer("   ")),
-        SpyRunner(raises=OSError("curl is not installed")),
+        SpyRequest(reply=None),
+        SpyRequest(reply={"error": {"message": "rate limited"}}),
+        SpyRequest(answer("   ")),
+        SpyRequest(raises=urllib.error.URLError("no route")),
     ],
-    ids=["curl-failed", "error-body", "empty-answer", "no-curl"],
+    ids=["transport-failed", "error-body", "empty-answer", "url-error"],
 )
 def test_generate_returns_the_fallback_for_every_failure(spy, no_store):
     got = llm.generate(
-        DIFFSTAT_PROMPT, runner=spy, settings=NO_FILE,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        DIFFSTAT_PROMPT, request=spy, settings=NO_FILE,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
     )
     assert got == "Changes to lean_herdr/llm.py, tests/test_llm.py"
 
 
-def test_generate_without_a_key_never_calls_curl(no_store):
-    spy = SpyRunner(answer("feat(x): y"))
+def test_generate_without_a_key_never_calls_the_endpoint(no_store):
+    spy = SpyRequest(answer("feat(x): y"))
     got = llm.generate(
-        DIFFSTAT_PROMPT, runner=spy, env={}, auth_path=no_store, settings=NO_FILE
+        DIFFSTAT_PROMPT, request=spy, env={}, auth_path=no_store, settings=NO_FILE
     )
-    assert spy.calls == []
+    assert spy.urls == []
     assert got.startswith("Changes to ")
 
 
 def test_a_prompt_over_the_cap_is_never_sent(no_store):
-    spy = SpyRunner(answer("feat(x): y"))
+    spy = SpyRequest(answer("feat(x): y"))
     huge = "x" * (llm.MAX_PROMPT_BYTES + 1)
     assert llm.complete(
-        huge, effort="minimal", runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        huge, effort="minimal", request=spy,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
     ) is None
-    assert spy.calls == [], "a runaway diff must not cost money"
+    assert spy.urls == [], "a runaway diff must not cost money"
 
 
-def test_a_key_that_would_break_the_config_line_is_refused(no_store):
-    spy = SpyRunner(answer("feat(x): y"))
+def test_a_key_that_would_inject_a_header_is_refused(no_store):
+    """A newline in a header value is an injection, not a formatting slip.
+
+    `http.client` refuses such a value itself -- with a ValueError, out of
+    a function whose whole contract is `never raises`. The check therefore
+    stays explicit and stays in front of the call.
+    """
+    spy = SpyRequest(answer("feat(x): y"))
     assert llm.complete(
-        "prompt", effort="minimal", runner=spy,
-        env={llm.KEY_ENV: 'k"\nheader = "X-Evil: 1'}, auth_path=no_store,
+        "prompt", effort="minimal", request=spy,
+        env={openrouter.KEY_ENV: 'k"\nX-Evil: 1'}, auth_path=no_store,
     ) is None
-    assert spy.calls == []
+    assert spy.urls == []
 
 
 def test_generate_passes_the_measured_effort_by_default(no_store):
-    spy = SpyRunner(answer("feat(x): y"))
+    spy = SpyRequest(answer("feat(x): y"))
     llm.generate(
-        "prompt", runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt", request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
         settings=NO_FILE,
     )
     assert json.loads(spy.bodies[0])["reasoning"] == {"effort": "minimal"}
@@ -365,7 +360,7 @@ def test_generate_passes_the_measured_effort_by_default(no_store):
 def test_generate_writes_the_message_and_exits_zero(monkeypatch, capsys, tmp_path):
     store = tmp_path / "auth.json"
     store.write_text(json.dumps({"openrouter": {"key": "k"}}))
-    monkeypatch.setattr(llm, "AUTH_PATH", store)
+    monkeypatch.setattr(openrouter, "AUTH_PATH", store)
     # Empty, so the store is what decides -- on a machine that exports
     # $OPENROUTER_API_KEY the file would otherwise never be consulted.
     monkeypatch.setattr(llm.os, "environ", {})
@@ -381,8 +376,8 @@ def test_generate_writes_the_message_and_exits_zero(monkeypatch, capsys, tmp_pat
 
 def test_the_flags_reach_generate(monkeypatch, tmp_path):
     """The whole job of this CLI: three flags onto three keyword arguments."""
-    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
-    monkeypatch.setattr(llm.os, "environ", {llm.KEY_ENV: "k"})
+    monkeypatch.setattr(openrouter, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(llm.os, "environ", {openrouter.KEY_ENV: "k"})
     monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
     seen: dict[str, object] = {}
 
@@ -406,8 +401,8 @@ def test_the_absent_flags_stay_none_so_generate_owns_the_precedence(
     monkeypatch, tmp_path
 ):
     """A constant passed from here would put the CLI's silence above the file."""
-    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
-    monkeypatch.setattr(llm.os, "environ", {llm.KEY_ENV: "k"})
+    monkeypatch.setattr(openrouter, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(llm.os, "environ", {openrouter.KEY_ENV: "k"})
     monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
     seen: dict[str, object] = {}
     monkeypatch.setattr(
@@ -419,19 +414,19 @@ def test_the_absent_flags_stay_none_so_generate_owns_the_precedence(
     assert seen["timeout_s"] == llm.GENERATE_TIMEOUT_S
 
 
-def test_a_sub_second_timeout_survives_into_curls_config(no_store):
-    """`max-time = 0` is curl for NO limit -- the one value this must never write.
+def test_a_sub_second_timeout_survives_into_the_request(no_store):
+    """The float goes through as it stands -- an int() would round it to zero.
 
-    curl takes fractional seconds, so the float goes in as it stands. An
-    int() here turned every timeout under a second into an unbounded call,
-    which is exactly the hang the generator may never impose on a commit.
+    Under curl that made `max-time = 0`, which is curl for NO limit at all;
+    urllib takes the float directly. Either way a timeout that rounds away
+    is the unbounded call the generator may never impose on a commit.
     """
-    spy = SpyRunner(answer("fix(x): y"))
+    spy = SpyRequest(answer("fix(x): y"))
     llm.complete(
         "prompt", effort="minimal", model="vendor/m", timeout_s=0.5,
-        runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
     )
-    assert "max-time = 0.5\n" in spy.config_texts[0]
+    assert spy.timeouts == [0.5]
 
 
 def test_a_timeout_that_is_not_positive_is_a_usage_error(capsys):
@@ -444,7 +439,7 @@ def test_a_timeout_that_is_not_positive_is_a_usage_error(capsys):
 
 def test_generate_exits_zero_even_when_everything_breaks(monkeypatch, capsys, tmp_path):
     """The contract worktrunk forces on us: text out, exit 0, always."""
-    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(openrouter, "AUTH_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
 
     def boom(*_a, **_kw):
@@ -458,7 +453,7 @@ def test_generate_exits_zero_even_when_everything_breaks(monkeypatch, capsys, tm
 
 
 def test_a_missing_key_says_so_on_stderr(monkeypatch, capsys, tmp_path):
-    monkeypatch.setattr(llm, "AUTH_PATH", tmp_path / "absent.json")
+    monkeypatch.setattr(openrouter, "AUTH_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(llm.os, "environ", {})
     monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
     monkeypatch.setattr(llm, "generate", lambda *a, **kw: "x")
@@ -472,23 +467,23 @@ def worktrees(*entries: dict) -> dict:
 
 def test_prereview_reads_only_the_first_line(no_store):
     """The reasoning may say `reject` as often as it likes."""
-    spy = SpyRunner(answer(
+    spy = SpyRequest(answer(
         "PREREVIEW: pass\nI would reject this if the order had not asked "
         "for it. Nothing to reject."
     ))
     ruling, note = llm.prereview(
-        "add a parser", "diff --git a/x b/x", runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "add a parser", "diff --git a/x b/x", request=spy,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
     )
     assert ruling == "pass"
     assert note.startswith("I would reject this")
 
 
 def test_a_verdict_further_down_does_not_count(no_store):
-    spy = SpyRunner(answer("Looks fine to me.\nPREREVIEW: reject"))
+    spy = SpyRequest(answer("Looks fine to me.\nPREREVIEW: reject"))
     ruling, note = llm.prereview(
-        "add a parser", "diff", runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "add a parser", "diff", request=spy,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
     )
     assert ruling == "skipped"
     assert note == "unparsable_answer"
@@ -497,49 +492,49 @@ def test_a_verdict_further_down_does_not_count(no_store):
 @pytest.mark.parametrize(
     ("diff", "spy", "reason"),
     [
-        ("   ", SpyRunner(answer("PREREVIEW: reject")), "empty_diff"),
+        ("   ", SpyRequest(answer("PREREVIEW: reject")), "empty_diff"),
         (
             "x" * (llm.MAX_DIFF_BYTES + 1),
-            SpyRunner(answer("PREREVIEW: reject")),
+            SpyRequest(answer("PREREVIEW: reject")),
             "diff_too_large",
         ),
-        ("diff", SpyRunner(raises=OSError("no curl")), "no_answer"),
-        ("diff", SpyRunner(answer("I have no opinion")), "unparsable_answer"),
-        # A ValueError, and neither an OSError nor a SubprocessError: it
-        # walked through both handlers and left this layer as a raise --
-        # which the wait mode reported as `dispatch_crashed` on a task
-        # that had completed, and the manual CLI as exit 1, the code that
-        # is supposed to mean the model rejected.
-        ("diff", SpyRunner(raises=DECODE_ERROR), "no_answer"),
+        ("diff", SpyRequest(reply=None), "no_answer"),
+        ("diff", SpyRequest(answer("I have no opinion")), "unparsable_answer"),
+        # A raise on the injection seam, not inside the transport: whatever
+        # a caller injects, this layer owes its callers `skipped` -- never a
+        # rejection and never a traceback. The wait mode reported one as
+        # `dispatch_crashed` on a task that had completed, and the manual CLI
+        # as exit 1, the code that is supposed to mean the model rejected.
+        ("diff", SpyRequest(raises=urllib.error.URLError("no route")), "no_answer"),
     ],
-    ids=["empty", "too-large", "no-curl", "unparsable", "undecodable"],
+    ids=["empty", "too-large", "transport-failed", "unparsable", "url-error"],
 )
 def test_prereview_never_rejects_when_its_own_machinery_fails(diff, spy, reason, no_store):
     ruling, note = llm.prereview(
-        "an order", diff, runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "an order", diff, request=spy,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
     )
     assert ruling == "skipped", "the plumbing must never reject"
     assert note == reason
 
 
 def test_a_missing_key_is_skipped_not_rejected(no_store):
-    spy = SpyRunner(answer("PREREVIEW: reject"))
+    spy = SpyRequest(answer("PREREVIEW: reject"))
     ruling, note = llm.prereview(
-        "an order", "diff", runner=spy, env={}, auth_path=no_store,
+        "an order", "diff", request=spy, env={}, auth_path=no_store,
         settings=NO_FILE,
     )
     assert (ruling, note) == ("skipped", "no_answer")
-    assert spy.calls == []
+    assert spy.urls == []
 
 
 def judged(no_store, *, cfg=None, env=None, **kw):
     """One prereview call; returns the request body that was sent."""
-    spy = SpyRunner(answer("PREREVIEW: pass"))
+    spy = SpyRequest(answer("PREREVIEW: pass"))
     llm.prereview(
-        "an order", "diff", runner=spy, auth_path=no_store,
+        "an order", "diff", request=spy, auth_path=no_store,
         settings=cfg if cfg is not None else NO_FILE,
-        env={llm.KEY_ENV: "k", **(env or {})},
+        env={openrouter.KEY_ENV: "k", **(env or {})},
         **kw,
     )
     return json.loads(spy.bodies[0])
@@ -584,10 +579,10 @@ def test_the_judge_does_not_inherit_the_commit_generators_effort(no_store):
 
 
 def test_the_note_is_cut_at_the_cap(no_store):
-    spy = SpyRunner(answer("PREREVIEW: reject\n" + "x" * 5000))
+    spy = SpyRequest(answer("PREREVIEW: reject\n" + "x" * 5000))
     _ruling, note = llm.prereview(
-        "an order", "diff", runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "an order", "diff", request=spy,
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
     )
     assert len(note) == llm.NOTE_MAX_CHARS
 
@@ -632,12 +627,13 @@ def test_prereview_itself_refuses_to_judge_without_an_order(no_store):
     point does not go through it -- and argparse defaults --order to "".
     The guard belongs to whoever builds the prompt.
     """
-    spy = SpyRunner(answer("PREREVIEW: reject\nnothing matches the order"))
+    spy = SpyRequest(answer("PREREVIEW: reject\nnothing matches the order"))
     assert llm.prereview(
         "", "diff --git a/x b/x\n+print('debug')",
-        runner=spy, env={llm.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        settings=NO_FILE,
     ) == ("skipped", "no_order")
-    assert spy.calls == [], "no model may be asked to judge against nothing"
+    assert spy.urls == [], "no model may be asked to judge against nothing"
 
 
 def test_an_empty_order_is_skipped_not_rejected():
@@ -684,13 +680,12 @@ def test_a_garbage_worktree_list_is_skipped_not_a_crash():
 
 
 def test_the_resolved_path_is_the_one_the_diff_runs_in(no_store):
+    """Two seams in one call: `runner` fetches the diff, `request` judges it."""
     seen = []
 
     def runner(cmd, **_kw):
         seen.append(list(cmd))
-        if cmd[:1] == ["wt"]:
-            return Completed(stdout="diff --git a/x b/x")
-        return Completed(stdout=json.dumps(answer("PREREVIEW: reject\nno test")))
+        return Completed(stdout="diff --git a/x b/x")
 
     got = llm.prereview_result(
         "an order",
@@ -700,8 +695,9 @@ def test_the_resolved_path_is_the_one_the_diff_runs_in(no_store):
             {"branch": "feat/x", "path": "/right"},
         ),
         runner=runner,
+        request=SpyRequest(answer("PREREVIEW: reject\nno test")),
         settings=NO_FILE,
-        env={llm.KEY_ENV: "k"},
+        env={openrouter.KEY_ENV: "k"},
         auth_path=no_store,
     )
     assert got == {"prereview": "reject", "prereview_note": "no test"}
@@ -776,17 +772,6 @@ def test_the_diff_is_fetched_with_a_lenient_decode():
     assert spy.errors == ["replace"]
 
 
-def test_the_model_call_is_made_with_a_lenient_decode(no_store):
-    """`capture_output` decodes stderr too, and `-sS` writes curl's errors there."""
-    spy = DecodingRunner(json.dumps(answer("feat(x): y")).encode("utf-8"))
-    got = llm.complete(
-        "prompt", effort="minimal", runner=spy,
-        env={llm.KEY_ENV: "k"}, auth_path=no_store,
-    )
-    assert got == "feat(x): y"
-    assert spy.errors == ["replace"]
-
-
 def test_a_foreign_byte_in_the_diff_is_judged_and_not_crashed_on(no_store):
     """The finding end to end: a `�` in the prompt, and a real ruling out.
 
@@ -794,25 +779,16 @@ def test_a_foreign_byte_in_the_diff_is_judged_and_not_crashed_on(no_store):
     `prereview_result()` into the wait mode's collecting `except`, and
     turned a task that had actually completed into `dispatch_crashed`.
     """
-    sent = []
-
-    def runner(cmd, **kwargs):
-        errors = kwargs.get("errors")
-        if cmd[:1] == ["wt"]:
-            raw = b"diff --git a/x b/x\n+caf\xe9\n"
-            return Completed(stdout=raw.decode("utf-8", errors or "strict"))
-        body = Path(cmd[cmd.index("--data-binary") + 1].removeprefix("@"))
-        sent.append(body.read_text(encoding="utf-8"))
-        return Completed(stdout=json.dumps(answer("PREREVIEW: reject\nno test")))
-
+    spy = SpyRequest(answer("PREREVIEW: reject\nno test"))
     got = llm.prereview_result(
         "an order", branch="feat/x",
         worktree_list=worktrees({"branch": "feat/x", "path": "/w"}),
-        runner=runner, settings=NO_FILE, env={llm.KEY_ENV: "k"},
+        runner=DecodingRunner(b"diff --git a/x b/x\n+caf\xe9\n"),
+        request=spy, settings=NO_FILE, env={openrouter.KEY_ENV: "k"},
         auth_path=no_store,
     )
     assert got == {"prereview": "reject", "prereview_note": "no test"}
-    assert "caf�" in json.loads(sent[0])["messages"][0]["content"]
+    assert "caf�" in json.loads(spy.bodies[0])["messages"][0]["content"]
 
 
 def test_a_decode_error_the_replacement_missed_is_skipped_not_a_crash(no_store):
@@ -825,8 +801,8 @@ def test_a_decode_error_the_replacement_missed_is_skipped_not_a_crash(no_store):
     """
     assert llm.wt_diff("/x", runner=SpyRunner(raises=DECODE_ERROR)) is None
     assert llm.complete(
-        "prompt", effort="minimal", runner=SpyRunner(raises=DECODE_ERROR),
-        env={llm.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt", effort="minimal", request=SpyRequest(raises=DECODE_ERROR),
+        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
     ) is None
 
 
@@ -901,15 +877,12 @@ def test_the_absent_prereview_flags_stay_none_and_the_defaults_differ(monkeypatc
 def test_the_real_chain_answers_at_all(tmp_path):
     """The one test that reaches the network -- never in CI.
 
-    Everything else in this file injects `runner`. This one proves the
-    pieces fit together in the real world: a real key, a real curl, a
-    real OpenRouter answer. It costs a fraction of a cent.
+    Everything else in this file injects `request`. This one injects
+    nothing and takes the real default, to prove the pieces fit together
+    in the real world: a real key, a real socket, a real OpenRouter
+    answer. It costs a fraction of a cent.
     """
-    import shutil
-
-    if shutil.which("curl") is None:
-        pytest.skip("curl not installed")
-    if llm.api_key() is None:
+    if openrouter.api_key() is None:
         pytest.skip("no OpenRouter key on this machine")
     got = llm.complete(
         "Answer with exactly the word: pong", effort=llm.GENERATE_EFFORT,

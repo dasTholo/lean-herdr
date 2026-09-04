@@ -52,7 +52,15 @@ def completed_log(tmp_path, message="done"):
     return tmp_path
 
 
-def wait(herdr, tmp_path, *, prereview, runner, worktree=BRANCH, llm_cfg=None):
+def no_network(*_a, **_kw):
+    """The default `request` in here: reaching it is the bug, not the answer."""
+    raise AssertionError("no test may reach the real endpoint")
+
+
+def wait(
+    herdr, tmp_path, *, prereview, runner, request=no_network,
+    worktree=BRANCH, llm_cfg=None,
+):
     return await_task(
         AwaitRequest(
             role="builder", kind="claude", task_id=TASK_ID,
@@ -63,6 +71,7 @@ def wait(herdr, tmp_path, *, prereview, runner, worktree=BRANCH, llm_cfg=None):
         orders_dir=tmp_path,
         sleep=lambda _s: None,
         runner=runner,
+        request=request,
         # NEVER None here: prereview() would then call file_settings(),
         # which runs a real `git rev-parse` and reads this checkout's own
         # .lean-ctx/lean-herdr/config.toml. In production main() hands the
@@ -71,23 +80,29 @@ def wait(herdr, tmp_path, *, prereview, runner, worktree=BRANCH, llm_cfg=None):
     )
 
 
-def llm_runner(verdict_line: str, monkeypatch, tmp_path):
-    """A curl/wt double plus a key, so complete() actually runs."""
+def llm_doubles(verdict_line: str, monkeypatch, tmp_path):
+    """A `wt` double, an endpoint double and a key, so complete() runs.
+
+    Two seams, because the wait mode has two: `runner` drives `wt step
+    diff`, `request` is the model call. One double could stand in for both
+    while the model call went through curl; it cannot now.
+    """
     store = tmp_path / "auth.json"
     store.write_text(json.dumps({"openrouter": {"key": "k"}}))
-    monkeypatch.setattr("lean_herdr.llm.AUTH_PATH", store)
+    monkeypatch.setattr("lean_herdr.openrouter.AUTH_PATH", store)
     # Empty, so the store decides. Left alone, these tests read the real
     # $OPENROUTER_API_KEY of whatever machine runs them -- and one holding
     # a `"`, a backslash or a newline makes complete() refuse the key, which
     # would turn both rulings into `skipped` on that machine alone.
     monkeypatch.setattr("lean_herdr.llm.os.environ", {})
 
-    def runner(cmd, **_kw):
-        if cmd[:1] == ["wt"]:
-            return Completed(stdout="diff --git a/x b/x\n+print('debug')")
-        return Completed(stdout=openrouter(verdict_line))
+    def runner(_cmd, **_kw):
+        return Completed(stdout="diff --git a/x b/x\n+print('debug')")
 
-    return runner
+    def request(_url, **_kw):
+        return openrouter(verdict_line)
+
+    return runner, request
 
 
 def test_without_the_flag_the_answer_is_the_one_from_before(herdr, tmp_path):
@@ -102,10 +117,12 @@ def test_without_the_flag_the_answer_is_the_one_from_before(herdr, tmp_path):
 
 
 def test_a_rejection_stands_beside_the_verdict_never_instead(herdr, tmp_path, monkeypatch):
-    runner = llm_runner("PREREVIEW: reject\ndebug leftover: print()", monkeypatch, tmp_path)
+    runner, request = llm_doubles(
+        "PREREVIEW: reject\ndebug leftover: print()", monkeypatch, tmp_path
+    )
     result = wait(
         herdr, completed_log(tmp_path, "VERDIKT: result\nall green"),
-        prereview=True, runner=runner,
+        prereview=True, runner=runner, request=request,
     )
     assert result["verdict"] == "result", "the strong reviewer keeps its key"
     assert result["prereview"] == "reject"
@@ -114,8 +131,11 @@ def test_a_rejection_stands_beside_the_verdict_never_instead(herdr, tmp_path, mo
 
 
 def test_a_pass_changes_nothing_about_the_answer(herdr, tmp_path, monkeypatch):
-    runner = llm_runner("PREREVIEW: pass", monkeypatch, tmp_path)
-    result = wait(herdr, completed_log(tmp_path), prereview=True, runner=runner)
+    runner, request = llm_doubles("PREREVIEW: pass", monkeypatch, tmp_path)
+    result = wait(
+        herdr, completed_log(tmp_path), prereview=True,
+        runner=runner, request=request,
+    )
     assert result["prereview"] == "pass"
     assert result["ok"] is True
     assert result["state"] == "completed"
@@ -140,9 +160,10 @@ def test_the_pre_review_only_runs_on_completed(herdr, tmp_path, state):
 
 def test_a_broken_pre_review_is_skipped_never_a_rejection(herdr, tmp_path, monkeypatch):
     # os.environ has to be patched process-wide, not handed in as
-    # `env={}`: dispatch passes only `runner` down, so this is the one
-    # grip on the key resolution from out here. Do not "simplify" it.
-    monkeypatch.setattr("lean_herdr.llm.AUTH_PATH", tmp_path / "absent.json")
+    # `env={}`: dispatch passes only `runner` and `request` down, so this
+    # is the one grip on the key resolution from out here. Do not
+    # "simplify" it.
+    monkeypatch.setattr("lean_herdr.openrouter.AUTH_PATH", tmp_path / "absent.json")
     monkeypatch.setattr("lean_herdr.llm.os.environ", {})
     result = wait(
         herdr, completed_log(tmp_path), prereview=True,

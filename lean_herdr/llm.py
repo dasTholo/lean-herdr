@@ -1,4 +1,4 @@
-"""The one HTTP call in this project: a small model, over curl.
+"""The one HTTP call in this project: a small model, over urllib.
 
 Two consumers, one module. `generate()` turns worktrunk's rendered
 commit prompt into a commit message -- it IS the
@@ -7,9 +7,9 @@ branch diff before the expensive reviewer is built. Both go through
 `complete()`, and `complete()` is the only place that talks to the
 network.
 
-`runner` is injectable throughout -- the pattern from
-`worktree.wt_switch()`. No test in this repository reaches the
-network.
+`request` is injectable throughout -- the pattern from
+`worktree.wt_switch()`, and `runner` still is where a real subprocess
+is left: `wt_diff()`. No test in this repository reaches the network.
 
 Stdlib plus `worktree.find_worktree()`, and no entry in
 herdr-plugin.toml: this is a library and a CLI, not a plugin handler.
@@ -26,11 +26,12 @@ import os
 import re
 import subprocess
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
+from lean_herdr import openrouter
 from lean_herdr.bus import BusError, canonical_root
+from lean_herdr.openrouter import ENDPOINT, api_key
 from lean_herdr.settings import (
     EFFORTS,
     SETTINGS_PATH,
@@ -47,8 +48,6 @@ from lean_herdr.worktree import find_worktree
 #: beat it, in that rising order. See the precedence block below.
 DEFAULT_MODEL = "google/gemini-3.8-flash"
 MODEL_ENV = "LEAN_HERDR_LLM_MODEL"
-KEY_ENV = "OPENROUTER_API_KEY"
-ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # THE TWO CHAINS. This block is the authority; the four other places that
 # describe them -- .lean-ctx/lean-herdr/config.toml, the argparse help texts,
@@ -75,10 +74,6 @@ ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 # as quietly thoughtless as the formatter); and the environment sits
 # ABOVE the file (it is the grip inside a running pane, without touching
 # a file that every repository on this machine reads).
-
-#: opencode's credential store, read only when $OPENROUTER_API_KEY is
-#: absent. Shape verified: {"openrouter": {"key": ..., "type": ...}}.
-AUTH_PATH = Path.home() / ".local/share/opencode/auth.json"
 
 #: Above this the call is not made at all. A runaway diff would cost
 #: real money for an answer nobody can use, and the fallback is free.
@@ -175,45 +170,6 @@ whole build round.
 """
 
 
-def api_key(env: Any = None, auth_path: Any = None) -> str | None:
-    """`$OPENROUTER_API_KEY`, else opencode's store, else None.
-
-    None is not an error here. Every caller answers it with a safe
-    behaviour of its own -- a fallback message, a skipped pre-review --
-    never with an exception. A missing key must not break a commit.
-    """
-    environ = os.environ if env is None else env
-    key = (environ.get(KEY_ENV) or "").strip()
-    if key:
-        return key
-    path = AUTH_PATH if auth_path is None else Path(auth_path)
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    entry = data.get("openrouter") if isinstance(data, dict) else None
-    stored = entry.get("key") if isinstance(entry, dict) else None
-    if not isinstance(stored, str) or not stored.strip():
-        return None
-    return stored.strip()
-
-
-def _tempfile(text: str) -> Path:
-    """A 0600 file with `text` in it. The caller removes it."""
-    handle, name = tempfile.mkstemp(prefix="herdr-llm-")
-    path = Path(name)
-    try:
-        with os.fdopen(handle, "w", encoding="utf-8") as stream:
-            stream.write(text)
-    except OSError:
-        path.unlink(missing_ok=True)
-        raise
-    # mkstemp already creates 0600; set it anyway, so the guarantee
-    # this function makes does not depend on a platform default.
-    path.chmod(0o600)
-    return path
-
-
 def _unfence(text: str) -> str:
     """Strip a markdown fence the model wrapped its answer in.
 
@@ -254,23 +210,22 @@ def complete(
     effort: str,
     model: str = DEFAULT_MODEL,
     timeout_s: float = GENERATE_TIMEOUT_S,
-    runner: Any = subprocess.run,
+    request: Any = openrouter.request,
     env: Any = None,
     auth_path: Any = None,
 ) -> str | None:
     """One completion, or None. Never raises, never blocks forever.
 
     None means "no usable answer" for every reason there is: no key, a
-    prompt over the cap, curl failing, a non-zero exit, a body we
-    cannot parse, an empty string. The callers turn that into their
-    own safe behaviour. A raise here would reach worktrunk as a failed
+    prompt over the cap, the transport failing, an HTTP error, a body we
+    cannot parse, an empty string. The callers turn that into their own
+    safe behaviour. A raise here would reach worktrunk as a failed
     generation command, and a failed command is fatal (spec 2.3).
 
-    The key never reaches `argv`. `curl --config <file>` carries the
-    url and the Authorization header, mode 0600, removed in the
-    `finally`. `-H "Bearer ..."` on the command line is readable via
-    `ps` for every process on the machine -- in a multiplexer full of
-    agents that is not a theoretical concern.
+    The key never reaches `argv` and never reaches the filesystem. It
+    goes into an Authorization header inside this process and nowhere
+    else -- `ps` could not see it before either, but a temporary file
+    could be read.
     """
     environ = os.environ if env is None else env
     if len(prompt.encode("utf-8")) > MAX_PROMPT_BYTES:
@@ -279,57 +234,43 @@ def complete(
     # NOTE: this function resolves NOTHING but the key. Model and effort
     # arrive decided -- `_first()` at the call site is the one precedence
     # rule, and a second chain here would drift from it (M3).
-    # A key with a quote, a backslash or a newline in it cannot go
-    # into a curl config line without changing what that line means.
-    # Refusing is right: no real OpenRouter key looks like this, and a
-    # header we assembled wrong is worse than no call at all.
+    #
+    # A key with a newline or a carriage return in it is a header
+    # INJECTION, not a formatting problem. `http.client` refuses such a
+    # value itself -- but with a ValueError, out of a function whose whole
+    # contract is "never raises". The quote and the backslash stay in the
+    # set for the same reason they were there under curl: no real
+    # OpenRouter key looks like this, and a header we assembled wrong is
+    # worse than no call at all.
     if not key or any(char in key for char in '"\\\n\r'):
         return None
-    body = json.dumps(
-        {
-            "model": model,
-            "messages": [{"role": "user", "content": prompt}],
-            "reasoning": {"effort": effort},
-        }
-    )
-    config: Path | None = None
-    payload: Path | None = None
     try:
-        config = _tempfile(
-            f'url = "{ENDPOINT}"\n'
-            f'header = "Authorization: Bearer {key}"\n'
-            'header = "Content-Type: application/json"\n'
-            # The float as it stands: curl takes fractional seconds, and
-            # `max-time = 0` -- what int() makes of anything under a second
-            # -- is curl for NO limit at all.
-            f"max-time = {timeout_s}\n"
+        answer = request(
+            ENDPOINT,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+            },
+            body=json.dumps(
+                {
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "reasoning": {"effort": effort},
+                }
+            ),
+            timeout_s=timeout_s,
         )
-        payload = _tempfile(body)
-        proc = runner(
-            ["curl", "-sS", "--config", str(config), "--data-binary", f"@{payload}"],
-            capture_output=True,
-            text=True,
-            # `text=True` decodes STRICTLY by default, and it decodes
-            # BOTH pipes -- so curl's own error line, which `-sS` puts on
-            # stderr, is read here too even though only stdout is used.
-            # One byte that is not UTF-8 on either would raise
-            # UnicodeDecodeError out of a function whose whole contract
-            # is "never raises".
-            errors="replace",
-            timeout=timeout_s,
-        )
-    except (OSError, subprocess.SubprocessError, ValueError):
-        # ValueError is the belt: UnicodeDecodeError is one, and it is
-        # neither an OSError nor a SubprocessError -- with those two
-        # alone it walked out of here, and out of `main()`, as exit 1.
+    except (OSError, ValueError):
+        # The belt on the SEAM, not on the transport: `openrouter.request`
+        # answers every failure with None already. But `request` is
+        # injectable, and "never raises" is a promise this function makes to
+        # worktrunk, not one it borrows from its default. OSError covers the
+        # urllib family, ValueError the decode and url shapes.
         return None
-    finally:
-        for path in (config, payload):
-            if path is not None:
-                path.unlink(missing_ok=True)
-    if proc.returncode != 0:
+    if answer is None:
         return None
-    return _content(proc.stdout)
+    return _content(answer)
 
 
 def _files_from_diffstat(block: str) -> list[str]:
@@ -417,7 +358,7 @@ def generate(
     model: str | None = None,
     effort: str | None = None,
     timeout_s: float = GENERATE_TIMEOUT_S,
-    runner: Any = subprocess.run,
+    request: Any = openrouter.request,
     env: Any = None,
     auth_path: Any = None,
     settings: LlmSettings | None = None,
@@ -447,7 +388,7 @@ def generate(
             model, environ.get(MODEL_ENV), cfg.model, fallback=DEFAULT_MODEL
         ),
         timeout_s=timeout_s,
-        runner=runner,
+        request=request,
         env=env,
         auth_path=auth_path,
     )
@@ -503,7 +444,7 @@ def prereview(
     model: str | None = None,
     effort: str | None = None,
     timeout_s: float = PREREVIEW_TIMEOUT_S,
-    runner: Any = subprocess.run,
+    request: Any = openrouter.request,
     env: Any = None,
     auth_path: Any = None,
     settings: LlmSettings | None = None,
@@ -549,7 +490,7 @@ def prereview(
             fallback=DEFAULT_MODEL,
         ),
         timeout_s=timeout_s,
-        runner=runner,
+        request=request,
         env=env,
         auth_path=auth_path,
     )
@@ -612,14 +553,15 @@ def prereview_result(
     # orchestrator as `config_error:` instead of dying quietly in
     # file_settings(). Only the commit path may swallow it -- there a
     # broken config must not cost a commit; here it has a reader.
-    ruling, note = prereview(
-        order, diff, runner=runner, settings=settings, **kwargs
-    )
+    # `runner` stops here: it belongs to `wt_diff` above, and the model call
+    # takes `request` instead -- which arrives through **kwargs when a caller
+    # injects one.
+    ruling, note = prereview(order, diff, settings=settings, **kwargs)
     return {"prereview": ruling, "prereview_note": note}
 
 
 def _positive_seconds(text: str) -> float:
-    """A timeout of zero would be curl's `max-time 0`: no limit at all.
+    """A timeout has to bound something, and zero or less bounds nothing.
 
     Loud rather than corrected, like every other typo in the operator's
     worktrunk config -- argparse's exit 2 shows up on the first commit.
@@ -702,7 +644,8 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if not api_key():
                 print(
-                    f"herdr-llm: no ${KEY_ENV} and no opencode key store -- "
+                    f"herdr-llm: no ${openrouter.KEY_ENV} and no opencode key "
+                    "store -- "
                     "falling back to the file names",
                     file=sys.stderr,
                 )

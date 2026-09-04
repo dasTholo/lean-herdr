@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NoReturn
 
-from lean_herdr import llm
+from lean_herdr import llm, openrouter
 from lean_herdr.bus import (
     BusError,
     agents_in_registry,
@@ -428,6 +428,10 @@ def await_task(
     now: Callable[[], float] = time.monotonic,
     settings: RoleSettings | None = None,
     runner: Any = subprocess.run,
+    #: The HTTP injection for the pre-review's model call. `runner` above
+    #: still drives `wt step diff`; without this second seam a
+    #: `--prereview` test would reach the real network.
+    request: Any = openrouter.request,
     #: `[llm]` out of the SAME file main() read for `settings`, and
     #: validated there -- so a wrong value is `config_error:` on stdout
     #: instead of a stderr line nobody reads. None means: no file was
@@ -490,6 +494,7 @@ def await_task(
                         worktree_list=herdr.worktree_list(root),
                         settings=llm_cfg,
                         runner=runner,
+                        request=request,
                     )
                 )
             return outcome
