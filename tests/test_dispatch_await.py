@@ -383,7 +383,16 @@ def test_await_without_task_id_is_a_usage_error(capsys):
     assert result["error"] == "usage_error: --await needs --task-id"
 
 
-def test_build_mode_without_model_is_a_usage_error(capsys):
+def test_build_mode_without_model_is_a_usage_error(capsys, monkeypatch, tmp_path):
+    """The root is stubbed because `main()` reads the config first now.
+
+    Without the stub this asks the CHECKED-IN
+    `.lean-ctx/lean-herdr/config.toml` whether it fills `--model`, and the
+    day an operator uncomments `[roles.builder].model` the test turns red
+    for a reason that has nothing to do with what it asserts. `tmp_path`
+    has no config, so the flag is genuinely missing.
+    """
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: tmp_path)
     code = main(["builder", "--kind", "claude"])
     assert code == 0
     result = json.loads(capsys.readouterr().out.strip())
@@ -630,7 +639,14 @@ def test_cancel_of_an_unknown_order_is_not_found(tmp_path):
          "--key belongs to `remember`"),
     ],
 )
-def test_the_modes_do_not_take_each_others_flags(argv, expected, capsys):
+def test_the_modes_do_not_take_each_others_flags(
+    argv, expected, capsys, monkeypatch, tmp_path
+):
+    """Same stub, same reason as `test_build_mode_without_model_...`: the
+    `--kind is required` row would be answered by a checked-in
+    `[default].kind` instead of failing, and this test is about the flags,
+    not about the operator's file."""
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: tmp_path)
     assert main(argv) == 0
     answer = json.loads(capsys.readouterr().out)
     assert answer["ok"] is False

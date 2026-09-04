@@ -640,6 +640,54 @@ def _spy_dispatch(monkeypatch) -> list[DispatchRequest]:
     return seen
 
 
+def test_only_the_orchestrator_has_a_kind_without_a_file(
+    monkeypatch, tmp_path, capsys
+):
+    """`settings.KIND_BY_ROLE` reaches `--kind` too, and only for one role.
+
+    `settings_for()` seeds `kind` from that table, so `settings.kind` is
+    already `"opencode"` for the orchestrator with NO config file at all
+    -- and the fill in `main()` therefore satisfies `--kind` for it. The
+    builder gets `""` from the same call and is still refused. That is the
+    asymmetry the table exists for, spelled out here so nobody later reads
+    it as a leak: workers say their runtime or `dispatch` refuses, and the
+    flag that costs money when nobody names it -- `--model` -- has no such
+    table and is refused for BOTH.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    _spy_dispatch(monkeypatch)
+
+    orch = _line(
+        ["orchestrator", "--role-file", "roles/orchestrator.md", "--model", "x"],
+        root, monkeypatch, capsys,
+    )
+    work = _line(
+        [*BUILD_ARGS, "--model", "x"], root, monkeypatch, capsys
+    )
+
+    assert orch["ok"] is True, orch
+    assert work["ok"] is False
+    assert "--kind is required" in work["error"], work
+
+
+def test_the_orchestrators_built_in_kind_does_not_excuse_a_model(
+    monkeypatch, tmp_path, capsys
+):
+    """The one built-in stops at `kind`. `--model` is still a duty flag."""
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    _spy_dispatch(monkeypatch)
+
+    got = _line(
+        ["orchestrator", "--role-file", "roles/orchestrator.md"],
+        root, monkeypatch, capsys,
+    )
+
+    assert got["ok"] is False
+    assert got["error"].startswith("usage_error: build mode needs --model"), got
+
+
 def test_the_model_flag_beats_the_file(monkeypatch, tmp_path, capsys):
     """CLI > file, the precedence settings.py already promises."""
     root = tmp_path / "repo"

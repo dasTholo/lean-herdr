@@ -789,6 +789,12 @@ def main(argv: list[str] | None = None) -> int:
             # Precedence, at ONE place, and only for the role modes:
             #   kind:  --kind  > [roles.<role>].kind  -> else missing_flags()
             #   model: --model > [roles.<role>].model -> else missing_flags()
+            # `settings.kind` carries settings.KIND_BY_ROLE, so for the
+            # ORCHESTRATOR the built-in `opencode` satisfies --kind with no
+            # config file at all. That asymmetry is the point of that table
+            # and not a leak: workers have no built-in kind, so they still
+            # say it or `dispatch` refuses. --model has no such table, and it
+            # is --model that costs money when nobody names it.
             # `order`/`answer`/`cancel`/`remember` are left out on purpose:
             # they REFUSE --kind and --model as stray flags, and a
             # `[default].kind` would otherwise turn every one of them into a
