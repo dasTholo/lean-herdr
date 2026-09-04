@@ -1,0 +1,70 @@
+{
+  "data": [
+    {
+      "id": "cheap/no-benchmarks",
+      "context_length": 128000,
+      "pricing": {"prompt": "0.00000002", "completion": "0.00000008"},
+      "supported_parameters": ["reasoning", "tools"],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": ["minimal", "low", "medium", "high"],
+        "default_effort": "low"
+      }
+    },
+    {
+      "id": "cheap/no-minimal-effort",
+      "context_length": 1000000,
+      "pricing": {"prompt": "0.00000005", "completion": "0.0000002"},
+      "supported_parameters": ["reasoning", "tools"],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": ["high", "medium", "low"],
+        "default_effort": "medium"
+      },
+      "benchmarks": {
+        "artificial_analysis": {
+          "intelligence_index": 41.0,
+          "coding_index": 38.5,
+          "agentic_index": 30.2
+        }
+      }
+    },
+    {
+      "id": "mid/small-context",
+      "context_length": 32000,
+      "pricing": {"prompt": "0.0000001", "completion": "0.0000004"},
+      "supported_parameters": ["reasoning"],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": ["minimal", "low", "medium", "high"],
+        "default_effort": "low"
+      },
+      "benchmarks": {
+        "artificial_analysis": {
+          "intelligence_index": 55.0,
+          "coding_index": 52.0,
+          "agentic_index": 44.0
+        }
+      }
+    },
+    {
+      "id": "good/all-clear",
+      "context_length": 400000,
+      "pricing": {"prompt": "0.0000003", "completion": "0.0000012"},
+      "supported_parameters": ["reasoning", "tools"],
+      "reasoning": {
+        "mandatory": true,
+        "supported_efforts": ["minimal", "low", "medium", "high"],
+        "default_effort": "medium"
+      },
+      "benchmarks": {
+        "artificial_analysis": {
+          "intelligence_index": 61.5,
+          "coding_index": 58.0,
+          "agentic_index": 49.0
+        }
+      }
+    }
+  ],
+  "total_count": 261
+}
