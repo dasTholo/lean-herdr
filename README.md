@@ -13,6 +13,7 @@ Herdr installs no toolchains — these things must be present:
 
 | What | What for | Installation |
 |---|---|---|
+| `lean-herdr` (this project) | one binary, three verbs: dispatch, report, workspace | `uv tool install --editable .` |
 | `herdr` >= 0.8.0 (measured on 0.8.2 in this tree) | panes, agents, workspaces | see the Herdr project |
 | `lean-ctx` >= 3.10.1 | agent bus, project memory, tool profiles | `cargo install lean-ctx` |
 | `uv` | development: test runner and dev dependencies | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
@@ -179,6 +180,9 @@ rejection on a branch nobody described.
   tool discipline. It searches the project's own `.claude/hooks` first,
   then `~/.claude/hooks`; `$LEAN_HERDR_HOOKS_DIR`, when set, overrides
   both and searches only that one directory.
+- `lean_herdr/templates/` -- everything `lean-herdr workspace init` writes
+  into a project. The copies in this repository are copies of exactly
+  these files, and `tests/test_templates.py` keeps them byte-identical.
 
 ## Setting up a project
 
