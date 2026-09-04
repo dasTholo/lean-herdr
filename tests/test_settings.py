@@ -8,6 +8,7 @@ from lean_herdr.settings import (
     RoleSettings,
     SettingsError,
     WorkspaceSettings,
+    load_jsonc,
     read_settings,
     settings_for,
     workspace_settings,
@@ -246,3 +247,59 @@ def test_a_literal_label_is_valid_but_an_unknown_placeholder_is_not():
 
 def test_no_workspace_section_means_every_default():
     assert workspace_settings({}) == WorkspaceSettings()
+
+
+# -- load_jsonc: opencode's own configuration --------------------------
+
+
+def test_a_missing_jsonc_file_is_absent_rather_than_broken(tmp_path):
+    """Absent and present-but-unusable are two different repairs."""
+    result = load_jsonc(tmp_path / "opencode.jsonc")
+    assert result.found is False
+    assert result.error == ""
+    assert result.data == {}
+
+
+def test_a_comment_inside_a_string_literal_survives_the_strip(tmp_path):
+    """The whole reason this is not `json.loads` on a `//`-split line."""
+    path = tmp_path / "opencode.jsonc"
+    path.write_text(
+        "{\n"
+        "  // a real comment\n"
+        '  "schema": "https://opencode.ai/config.json", // and a trailing one\n'
+        '  "agent": {"orchestrator": {"mode": "primary"}}\n'
+        "}\n",
+        encoding="utf-8",
+    )
+    result = load_jsonc(path)
+    assert result.found is True and result.error == ""
+    assert result.data["schema"] == "https://opencode.ai/config.json"
+    assert "orchestrator" in result.data["agent"]
+
+
+def test_broken_json_is_present_and_named_never_raised(tmp_path):
+    path = tmp_path / "opencode.jsonc"
+    path.write_text('{"agent": {\n', encoding="utf-8")
+    result = load_jsonc(path)
+    assert result.found is True, "the file IS there -- that is not `absent`"
+    assert "not valid JSONC" in result.error
+    assert result.data == {}
+
+
+def test_a_top_level_that_is_not_an_object_is_no_configuration(tmp_path):
+    path = tmp_path / "opencode.jsonc"
+    path.write_text("[1, 2]\n", encoding="utf-8")
+    assert "list" in load_jsonc(path).error
+
+
+def test_undecodable_bytes_do_not_escape_as_an_exception(tmp_path):
+    path = tmp_path / "opencode.jsonc"
+    path.write_bytes(b'{"agent": "\xff\xfe"}')
+    result = load_jsonc(path)
+    assert result.found is True and "unreadable" in result.error
+
+
+def test_a_directory_where_the_file_belongs_is_not_an_exception_either(tmp_path):
+    """The OSError that is not FileNotFoundError -- total means total."""
+    (tmp_path / "opencode.jsonc").mkdir()
+    assert "unreadable" in load_jsonc(tmp_path / "opencode.jsonc").error

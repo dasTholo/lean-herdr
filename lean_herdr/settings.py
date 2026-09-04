@@ -6,12 +6,19 @@ Deliberately separate from config.py, which reads the HERDR_* environment
 for the plugin handlers: different purpose, different lifetime. Without the
 file the project behaves exactly as it does without this module; a file that
 IS there but is wrong is an error and never stays silent.
+
+`load_jsonc` at the bottom reads a SECOND configuration file in a second
+format -- `opencode.jsonc`, which belongs to opencode and not to us. It sits
+here because this is the module that owns reading configuration, and because
+two copies of one comment stripper would drift (M3).
 """
 
 from __future__ import annotations
 
+import json
+import re
 import tomllib
-from dataclasses import dataclass, fields, replace
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any
 
@@ -340,3 +347,83 @@ def workspace_settings(data: dict[str, Any] | None = None) -> WorkspaceSettings:
             f"workspace.label={values.label!r} is not formattable: {exc}"
         ) from exc
     return values
+
+
+# -- opencode.jsonc ----------------------------------------------------
+
+
+@dataclass(frozen=True)
+class JsoncFile:
+    """One JSONC file, read TOTAL: `load_jsonc` never raises out of it.
+
+    Three states, kept apart because each one is a different repair and
+    the operator has to be told which:
+
+    * `found=False`, `error=""` -- there is no file at that path. The
+      answer is `workspace init`.
+    * `found=True`, `error` non-empty -- the file is there and unusable:
+      undecodable bytes, JSON the comment strip could not save, or a top
+      level that is not an object. The answer is an editor, and `data`
+      stays `{}` so a caller that ignores `error` reads nothing rather
+      than something wrong.
+    * `found=True`, `error=""` -- `data` is what the file says.
+
+    A bare `dict | None` would collapse the first two onto one answer, and
+    a raise would hand every caller an except ladder for a file that is
+    simply not there -- which is the normal case in a project `init` never
+    touched.
+    """
+
+    data: dict[str, Any] = field(default_factory=dict)
+    found: bool = False
+    error: str = ""
+
+
+#: A JSON string literal with its escapes. Blanked before the `//` search,
+#: so a URL inside a value keeps everything behind its own `//`.
+_JSON_STRING = re.compile(r'"(?:[^"\\]|\\.)*"')
+
+
+def _blank_strings(line: str) -> str:
+    """Every string literal on the line, hollowed out but the SAME length.
+
+    The length is the point. The `//` is searched for in this line and the
+    cut is made in the original one, so the two must share a coordinate
+    system. The predecessor of this function replaced each literal with
+    `""` and then sliced the original at an index taken from the shorter
+    string -- on any line carrying a literal AND a trailing comment it cut
+    into the value, and the file failed to parse. No file in this repo has
+    such a line, which is why it stayed green until this function moved
+    into production.
+    """
+    return _JSON_STRING.sub(lambda m: '"' + " " * (len(m.group()) - 2) + '"', line)
+
+
+def load_jsonc(path: str | Path) -> JsoncFile:
+    """JSON with `//` line comments -> JsoncFile. Never raises.
+
+    Block comments are deliberately NOT handled: no file this project
+    reads or writes carries one, and a `/* */` scanner that has to respect
+    string literals is a parser rather than the six lines below.
+    """
+    p = Path(path)
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return JsoncFile()
+    except (OSError, UnicodeDecodeError) as exc:
+        return JsoncFile(found=True, error=f"unreadable: {exc}")
+    stripped: list[str] = []
+    for line in text.splitlines():
+        hit = _blank_strings(line).find("//")
+        stripped.append(line[:hit] if hit != -1 else line)
+    try:
+        data: Any = json.loads("\n".join(stripped))
+    except json.JSONDecodeError as exc:
+        return JsoncFile(found=True, error=f"not valid JSONC: {exc}")
+    if not isinstance(data, dict):
+        return JsoncFile(
+            found=True,
+            error=f"top level is {type(data).__name__}, not an object",
+        )
+    return JsoncFile(data=data, found=True)

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from lean_herdr.report import SUBCOMMANDS
-from tests.test_config_files import load_jsonc
+from lean_herdr.settings import load_jsonc
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ("builder", "reviewer")
@@ -60,12 +60,16 @@ def claude_key(command: str) -> str:
 
 
 def opencode() -> dict:
-    """opencode.jsonc, parsed by the stripper tests/test_config_files.py owns.
+    """opencode.jsonc, parsed by the stripper lean_herdr/settings.py owns.
 
     Not a second one: that stripper already handles `//` inside string
-    literals, and two of them would drift.
+    literals, and two of them would drift. It is total, so the assertion
+    is what turns a broken repo file into a sentence instead of a KeyError.
     """
-    return load_jsonc(ROOT / "opencode.jsonc")
+    cfg = load_jsonc(ROOT / "opencode.jsonc")
+    assert cfg.found, f"no opencode.jsonc at {ROOT}"
+    assert not cfg.error, cfg.error
+    return cfg.data
 
 
 @pytest.mark.parametrize("role", WORKERS)

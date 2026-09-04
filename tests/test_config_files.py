@@ -1,35 +1,38 @@
-import json
-import re
 import tomllib
 from pathlib import Path
+
+from lean_herdr.settings import load_jsonc
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def load_jsonc(path: Path) -> dict:
-    """Strip line comments without touching // inside string literals."""
-    lines = []
-    for line in path.read_text(encoding="utf-8").splitlines():
-        without_strings = re.sub(r'"(?:[^"\\]|\\.)*"', '""', line)
-        hit = without_strings.find("//")
-        lines.append(line[:hit] if hit != -1 else line)
-    return json.loads("\n".join(lines))
+def opencode() -> dict:
+    """This repo's own opencode.jsonc, or a named failure.
+
+    `load_jsonc` is total on purpose -- production must not raise over a
+    file a project never got. A test wants the opposite: this file IS
+    there, and a broken one has to say so here rather than surface three
+    lines down as a KeyError on `{}`.
+    """
+    cfg = load_jsonc(ROOT / "opencode.jsonc")
+    assert cfg.found, f"no opencode.jsonc at {ROOT}"
+    assert not cfg.error, cfg.error
+    return cfg.data
 
 
 def test_opencode_jsonc_is_valid_and_lives_in_the_repo():
-    cfg = load_jsonc(ROOT / "opencode.jsonc")
-    assert set(cfg) >= {"mcp", "agent"}
+    assert set(opencode()) >= {"mcp", "agent"}
 
 
 def test_lean_ctx_is_registered_as_a_stdio_server():
-    server = load_jsonc(ROOT / "opencode.jsonc")["mcp"]["lean-ctx"]
+    server = opencode()["mcp"]["lean-ctx"]
     assert server["type"] == "local"
     assert server["command"] == ["lean-ctx"], "serve is the HTTP server, not stdio"
     assert server["enabled"] is True
 
 
 def test_both_opencode_agents_have_role_text_a_cap_and_a_guard():
-    cfg = load_jsonc(ROOT / "opencode.jsonc")
+    cfg = opencode()
     for name in ("orchestrator", "reviewer"):
         agent = cfg["agent"][name]
         assert agent["prompt"] == f"{{file:./.lean-ctx/lean-herdr/roles/{name}.md}}"
@@ -40,14 +43,14 @@ def test_both_opencode_agents_have_role_text_a_cap_and_a_guard():
 
 
 def test_orchestrator_may_dispatch_wt_and_herdr():
-    bash = load_jsonc(ROOT / "opencode.jsonc")["agent"]["orchestrator"]["permission"]["bash"]
+    bash = opencode()["agent"]["orchestrator"]["permission"]["bash"]
     assert bash["lean-herdr dispatch *"] == "allow"
     assert bash["wt *"] == "allow"
     assert bash["herdr *"] == "allow"
 
 
 def test_reviewer_may_write_nothing_and_no_wt():
-    bash = load_jsonc(ROOT / "opencode.jsonc")["agent"]["reviewer"]["permission"]["bash"]
+    bash = opencode()["agent"]["reviewer"]["permission"]["bash"]
     assert "wt *" not in bash, "the reviewer does not merge"
     assert set(bash) >= {"*", "git diff*", "git log*"}
 
