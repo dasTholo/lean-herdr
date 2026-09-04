@@ -3,7 +3,9 @@
 A router, nothing more. Every verb hands off to a `main(argv) -> int`
 that already exists and already keeps the house contract: one JSON line
 on stdout, `ok` as the only truth, exit ALWAYS 0. Rebuilding any of that
-here would be a second place for a rule that has one.
+here would be a second place for a rule that has one. The one rung this
+file does keep is the one no delegate can reach: the import itself, which
+runs before that delegate's own `except` clauses exist.
 
 The verb modules are imported ON THE CALL, not up here. `lean_herdr.
 workspace` reaches `lean_herdr.dispatch` and from there `ordercmd`; a
@@ -44,6 +46,22 @@ def _usage(message: str) -> int:
     return 0
 
 
+def _crashed(verb: str, exc: BaseException) -> int:
+    """The last rung of report.main's ladder, one level up.
+
+    A verb's own main catches everything it can raise -- but only once
+    it is imported. `lean_herdr.workspace` reaches dispatch and from
+    there ordercmd, which binds `ORCHESTRATOR_AGENT` while the module
+    body runs; a failure there happens before a single one of those
+    `except` clauses is in scope. The verb is named in the message
+    because the traceback it replaces is the only other thing that
+    would have said which import died.
+    """
+    line = {"ok": False, "error": f"cli_crashed: {verb}: {exc}"}
+    sys.stdout.write(json.dumps(line, ensure_ascii=False) + "\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Route `lean-herdr <verb> ...` to the verb's own main. Exit ALWAYS 0."""
     args = list(sys.argv[1:] if argv is None else argv)
@@ -59,7 +77,10 @@ def main(argv: list[str] | None = None) -> int:
     module = VERBS.get(verb)
     if module is None:
         return _usage(f"unknown verb {verb!r}; expected one of {sorted(VERBS)}")
-    return importlib.import_module(module).main(rest)
+    try:
+        return importlib.import_module(module).main(rest)
+    except Exception as exc:  # noqa: BLE001 -- never abort the caller
+        return _crashed(verb, exc)
 
 
 if __name__ == "__main__":

@@ -1,11 +1,14 @@
-"""The verb router: routing, and the two ways of getting it wrong.
+"""The verb router: routing, and the three ways of getting it wrong.
 
 Every verb's own main is tested by its own file. What is tested here is
-that the router reaches it with the REST of the arguments, and that a
-bad verb keeps the house contract instead of argparse's exit 2.
+that the router reaches it with the REST of the arguments, that a bad
+verb keeps the house contract instead of argparse's exit 2, and that a
+verb whose module dies on the way in keeps it too.
 """
 
 import json
+import sys
+import types
 
 import pytest
 
@@ -51,3 +54,36 @@ def test_every_verb_names_a_module_that_actually_imports():
 
     for verb, module in cli.VERBS.items():
         assert callable(importlib.import_module(module).main), verb
+
+
+def test_a_verb_whose_module_dies_on_import_is_still_one_json_line(monkeypatch, capsys):
+    """A delegate's `except` ladder does not exist until it is imported.
+
+    `lean_herdr.workspace` reaches dispatch and from there ordercmd,
+    which binds `ORCHESTRATOR_AGENT` while the module body runs. A
+    failure that deep happens before any of those clauses are in scope,
+    and the router would hand the caller a traceback and a non-zero
+    exit -- the one shape an orchestrator cannot tell apart from no
+    output at all.
+    """
+    monkeypatch.setitem(cli.VERBS, "boom", "lean_herdr.no_such_module")
+    assert cli.main(["boom"]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("cli_crashed: boom:")
+
+
+def test_a_verb_whose_main_raises_is_caught_too(monkeypatch, capsys):
+    """Every delegate catches its own. The router does not bet on it."""
+    module = types.ModuleType("lean_herdr.exploding_verb")
+
+    def explode(argv: list[str]) -> int:
+        raise RuntimeError("the delegate let one through")
+
+    module.main = explode
+    monkeypatch.setitem(sys.modules, "lean_herdr.exploding_verb", module)
+    monkeypatch.setitem(cli.VERBS, "boom", "lean_herdr.exploding_verb")
+    assert cli.main(["boom"]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["ok"] is False
+    assert "the delegate let one through" in answer["error"]
