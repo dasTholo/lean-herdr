@@ -10,7 +10,8 @@ umzuschreiben. Und die eine HTTP-Stelle des Projekts ist ein `curl`-Subprozess.
 `lean_herdr/workspace.py`, `lean_herdr/handlers.py`, `lean_herdr/llm.py`,
 `lean_herdr/cli.py`, `lean_herdr/initcmd.py`,
 `lean_herdr/templates/config.toml`, `.lean-ctx/lean-herdr/roles/orchestrator.md`,
-`README.md` — neu: `lean_herdr/openrouter.py`, `lean_herdr/catalog.py`
+`README.md`, `.gitignore` — neu: `lean_herdr/openrouter.py`,
+`lean_herdr/catalog.py`
 
 ---
 
@@ -33,6 +34,30 @@ nach dieser Tabelle in seinem Prompt:
 | Write, rebuild, test code      | builder  | claude   | sonnet                |
 | Check what the builder built   | reviewer | opencode | a different one       |
 ```
+
+**Die Rollen-Tabellen gibt es dabei längst.** `.lean-ctx/lean-herdr/config.toml`
+ist byte-identisch mit dem Template und hat **null aktive Zeilen** — alles
+auskommentiert, sodass das Projekt sich ohne die Datei genauso verhält. Was sie
+zeigt, ist trotzdem die Struktur, die `settings.py` kennt:
+
+| Block | zeigt heute | Modell? |
+|---|---|---|
+| `[roles.orchestrator]` | `profile` | **nein** |
+| `[roles.builder]` | `direction` | **nein** |
+| `[roles.reviewer]` | `ratio` | **nein** |
+| `[llm]` | `model`, `prereview_model`, beide `effort` | ja — aber nur für `llm.py` |
+| `[workspace]` | `label`, `kind`, `model` | ja — nur der Orchestrator-Pane |
+
+Die drei Rollen-Blöcke tragen Pane-Geometrie und Kontext-Profil und **keinen
+`model`-Schlüssel**, nicht einmal auskommentiert: `RoleSettings` hat das Feld
+nicht. Und `[llm].model` ist der Verwechslungskandidat — sein eigener Kommentar
+sagt „Read by `lean_herdr/llm.py` alone"; mit dem, womit Builder und Reviewer
+arbeiten, hat es nichts zu tun.
+
+Das ist der Grund, warum Abschnitt 3 die **kleinstmögliche** Änderung ist:
+`[roles.builder]` und `[roles.reviewer]` sind vorhandene Tabellen, die zwei
+Schlüssel dazubekommen. Es entsteht keine neue Struktur, und wer die Datei heute
+liest, findet die neuen Zeilen dort, wo er sie erwartet.
 
 ### 1.2 Der Commit-Pfad läuft auf dem System-Interpreter
 
@@ -383,8 +408,42 @@ die Trennung aufheben, für die es ihn gibt — „raising `model` to make the j
 smarter raises the generator's bill". Wer den Judge anders will, setzt
 `prereview_model` von Hand, und die Automatik rührt ihn nicht an.
 
-Die Datei gehört in `.gitignore`: die maschinenlokale Preiswahl soll nicht zu
-Kollegen wandern.
+**Der Ablageort muss ignoriert werden — und das ist heute keine Tatsache,
+sondern eine Aufgabe.** Geprüft am 2026-09-04:
+
+```
+git ls-files .lean-ctx/lean-herdr/
+  .lean-ctx/lean-herdr/config.toml
+  .lean-ctx/lean-herdr/roles/{builder,orchestrator,reviewer}.md
+
+git check-ignore -v .lean-ctx/lean-herdr/models.auto.toml
+  (keine Regel)
+```
+
+Ein `.gitignore` existiert, deckt aber `.lean-ctx/` nirgends ab, und die vier
+Dateien dort sind **absichtlich** getrackt. Ein pauschales `.lean-ctx/` würde sie
+mit untracken — die Regel muss also den einen Namen treffen:
+
+```gitignore
+# machine-local, written by `lean-herdr models` -- never shared
+.lean-ctx/lean-herdr/models.auto.toml
+```
+
+Für **dieses** Repository ist das eine Zeile im Plan. Für **fremde** Projekte,
+in denen `workspace init` läuft, ist es eine Entscheidung: `initcmd` schreibt
+heute nur eigene Dateien und fasst fremde nicht an — der Modulkommentar begründet
+das ausdrücklich („that directory belongs to whoever else writes into it"). Ein
+`.gitignore` gehört dem Projekt, nicht uns. Deshalb: `workspace init` **hängt
+nichts an**, sondern meldet über die bestehende `_warnings()`-Liste, dass die
+Zeile fehlt, sobald `[models].auto` gesetzt ist. Der Operator entscheidet.
+
+**Offene Alternative, die dieser Fund aufwirft:** Das Overlay könnte statt im
+Repo im lean-ctx-Statusverzeichnis liegen (`orderlog.lean_ctx_data_dir()`, nach
+Repo-Wurzel geschlüsselt) — dann bräuchte es nie ein `.gitignore`, in keinem
+Projekt, und wäre auch der Sache nach maschinenlokal. Der Preis: es steht nicht
+mehr neben `config.toml`, wo man Konfiguration sucht. Der Ablageort im Repo ist
+die getroffene Wahl; diese Alternative ist notiert, weil erst die Prüfung oben
+ihren Preis sichtbar gemacht hat.
 
 **Wer die beiden Dateien zusammenführt:** eine neue Funktion in `settings.py`,
 und zwar genau **eine** für beide Verbraucher:
@@ -503,6 +562,9 @@ Konstante zu ändern ist eine eigene Entscheidung mit eigener Messung.
   „Modell ohne den nötigen Effort wird verworfen"; `write_overlay` gegen
   `tmp_path`; `check` mit gestellter `mtime` für frisch / abgelaufen / `auto`
   aus.
+- **`initcmd._warnings()`**: die neue Meldung erscheint, wenn `[models].auto`
+  gesetzt ist und `.gitignore` die Overlay-Zeile nicht führt — und **nicht**,
+  wenn `auto` aus ist oder die Zeile schon dasteht.
 - **`test_language.py`** gilt unverändert: alles außerhalb `docs/` ist Englisch.
 - **Ein Test, der die Schnittlinie hält:** `llm.py` importiert `catalog` nicht.
   Das ist die Regel aus Abschnitt 2, und sie ist die einzige, die ein Mensch beim
@@ -516,11 +578,17 @@ Konstante zu ändern ist eine eigene Entscheidung mit eigener Messung.
 2. **Teil A** — Rollen bekommen `model` und `kind`. Berührt die meisten Tests,
    aber keinen neuen Code.
 3. **Teil C** — `catalog.py`, `[models]`, das Overlay, die CLI, der Haken in
-   `workspace up`.
+   `workspace up`. Dazu, im selben Schritt und nicht später:
+   - die eine Zeile in `.gitignore` dieses Repositories (5.3),
+   - die `_warnings()`-Meldung in `initcmd`, wenn `[models].auto` gesetzt ist
+     und die Zeile im `.gitignore` des Zielprojekts fehlt.
+
+   Beides gehört an das Ende von Teil C, weil erst dort eine Datei entsteht, die
+   ignoriert werden müsste. Vorgezogen wäre es eine Regel ohne Gegenstand.
 
 Jeder Teil ist für sich lauffähig und abbrechbar. Bricht Teil C ab, steht das
 Projekt trotzdem besser da als heute: curl ist weg und die Modelle stehen in der
-Config.
+Config — und es liegt keine ungetrackte Datei herum, die niemand ignoriert hat.
 
 ## 9. Bewusst nicht in diesem Design
 
