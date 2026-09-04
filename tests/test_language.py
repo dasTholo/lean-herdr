@@ -64,7 +64,7 @@ FROZEN_IDS = {
 
 #: Protocol tokens that LOOK like German prose but are literals the code
 #: owns. Removed from a line before tokenising, exactly like FROZEN_IDS.
-#: `VERDIKT` is the literal of dispatch.VERDICT_RE: roles/reviewer.md writes
+#: `VERDIKT` is the literal of dispatch.VERDICT_RE: .lean-ctx/lean-herdr/roles/reviewer.md writes
 #: it, every review ever written carries it, and the orchestrator reads it
 #: as a machine value. It is a protocol word, not prose -- and without this
 #: entry, the day somebody adds `verdikt` to GERMAN_WORDS every line in the

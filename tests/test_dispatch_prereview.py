@@ -65,7 +65,7 @@ def wait(herdr, tmp_path, *, prereview, runner, worktree=BRANCH, llm_cfg=None):
         runner=runner,
         # NEVER None here: prereview() would then call file_settings(),
         # which runs a real `git rev-parse` and reads this checkout's own
-        # .config/lean-herdr.toml. In production main() hands the
+        # .lean-ctx/lean-herdr/config.toml. In production main() hands the
         # validated block down; in a test we hand down an empty one.
         llm_cfg=llm_cfg if llm_cfg is not None else LlmSettings(),
     )

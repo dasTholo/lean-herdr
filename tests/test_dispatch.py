@@ -269,7 +269,7 @@ def test_focus_true_drops_the_no_focus_flag(world):
 
 
 def test_without_a_config_file_the_split_is_the_one_from_before(world, tmp_path):
-    """Global constraint: no `.config/lean-herdr.toml` -- byte-identical.
+    """Global constraint: no `.lean-ctx/lean-herdr/config.toml` -- byte-identical.
 
     The expected argv is the one this project sent before the config existed;
     a `--ratio` or a `--focus` sneaking in would show up here.

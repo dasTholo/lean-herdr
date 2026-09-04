@@ -1,6 +1,6 @@
 """The worker's order path is a CLI now, so it needs a shell permission.
 
-Before this design roles/builder.md and roles/reviewer.md carried no shell
+Before this design the role prompts under .lean-ctx/lean-herdr/roles/ carried no shell
 line at all: everything ran through ctx_task, an MCP tool. reviewer even
 carries `"*": "deny"`. Without one pattern per subcommand the worker
 cannot fetch its order, and the failure looks exactly like a crash -- the
@@ -23,7 +23,7 @@ from tests.test_config_files import load_jsonc
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ("builder", "reviewer")
 
-#: The builder's own gate. roles/builder.md prescribes TDD and commits via
+#: The builder's own gate. .lean-ctx/lean-herdr/roles/builder.md prescribes TDD and commits via
 #: `wt step commit --stage none`, and `bash: {"*": "deny"}` plus the report
 #: patterns let it do neither -- an opencode builder would fail on its first
 #: `uv run pytest` and again on its first commit. Exactly this list, nothing
@@ -182,7 +182,7 @@ def test_the_claude_builder_may_commit_through_worktrunk():
 
 
 #: The Claude harness spells the same grant differently, so the two files
-#: cannot share one list. These three are the ones `roles/builder.md` makes
+#: cannot share one list. These three are the ones `.lean-ctx/lean-herdr/roles/builder.md` makes
 #: mandatory: stage, test, commit. `wt step commit --stage none` commits the
 #: INDEX, so without `git add` the commit is empty and the role text cannot
 #: be followed at all -- and an agent told to do TDD has to run a test.
@@ -190,7 +190,7 @@ def test_the_claude_builder_may_commit_through_worktrunk():
 #: The two harnesses are deliberately NOT at parity: opencode also grants the
 #: builder `uv run ruff*`, `git commit*`, `git diff*` and `git status*`, which
 #: the Claude side does not (operator decision, 2026-09-03). Nothing in
-#: `roles/builder.md` makes those mandatory -- `wt step commit` replaces
+#: `.lean-ctx/lean-herdr/roles/builder.md` makes those mandatory -- `wt step commit` replaces
 #: `git commit`, and the rest are conveniences -- so the narrower gate stands.
 CLAUDE_BUILDER_TOOLING = (
     "Bash(git add:*)",

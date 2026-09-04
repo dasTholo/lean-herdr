@@ -21,7 +21,8 @@
   characters and their ae / oe / ue / ss transcriptions, nothing enforces
   either form, and no file gets rewritten for the sake of one.
 - Everything outside `docs/`: **English**. Code, comments, docstrings, test names,
-  `roles/*.md` (agent prompts), `README.md` (operator docs), commit messages.
+  `.lean-ctx/lean-herdr/roles/*.md` (agent prompts), `README.md` (operator docs),
+  commit messages.
 - **No translation sweeps.** German that already exists outside `docs/` stays put.
   It becomes English when something rewrites that file or section anyway — and
   then in full, never half.

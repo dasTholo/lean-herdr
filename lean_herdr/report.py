@@ -107,7 +107,7 @@ def resolve_agent(
        same `agent_name()` call that addresses the order set this value.
     3. `$LEAN_CTX_ROLE` plus the current branch, through the SAME
        `agent_name()` / `settings_for()` the dispatch side uses, so the
-       `name_template` from `.config/lean-herdr.toml` governs both sides.
+       `name_template` from `.lean-ctx/lean-herdr/config.toml` governs both sides.
        This carries a pane started by hand. It is only the fallback because
        it silently disagrees whenever the dispatch carried no `--worktree`:
        there the agent is `builder`, here the derivation says

@@ -49,7 +49,7 @@
       "prompt": "{file:./.lean-ctx/lean-herdr/roles/builder.md}",
       "steps": 60,
       "permission": {
-        // roles/builder.md prescribes TDD and commits through
+        // .lean-ctx/lean-herdr/roles/builder.md prescribes TDD and commits through
         // `wt step commit --stage none`. With the report patterns alone the
         // builder could run neither a test nor a commit and would fail on
         // its first step -- so exactly the gate that role text demands is

@@ -108,7 +108,7 @@ LOG_COMMANDS = ("order", "answer", "cancel", "remember")
 #: orchestrator would have to read prose to tell 'can be merged' from 'must
 #: go back' -- exactly what this design rules out. `failed` will not do: a
 #: reasoned rejection is not a failure. `VERDIKT:` is a protocol token, not
-#: prose: roles/reviewer.md writes exactly this literal, and every review
+#: prose: .lean-ctx/lean-herdr/roles/reviewer.md writes exactly this literal, and every review
 #: already written carries it -- so it stays as it is, English role prompts or
 #: not. `VERDICT:` is deliberately NOT accepted.
 VERDICT_RE = re.compile(r"VERDIKT:\s*(result|reject)\s*$")
