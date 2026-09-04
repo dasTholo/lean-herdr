@@ -23,10 +23,15 @@ def sample() -> list[dict]:
 class FakeRequest:
     def __init__(self, reply=None):
         self.urls: list[str] = []
+        #: Recorded so the no-key guarantee has a test and not just a
+        #: docstring: an Authorization header is the only way a key could
+        #: leave `fetch()`, since it passes no body and no query credential.
+        self.headers: list[dict | None] = []
         self.reply = reply
 
     def __call__(self, url, *, method="GET", headers=None, body=None, timeout_s):
         self.urls.append(url)
+        self.headers.append(headers)
         return self.reply
 
 
@@ -58,6 +63,30 @@ def test_the_url_carries_what_works_and_neither_parameter_that_does_not():
     assert "supported_parameters=reasoning" in url
     assert "search" not in url
     assert "category" not in url
+
+
+def test_the_catalogue_is_asked_without_a_key(monkeypatch):
+    """A deliberate deviation from the spec, and the one that needs a guard.
+
+    Spec section 2 moved `api_key()` into `openrouter` because "both
+    consumers need it"; section 1.4 then MEASURED that `/models` answers
+    without one. Measured beats argued -- and a key requirement here would
+    make a public catalogue lookup fail on a machine that has none, for a
+    request the endpoint serves anyway.
+
+    `api_key()` is made to explode rather than merely checked for absence:
+    a future edit that reaches for it fails here instead of silently
+    reintroducing the requirement.
+    """
+
+    def boom(*_args, **_kwargs):
+        raise AssertionError("fetch() must not ask for an API key")
+
+    monkeypatch.setattr(catalog.openrouter, "api_key", boom)
+    fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
+
+    assert catalog.fetch(requires=("reasoning",), request=fake) is not None
+    assert fake.headers == [None], fake.headers
 
 
 @pytest.mark.parametrize(
