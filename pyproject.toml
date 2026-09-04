@@ -5,6 +5,9 @@ description = "Orchestrator workspace between Herdr and lean-ctx"
 requires-python = ">=3.14"
 dependencies = []
 
+[project.scripts]
+lean-herdr = "lean_herdr.cli:main"
+
 [dependency-groups]
 dev = ["pytest>=8", "ruff>=0.6"]
 
