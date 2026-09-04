@@ -283,12 +283,21 @@ def dispatch(
         ) or ""
         if not pane:
             return _result(False, None, None, error="pane_split_failed")
-        herdr.agent_start(
+        started = herdr.agent_start(
             name,
             kind=req.kind,
             pane=pane,
             agent_args=agent_args(req.kind, req.model, req.role_file),
         )
+        if not started:
+            # Herdr refused the start -- after 0.0 s, with the reason on
+            # stderr. The reply was discarded here until 2026-09-04, and the
+            # wait below then sat out its full `ready_timeout_s` for an agent
+            # that had never been started, only to report `no_agent_id`.
+            # Herdr retries the transient refusal itself
+            # (herdr.AGENT_START_ATTEMPTS); an empty reply means every
+            # attempt was turned down.
+            return _result(False, pane, None, error="agent_start_failed")
 
     agent_id = waiter(
         herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s

@@ -22,10 +22,18 @@ from lean_herdr.settings import (
     read_settings,
     settings_for,
 )
-from tests.doubles import FakeProc, which_stub
+from tests.doubles import FakeProc, agent_started, which_stub
 
 ROOT = Path("/repo")
 AGENT_ID = "mcp-2018183-70c877bf"
+
+#: A start that WORKED. Every fixture reaching `agent start` owes one: an
+#: unanswered ("agent", "start") falls back to FakeProc's empty default, and
+#: that is exactly what a refusal leaves behind -- dispatch() would report
+#: `agent_start_failed` and never reach the wait these tests are about. Only
+#: its truthiness is read (the pane comes from the split, not from here), so
+#: one canned reply serves every test in the file.
+STARTED = {("agent", "start"): agent_started("builder", "w1:p6", kind="claude")}
 
 
 def req(**kwargs) -> DispatchRequest:
@@ -46,7 +54,10 @@ def registry() -> dict:
 def world(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     h_proc = FakeProc()
-    h_proc.replies = {("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}}}
+    h_proc.replies = {
+        **STARTED,
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}},
+    }
     return h_proc, tmp_path / "registry.json"
 
 
@@ -147,6 +158,7 @@ def test_the_pane_carries_the_agent_name_in_its_environment(world):
     """
     h_proc, _ = world
     h_proc.replies = {
+        **STARTED,
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
         ("worktree", "list"): {
@@ -178,6 +190,7 @@ def test_the_worker_resolves_its_name_out_of_the_env_the_pane_was_given(world):
     """
     h_proc, _ = world
     h_proc.replies = {
+        **STARTED,
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
         ("worktree", "list"): {
@@ -335,6 +348,35 @@ def test_the_build_mode_reads_the_registry_the_data_dir_points_at(
 
     assert result == {
         "ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"
+    }
+
+
+def test_a_refused_agent_start_is_reported_instead_of_waited_out(world):
+    """A refused `agent start` is named at once -- and the waiter never runs.
+
+    Herdr answers `agent_pane_busy` after 0.0 s when the pane split a moment
+    ago has not reached its interactive shell prompt. Discarding that reply
+    cost the full `ready_timeout_s` and then reported `no_agent_id`, which
+    names neither the cause nor the moment.
+    """
+    h_proc, _ = world
+    h_proc.replies = {
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}},
+        # What is left of the refusal by the time it reaches dispatch().
+        ("agent", "start"): {},
+    }
+    result = run_dispatch(
+        world,
+        reg=registry(),
+        waiter=lambda *a, **kw: pytest.fail(
+            "the waiter must not run after a refused agent start"
+        ),
+    )
+    assert result == {
+        "ok": False,
+        "pane": "w1:p6",
+        "agent_id": None,
+        "error": "agent_start_failed",
     }
 
 
@@ -509,6 +551,7 @@ def test_a_usage_error_still_wins_over_a_broken_config(monkeypatch, tmp_path, ca
 def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch):
     h_proc, _ = world
     h_proc.replies = {
+        **STARTED,
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
         ("worktree", "list"): {
@@ -532,6 +575,7 @@ def test_a_worktree_dispatch_splits_a_pane_of_that_workspace(world):
     """Otherwise the worker would sit in the orchestrator workspace and survive teardown."""
     h_proc, _ = world
     h_proc.replies = {
+        **STARTED,
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
         ("worktree", "list"): {

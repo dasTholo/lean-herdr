@@ -8,7 +8,7 @@ import pytest
 
 from lean_herdr import handlers, workspace
 from lean_herdr.config import Config
-from tests.doubles import FakeProc, which_stub
+from tests.doubles import FakeProc, agent_started, which_stub
 
 #: `lean-ctx call` prints plain text -- as a str it goes through FakeProc to
 #: stdout verbatim.
@@ -27,6 +27,11 @@ LEDGER = "Handoff Ledgers (1):\n  1. /handoffs/new.json"
 #: took this. The keystroke cap has to clear the warm case or it reports
 #: `no_agent_id` on a run that worked.
 MEASURED_WARM_START_S = 3.0
+
+#: A start that WORKED. An unanswered ("agent", "start") falls back to
+#: FakeProc's empty default, and that is exactly what a REFUSAL leaves behind:
+#: the bootstrap would report `agent_start_failed` and never reach the wait.
+STARTED = {("agent", "start"): agent_started("orch", "w2:p9")}
 
 
 def test_the_keystroke_waits_longer_than_the_agent_takes_to_register():
@@ -52,6 +57,7 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
     monkeypatch.setattr("lean_herdr.handlers.canonical_root", lambda cwd: Path("/repo"))
     h_proc, l_proc = FakeProc(), FakeProc()
+    h_proc.replies = dict(STARTED)
     l_proc.replies = {
         ("call", "ctx_session"): RESUME,
         ("call", "ctx_handoff"): LEDGER,
@@ -218,6 +224,7 @@ def test_inject_without_a_digest_reports_visibly(world):
 def test_bootstrap_starts_the_orchestrator_in_its_own_workspace(world, monkeypatch):
     h_proc, _, tmp_path = world
     h_proc.replies = {
+        **STARTED,
         # The core reads the RAW `workspace list`. Without an answer the reply
         # is `{}`, which reads as a dead socket -- it would stop before the
         # split this test is about.

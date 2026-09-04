@@ -9,7 +9,7 @@ from lean_herdr import workspace
 from lean_herdr.bus import BusError
 from lean_herdr.herdr import Herdr
 from lean_herdr.settings import SETTINGS_PATH, SettingsError, WorkspaceSettings
-from tests.doubles import FakeProc, which_stub
+from tests.doubles import FakeProc, agent_started, which_stub
 
 ROOT = Path("/repo")
 
@@ -35,10 +35,16 @@ PANES = {"result": {"panes": [{"pane_id": "w3:p1", "cwd": str(ROOT), "workspace_
 NO_AGENTS = {"result": {"agents": []}}
 SPLIT = {"result": {"pane": {"pane_id": "w3:p9"}}}
 
+#: A start that worked. Underneath every `replies`, never on top of it: an
+#: unanswered ("agent", "start") falls back to FakeProc's empty default, which
+#: is what a REFUSAL looks like here -- so without this every test in the file
+#: would take the refusal path and none would reach the wait.
+STARTED = {("agent", "start"): agent_started("orch", "w3:p9")}
+
 
 def herdr_with(monkeypatch, replies, *, available=True):
     monkeypatch.setattr("shutil.which", which_stub(available))
-    proc = FakeProc(replies=replies)
+    proc = FakeProc(replies={**STARTED, **replies})
     return Herdr(runner=proc), proc
 
 
@@ -148,6 +154,36 @@ def test_a_failed_split_says_so(monkeypatch):
     }
     herdr, _ = herdr_with(monkeypatch, replies)
     assert core(herdr)["error"] == "pane_split_failed"
+
+
+def test_a_refused_agent_start_is_reported_instead_of_waited_out(monkeypatch):
+    """A refused `agent start` is named at once -- and the waiter never runs.
+
+    Herdr answers `agent_pane_busy` after 0.0 s when the freshly split pane
+    has not reached its interactive shell prompt. The reply used to be
+    discarded here, so the wait ran its full `ready_timeout_s` -- 45 s by
+    default -- for an agent id that could never come, and then reported
+    `no_agent_id`: neither the cause nor the moment.
+    """
+    replies = {
+        ("workspace", "list"): BY_WORKTREE,
+        ("agent", "list"): NO_AGENTS,
+        ("pane", "list"): PANES,
+        # What a refusal looks like by the time it reaches this caller: the
+        # exit code and stderr are gone, an empty dict is all that is left.
+        ("agent", "start"): {},
+    }
+    herdr, _ = herdr_with(monkeypatch, {**replies, ("pane", "split"): SPLIT})
+
+    def waiter(*_a, **_kw):
+        raise AssertionError("the waiter must not run after a refused agent start")
+
+    assert core(herdr, waiter=waiter) == {
+        "ok": False,
+        "error": "agent_start_failed",
+        "workspace": "w3",
+        "pane": "w3:p9",
+    }
 
 
 def test_a_timeout_without_an_agent_id_is_not_ok(monkeypatch):

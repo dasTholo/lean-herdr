@@ -68,3 +68,33 @@ class FakeProc:
 
 def which_stub(available: bool) -> Callable[[str], str | None]:
     return lambda _binary: "/usr/bin/fake" if available else None
+
+
+def agent_started(
+    name: str, pane: str, kind: str = "opencode"
+) -> dict[str, Any]:
+    """What `herdr agent start` answers when it WORKS -- the 0.8.2 shape.
+
+    Every fixture owes this one. FakeProc's empty default is exactly what a
+    refusal (`agent_pane_busy`, exit 1, nothing on stdout) leaves behind, and
+    that is now how the callers tell a started agent from one that never was.
+    A fixture without this entry therefore no longer exercises the success
+    path -- which is precisely how the bug survived: not one test ever stubbed
+    ("agent", "start").
+
+    `kind` fills the `agent` field: in AgentInfo that name carries the runtime
+    (`opencode`, `claude`), not the agent's own name, which is `name`.
+    """
+    return {
+        "id": "cli:agent:start",
+        "result": {
+            "type": "agent_started",
+            "agent": {
+                "agent": kind,
+                "name": name,
+                "pane_id": pane,
+                "agent_status": "idle",
+                "interactive_ready": True,
+            },
+        },
+    }

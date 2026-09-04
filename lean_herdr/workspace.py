@@ -170,12 +170,25 @@ def start_orchestrator(
     agent_args = ["--agent", "orchestrator"]
     if settings.model:
         agent_args = ["--model", settings.model, *agent_args]
-    herdr.agent_start(
+    started = herdr.agent_start(
         ORCHESTRATOR_AGENT,
         kind=settings.kind,
         pane=pane,
         agent_args=agent_args,
     )
+    if not started:
+        # Herdr refused the start — after 0.0 s, with the reason on stderr.
+        # The reply was discarded here until 2026-09-04, and the wait below
+        # then sat out its full `ready_timeout_s` for an agent that had never
+        # been started, only to report `no_agent_id`. Herdr retries the
+        # transient refusal itself (herdr.AGENT_START_ATTEMPTS); an empty
+        # reply means every attempt was turned down.
+        return {
+            "ok": False,
+            "error": "agent_start_failed",
+            "workspace": target,
+            "pane": pane,
+        }
     agent_id = waiter(herdr, ORCHESTRATOR_AGENT, timeout_s=ready_timeout_s)
     if not agent_id:
         return {

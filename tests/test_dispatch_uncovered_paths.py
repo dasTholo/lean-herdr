@@ -30,9 +30,14 @@ from lean_herdr.dispatch import (
     wait_for_agent_id,
 )
 from lean_herdr.herdr import Herdr
-from tests.doubles import FakeProc, which_stub
+from tests.doubles import FakeProc, agent_started, which_stub
 
 ROOT = Path("/repo")
+
+#: A start that WORKED. Without it ("agent", "start") falls back to FakeProc's
+#: empty default, which is what a REFUSAL leaves behind -- dispatch() would
+#: report `agent_start_failed` and never reach the paths this file covers.
+STARTED = {("agent", "start"): agent_started("builder", "w1:p6", kind="claude")}
 AGENT_ID = "mcp-2018183-70c877bf"
 
 
@@ -54,7 +59,10 @@ def make_registry() -> dict:
 def world(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     h_proc = FakeProc()
-    h_proc.replies = {("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}}}
+    h_proc.replies = {
+        **STARTED,
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}},
+    }
     return h_proc, tmp_path / "registry.json"
 
 
