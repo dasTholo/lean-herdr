@@ -224,9 +224,14 @@ def workspace_up(
 def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
         prog="lean-herdr workspace",
-        description="Start the orchestrator from the project config.",
+        description="Set the project up, or start the orchestrator from its config.",
     )
-    p.add_argument("command", choices=("up",))
+    p.add_argument("command", choices=("up", "init"))
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="init: overwrite files that are already there",
+    )
     return p
 
 
@@ -241,7 +246,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = build_parser().parse_args(argv)
         if args.command == "up":
-            result = workspace_up()
+            if args.force:
+                result = {
+                    "ok": False,
+                    "error": "usage_error: up does not take --force",
+                }
+            else:
+                result = workspace_up()
+        else:
+            # Imported on the call, not up top: `up` is what runs on every
+            # start, and it needs none of this.
+            from lean_herdr.initcmd import workspace_init
+
+            result = workspace_init(force=args.force)
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}
     except SettingsError as exc:

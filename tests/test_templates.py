@@ -13,22 +13,15 @@ from pathlib import Path
 
 import pytest
 
+from lean_herdr.initcmd import LAYOUT
+
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = ROOT / "lean_herdr" / "templates"
 
-#: template (inside the package) -> the copy this repo checks in.
-#: This table moves into lean_herdr/initcmd.py as LAYOUT once `init`
-#: exists; then it is imported from there and lives exactly once.
-PAIRS = {
-    "config.toml": ".lean-ctx/lean-herdr/config.toml",
-    "roles/orchestrator.md": ".lean-ctx/lean-herdr/roles/orchestrator.md",
-    "roles/builder.md": ".lean-ctx/lean-herdr/roles/builder.md",
-    "roles/reviewer.md": ".lean-ctx/lean-herdr/roles/reviewer.md",
-    "opencode.jsonc": "opencode.jsonc",
-    "settings.json": ".claude/settings.json",
-    "wt.toml": ".config/wt.toml",
-    "lean-ctx-policy.js": ".opencode/plugins/lean-ctx-policy.js",
-}
+#: `init` writes these into a target project; this repo carries each of
+#: them at exactly that path. One table, imported from the code that owns
+#: it -- a second copy here would drift the moment a file is added.
+PAIRS = LAYOUT
 
 
 @pytest.mark.parametrize(("template", "copy"), sorted(PAIRS.items()))

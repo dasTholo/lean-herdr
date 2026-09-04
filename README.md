@@ -180,6 +180,28 @@ rejection on a branch nobody described.
   then `~/.claude/hooks`; `$LEAN_HERDR_HOOKS_DIR`, when set, overrides
   both and searches only that one directory.
 
+## Setting up a project
+
+In a repository that has never seen lean-herdr:
+
+    lean-herdr workspace init
+
+It writes eight files -- the config and the three role prompts under
+`.lean-ctx/lean-herdr/`, and `opencode.jsonc`, `.claude/settings.json`,
+`.config/wt.toml` and `.opencode/plugins/lean-ctx-policy.js` where their
+owners look for them. An existing file is skipped and named in the result;
+`--force` overwrites. It needs a git repository and does not create one.
+
+What it does NOT do is repair your machine. The three lean-ctx approvals,
+the worktrunk hook approval and the Herdr plugin registration are reported
+as `warnings` and stay yours to grant.
+
+Two of the eight carry this project's own answers and are meant to be
+edited: `.config/wt.toml` pins the pre-merge gate to `uv run pytest -q`,
+and `.claude/settings.json` allows `Bash(uv run pytest:*)`. In a project
+that is not Python, both are wrong on the first merge -- and a pre-merge
+gate that fails is the one that aborts the merge, so you find out early.
+
 ## Bootstrap
 
 The orchestrator does not start itself. Once per Herdr server — the
