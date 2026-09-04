@@ -33,6 +33,7 @@ from lean_herdr.settings import (
     model_warnings,
     read_settings,
     settings_for,
+    workspace_settings,
 )
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 
@@ -312,13 +313,18 @@ def workspace_init(
     try:
         data = read_settings(base / SETTINGS_PATH)
         kind = settings_for("orchestrator", data).kind
-        # `_warnings` below hands `data` to `settings.model_warnings`, which
-        # reads [roles.builder] and [roles.reviewer] -- blocks the line above
-        # never touches. Validating them HERE is what keeps the promise the
-        # except branch makes: a config we cannot read costs the warm-up, not
-        # the written/skipped report. Calling it twice is free; it reads two
-        # already-parsed tables and touches nothing.
+        # `settings_for("orchestrator", ...)` reads two tables of four. The
+        # other two are read anyway -- `[roles.builder]`/`[roles.reviewer]`
+        # by `model_warnings` inside `_warnings` below, `[workspace]` by the
+        # `up` and keystroke routes that run against this same file next.
+        # Validating them HERE is what keeps the promise the except branch
+        # makes: a config we cannot read costs the warm-up, not the
+        # written/skipped report -- and `init` is the run that is supposed to
+        # tell the operator the file is wrong, not the one that stays quiet
+        # and lets `up` refuse it later. Both calls are free: they read
+        # already-parsed tables and touch nothing.
         model_warnings(data)
+        workspace_settings(data)
     except SettingsError as exc:
         # A config we cannot read is not a reason to fail `init` -- the files
         # are already written. It only means we cannot tell whether opencode

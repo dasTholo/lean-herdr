@@ -324,21 +324,29 @@ def test_a_claude_project_is_not_warmed(monkeypatch, repo):
     assert not any(c[0] == "opencode" for c in proc.calls), proc.flat()
 
 
-def test_a_leftover_workspace_kind_decides_nothing_here(monkeypatch, repo):
-    """`kind` moved, and `init` asks the new home ALONE.
+def test_a_leftover_workspace_kind_is_named_here_not_left_for_up(monkeypatch, repo):
+    """`kind` moved, and `init` is the run that says so.
 
-    The old spelling is refused where it is read -- by `workspace up`,
-    through `workspace_settings`. `init` reads `[roles.orchestrator]`, so
-    a line left behind under `[workspace]` does not quietly go on
-    steering the warm-up: the role's built-in `opencode` does.
+    `init` steers its warm-up off `[roles.orchestrator]` alone, so a line
+    left behind under `[workspace]` decides nothing here. But staying
+    quiet about it would leave the operator to discover the dead key on
+    the next `workspace up`, as a `config_error:` -- from the one command
+    whose job is to report what is wrong with the project. So the moved
+    key is read here too, and it lands in `warnings` with its new home in
+    the text.
     """
     monkeypatch.setattr("shutil.which", which_stub(True))
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
     (repo / SETTINGS_PATH).write_text(
         '[workspace]\nkind = "claude"\n', encoding="utf-8"
     )
-    proc = FakeProc(default="")
-    assert workspace_init(root=repo, runner=proc)["warmed"] is True
+    answer = workspace_init(root=repo, runner=FakeProc(default=""))
+    assert answer["ok"] is True, "the written/skipped report must survive"
+    assert answer["warmed"] is False
+    assert any(
+        "workspace.kind has moved to [roles.orchestrator].kind" in w
+        for w in answer["warnings"]
+    )
 
 
 @pytest.mark.parametrize(
