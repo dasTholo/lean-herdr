@@ -500,14 +500,24 @@ def test_a_verdict_further_down_does_not_count(no_store):
         ),
         ("diff", SpyRequest(reply=None), "no_answer"),
         ("diff", SpyRequest(answer("I have no opinion")), "unparsable_answer"),
-        # A raise on the injection seam, not inside the transport: whatever
+        # Two raises on the injection seam, not inside the transport: whatever
         # a caller injects, this layer owes its callers `skipped` -- never a
         # rejection and never a traceback. The wait mode reported one as
         # `dispatch_crashed` on a task that had completed, and the manual CLI
         # as exit 1, the code that is supposed to mean the model rejected.
+        # Both arms of `complete()`'s net are exercised here: URLError is an
+        # OSError, and the decode error a ValueError that is NOT one.
         ("diff", SpyRequest(raises=urllib.error.URLError("no route")), "no_answer"),
+        ("diff", SpyRequest(raises=DECODE_ERROR), "no_answer"),
     ],
-    ids=["empty", "too-large", "transport-failed", "unparsable", "url-error"],
+    ids=[
+        "empty",
+        "too-large",
+        "transport-failed",
+        "unparsable",
+        "url-error",
+        "undecodable",
+    ],
 )
 def test_prereview_never_rejects_when_its_own_machinery_fails(diff, spy, reason, no_store):
     ruling, note = llm.prereview(
