@@ -8,7 +8,12 @@ import pytest
 
 from lean_herdr import handlers, workspace
 from lean_herdr.config import Config
-from tests.doubles import FakeProc, agent_started, which_stub
+from tests.doubles import (
+    FakeProc,
+    agent_started,
+    which_stub,
+    write_opencode_config,
+)
 
 #: `lean-ctx call` prints plain text -- as a str it goes through FakeProc to
 #: stdout verbatim.
@@ -51,11 +56,25 @@ def test_the_keystroke_waits_longer_than_the_agent_takes_to_register():
     )
 
 
+def project(tmp_path: Path) -> Path:
+    """The repo root the handlers resolve to -- a REAL one, with a config.
+
+    It used to be the `/repo` literal. `handle_bootstrap` runs the same
+    core as `workspace up`, which now refuses outright when opencode could
+    not resolve `--agent orchestrator` at that root, and a literal that
+    exists nowhere can never carry an `opencode.jsonc`.
+    """
+    return tmp_path / "repo"
+
+
 @pytest.fixture
 def world(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
-    monkeypatch.setattr("lean_herdr.handlers.canonical_root", lambda cwd: Path("/repo"))
+    write_opencode_config(project(tmp_path))
+    monkeypatch.setattr(
+        "lean_herdr.handlers.canonical_root", lambda cwd: project(tmp_path)
+    )
     h_proc, l_proc = FakeProc(), FakeProc()
     h_proc.replies = dict(STARTED)
     l_proc.replies = {
@@ -275,6 +294,30 @@ def test_bootstrap_does_not_start_a_second_orchestrator(world):
     assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls)
     note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
     assert "already running" in " ".join(note), note
+
+
+def test_bootstrap_surfaces_a_missing_agent_config_like_every_other_failure(world):
+    """The keystroke is the second consumer of the guard, and gets its words.
+
+    A keystroke takes the built-in defaults rather than the config file, so
+    unlike `up` it never passes a `not_initialised` check on the way -- this
+    is the only thing between it and 6 s of waiting for an agent opencode
+    could not name.
+    """
+    h_proc, _, tmp_path = world
+    (project(tmp_path) / "opencode.jsonc").unlink()
+    h_proc.replies = {
+        **STARTED,
+        ("workspace", "list"): {"result": {"workspaces": []}},
+        ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p9"}}},
+    }
+    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+    )))
+    note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
+    assert "no_agent_config" in " ".join(note), note
+    assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls), h_proc.flat()
 
 
 def test_bootstrap_without_git_on_the_path_notifies_like_every_other_failure(

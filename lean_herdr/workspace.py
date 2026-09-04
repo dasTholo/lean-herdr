@@ -29,11 +29,32 @@ from lean_herdr.settings import (
     SETTINGS_PATH,
     SettingsError,
     WorkspaceSettings,
+    load_jsonc,
     read_settings,
     settings_for,
     workspace_settings,
 )
 from lean_herdr.worktree import anchor_pane
+
+#: opencode reads its project configuration from this file, at the repo
+#: root. Not configurable: opencode looks for exactly this name.
+OPENCODE_CONFIG = "opencode.jsonc"
+
+#: The agent NAME `start_orchestrator` hands opencode, and the key it has to
+#: find under `agent` in OPENCODE_CONFIG. One truth for both: the guard and
+#: the `--agent` argument must ask for the same word, or the guard passes a
+#: run that opencode then refuses.
+#:
+#: Deliberately not ORCHESTRATOR_AGENT: that one is `orch`, the name Herdr
+#: registers the agent under. These are two different namespaces that happen
+#: to describe the same pane.
+OPENCODE_ORCHESTRATOR = "orchestrator"
+
+#: Every guard message ends here. `init` is what writes OPENCODE_CONFIG, and
+#: it is the same next step for a file that is absent, broken, or short of
+#: this one agent -- with --force for the latter two, which will not
+#: overwrite silently.
+INIT_HINT = "run `lean-herdr workspace init` first"
 
 
 class _Parser(argparse.ArgumentParser):
@@ -103,6 +124,48 @@ def create_workspace(
     return str(workspace) if workspace else None
 
 
+def missing_agent_config(root: Path, kind: str) -> str | None:
+    """Why opencode could not resolve the orchestrator here. None: it can.
+
+    Measured 2026-09-04. `--agent orchestrator` is a NAME, and opencode
+    resolves it out of the project's own `opencode.jsonc`. In a project
+    where `workspace init` never ran that file does not exist: opencode
+    starts, prints "Agent not found: Orchestrator", never becomes an agent
+    and never registers its MCP server. Without this check the caller then
+    sat out the full `ready_timeout_s` -- 45 s -- waiting for an agent id
+    that could not arrive, and answered the misleading `no_agent_id`. The
+    same class of defect as the discarded `agent_start` reply: launch
+    something doomed and wait it out instead of looking first.
+
+    Only opencode has this failure mode, so only opencode is checked. A
+    claude worker never resolves a project-level agent NAME at all -- its
+    role travels as a FILE on `--append-system-prompt-file`
+    (dispatch.agent_args), so there is nothing here that could fail to
+    resolve and nothing to check.
+
+    Three answers, not one, because they are three different repairs:
+    absent (init has not run), present but unparseable (an editor), and
+    parsed without this agent (a config for another project's roles). One
+    word for all three would send the operator to the wrong one.
+    """
+    if kind != "opencode":
+        return None
+    config = load_jsonc(root / OPENCODE_CONFIG)
+    if not config.found:
+        return f"no {OPENCODE_CONFIG} in {root}"
+    if config.error:
+        return f"{OPENCODE_CONFIG} in {root} is {config.error}"
+    agents = config.data.get("agent")
+    if not isinstance(agents, dict) or not isinstance(
+        agents.get(OPENCODE_ORCHESTRATOR), dict
+    ):
+        return (
+            f"{OPENCODE_CONFIG} in {root} defines no "
+            f"agent.{OPENCODE_ORCHESTRATOR}"
+        )
+    return None
+
+
 def start_orchestrator(
     *,
     herdr: Herdr,
@@ -119,6 +182,21 @@ def start_orchestrator(
     one" -- the `up` path. A given id means "use exactly this one and
     create nothing" -- the keystroke path.
     """
+    # FIRST, ahead of every other precondition: this is one stat and no
+    # subprocess at all, and a run that cannot possibly work must cost
+    # nothing rather than a workspace, a pane and 45 s of waiting. It is a
+    # precondition, not a knob -- the core still has exactly one, and that
+    # one is `workspace_id`.
+    #
+    # `workspace_up` refuses a missing lean-herdr config with
+    # `not_initialised` before it ever gets here, so on THAT path this only
+    # bites a half-initialised project. The keystroke has no such check --
+    # it takes the built-in defaults on purpose -- so for `handle_bootstrap`
+    # this is the only thing standing between a keystroke and a wait for an
+    # agent opencode could not name.
+    problem = missing_agent_config(root, settings.kind)
+    if problem:
+        return {"ok": False, "error": f"no_agent_config: {problem} -- {INIT_HINT}"}
     if not herdr.is_available():
         return {"ok": False, "error": "no_herdr_server"}
     # A RAW `workspace list`, not workspace_list(): that method
@@ -167,7 +245,7 @@ def start_orchestrator(
     # agent name from a role FILE stem. Here the agent is named directly
     # and --model is omitted entirely when the config leaves it empty --
     # exactly what handle_bootstrap does today.
-    agent_args = ["--agent", "orchestrator"]
+    agent_args = ["--agent", OPENCODE_ORCHESTRATOR]
     if settings.model:
         agent_args = ["--model", settings.model, *agent_args]
     started = herdr.agent_start(

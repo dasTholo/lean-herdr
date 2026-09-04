@@ -365,7 +365,8 @@ class JsoncFile:
       undecodable bytes, JSON the comment strip could not save, or a top
       level that is not an object. The answer is an editor, and `data`
       stays `{}` so a caller that ignores `error` reads nothing rather
-      than something wrong.
+      than something wrong. Every `error` is phrased to follow the word
+      "is", so a caller can name the file and paste this behind it.
     * `found=True`, `error=""` -- `data` is what the file says.
 
     A bare `dict | None` would collapse the first two onto one answer, and
@@ -424,6 +425,6 @@ def load_jsonc(path: str | Path) -> JsoncFile:
     if not isinstance(data, dict):
         return JsoncFile(
             found=True,
-            error=f"top level is {type(data).__name__}, not an object",
+            error=f"not an object at the top level, but a {type(data).__name__}",
         )
     return JsoncFile(data=data, found=True)

@@ -1,6 +1,8 @@
 """`workspace up` and the core the keystroke shares with it."""
 
 import json
+import shutil
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -9,9 +11,27 @@ from lean_herdr import workspace
 from lean_herdr.bus import BusError
 from lean_herdr.herdr import Herdr
 from lean_herdr.settings import SETTINGS_PATH, SettingsError, WorkspaceSettings
-from tests.doubles import FakeProc, agent_started, which_stub
+from tests.doubles import (
+    FakeProc,
+    agent_started,
+    which_stub,
+    write_opencode_config,
+)
 
-ROOT = Path("/repo")
+#: A REAL directory, not the `/repo` literal this used to be. The core now
+#: stats `<root>/opencode.jsonc` before it does anything else, so a root
+#: that cannot hold one would turn every test in this file into the guard's
+#: message. Created at import because the herdr replies below quote it;
+#: filled and removed again by `_project`.
+ROOT = Path(tempfile.mkdtemp(prefix="lean-herdr-workspace-"))
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _project():
+    """Every core test runs in a project opencode could actually resolve."""
+    write_opencode_config(ROOT)
+    yield
+    shutil.rmtree(ROOT, ignore_errors=True)
 
 #: A workspace found by rule 1 -- worktree.checkout_path == root.
 BY_WORKTREE = {
@@ -118,7 +138,7 @@ def test_neither_rule_hits_so_a_workspace_is_created(monkeypatch):
     }
     herdr, proc = herdr_with(monkeypatch, replies)
     assert core(herdr)["workspace"] == "w9"
-    assert proc.called_with("workspace", "create", "--cwd", "--label", "repo")
+    assert proc.called_with("workspace", "create", "--cwd", "--label", ROOT.name)
     assert proc.called_with("--env", "LEAN_CTX_TOOL_PROFILE=minimal")
 
 
@@ -230,6 +250,88 @@ def test_an_empty_model_means_no_model_flag_at_all(monkeypatch):
     assert not proc.called_with("agent", "start", "--model"), proc.flat()
     core(herdr, settings=WorkspaceSettings(model="sonnet"))
     assert proc.called_with("--", "--model", "sonnet", "--agent", "orchestrator")
+
+
+# -- the agent name opencode has to be able to resolve ------------------
+
+#: The one suffix all three guard messages carry.
+INIT_HINT = "run `lean-herdr workspace init` first"
+
+#: A COMPLETE set of replies -- every guard test below hands them over, so
+#: a green answer would be available. What is asserted is that not one of
+#: them is ever fetched: the whole point of the guard is that a doomed run
+#: costs nothing, not that it fails a little later.
+WOULD_WORK = {
+    ("workspace", "list"): BY_WORKTREE,
+    ("agent", "list"): NO_AGENTS,
+    ("pane", "list"): PANES,
+    ("pane", "split"): SPLIT,
+}
+
+
+def test_without_an_opencode_config_nothing_is_started_at_all(monkeypatch, tmp_path):
+    """opencode cannot resolve `--agent orchestrator` here -- measured.
+
+    It starts, prints "Agent not found: Orchestrator", never becomes an
+    agent and never registers an MCP server. Before this guard the core
+    then sat out the full `ready_timeout_s` -- 45 s measured -- for an
+    agent id that could not arrive, and answered the misleading
+    `no_agent_id`.
+    """
+    herdr, proc = herdr_with(monkeypatch, WOULD_WORK)
+    answer = core(herdr, root=tmp_path)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("no_agent_config: no opencode.jsonc in ")
+    assert INIT_HINT in answer["error"]
+    assert "not_initialised" not in answer["error"], (
+        "that word belongs to the lean-herdr config, not to opencode's"
+    )
+    assert proc.calls == [], proc.flat()
+
+
+def test_an_unparseable_opencode_config_gets_its_own_words(monkeypatch, tmp_path):
+    """Broken is not absent, and an editor is not `init`."""
+    (tmp_path / "opencode.jsonc").write_text('{"agent": {\n', encoding="utf-8")
+    herdr, proc = herdr_with(monkeypatch, WOULD_WORK)
+    error = core(herdr, root=tmp_path)["error"]
+    assert error.startswith("no_agent_config: opencode.jsonc in ")
+    assert "not valid JSONC" in error and INIT_HINT in error
+    assert proc.calls == [], proc.flat()
+
+
+def test_an_opencode_config_without_the_orchestrator_is_named_as_such(
+    monkeypatch, tmp_path
+):
+    """A file that parses is still no agent -- the third repair."""
+    (tmp_path / "opencode.jsonc").write_text(
+        '{"agent": {"builder": {"mode": "primary"}}}\n', encoding="utf-8"
+    )
+    herdr, proc = herdr_with(monkeypatch, WOULD_WORK)
+    error = core(herdr, root=tmp_path)["error"]
+    assert error.startswith("no_agent_config: ")
+    assert "defines no agent.orchestrator" in error and INIT_HINT in error
+    assert proc.calls == [], proc.flat()
+
+
+def test_a_claude_orchestrator_needs_no_opencode_config(monkeypatch, tmp_path):
+    """claude resolves no NAME: its role travels as a file (dispatch.agent_args)."""
+    replies = {
+        ("workspace", "list"): {"result": {"workspaces": []}},
+        ("agent", "list"): NO_AGENTS,
+        ("pane", "list"): {
+            "result": {"panes": [{"pane_id": "w7:p1", "workspace_id": "w7"}]}
+        },
+        ("pane", "split"): SPLIT,
+    }
+    herdr, _ = herdr_with(monkeypatch, replies)
+    answer = core(
+        herdr,
+        root=tmp_path,
+        workspace_id="w7",
+        settings=WorkspaceSettings(kind="claude"),
+    )
+    assert not (tmp_path / "opencode.jsonc").exists()
+    assert answer["ok"] is True and answer["agent_id"] == "mcp-42"
 
 
 def test_up_without_a_config_file_refuses(monkeypatch, tmp_path):

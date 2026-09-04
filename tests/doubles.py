@@ -10,7 +10,28 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
+
+from lean_herdr.initcmd import TEMPLATES
+
+
+def write_opencode_config(root: Path) -> Path:
+    """Put an `opencode.jsonc` at `root` -- the shipped template, verbatim.
+
+    `start_orchestrator` refuses before it touches the server when opencode
+    could not resolve `--agent orchestrator` here, and every core test
+    drives it with a throwaway root that carries no project files at all.
+
+    The TEMPLATE is copied rather than a minimal literal written on
+    purpose: it is exactly what `workspace init` puts there, so a template
+    that ever stopped naming the orchestrator turns these tests red instead
+    of leaving them green over a config the tool itself cannot use.
+    """
+    path = root / "opencode.jsonc"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes((TEMPLATES / "opencode.jsonc").read_bytes())
+    return path
 
 
 @dataclass
