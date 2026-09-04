@@ -43,8 +43,10 @@ def test_no_verb_at_all_is_the_same_shape(capsys):
     assert "no verb" in answer["error"]
 
 
-def test_help_is_plain_text_for_a_human(capsys):
-    assert cli.main(["--help"]) == 0
+@pytest.mark.parametrize("flag", ["-h", "--help"])
+def test_help_is_plain_text_for_a_human(capsys, flag):
+    """Both spellings, because `-h` would otherwise route as an unknown verb."""
+    assert cli.main([flag]) == 0
     assert capsys.readouterr().out.startswith("usage: lean-herdr")
 
 

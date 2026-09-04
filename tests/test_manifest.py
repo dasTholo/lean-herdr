@@ -1,13 +1,21 @@
 import ast
+import importlib
 import shutil
 import subprocess
 import tomllib
+import zipfile
 from pathlib import Path
 
 import pytest
 
+from lean_herdr.initcmd import LAYOUT
+
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "herdr-plugin.toml"
+
+#: The one line that turns this package into the `lean-herdr` an operator
+#: and every role prompt actually type.
+ENTRY_POINT = {"lean-herdr": "lean_herdr.cli:main"}
 
 #: The oldest interpreter a bare `python3` on an operator host may turn out to
 #: be. Raised from 3.11 by operator decision on 2026-09-04: the hosts this
@@ -112,6 +120,49 @@ def test_the_package_parses_on_the_python3_the_manifest_may_meet():
             offenders.append(f"{path.relative_to(ROOT)}:{err.lineno}: {err.msg}")
     floor = ".".join(str(part) for part in OLDEST_PYTHON)
     assert not offenders, f"needs syntax newer than {floor}:\n" + "\n".join(offenders)
+
+
+def test_the_entry_point_still_points_at_a_callable_main():
+    """`lean-herdr <verb>` is the ONLY way in outside this checkout.
+
+    The manifest spawns `python3 -m lean_herdr` for the plugin events, but
+    every role prompt, every worktrunk hook and every operator types
+    `lean-herdr`. That name exists solely because of this one pyproject
+    line -- rename the module or the function and nothing in the tree
+    notices until an installed environment does.
+    """
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert project["project"]["scripts"] == ENTRY_POINT
+    for target in ENTRY_POINT.values():
+        module, _, attribute = target.partition(":")
+        assert callable(getattr(importlib.import_module(module), attribute)), target
+
+
+@pytest.mark.integration
+def test_the_wheel_ships_the_templates(tmp_path):
+    """`init` writes files OUT of the package. A wheel without them is silent.
+
+    `[tool.hatch.build.targets.wheel]` names the package, not its data, so
+    nothing in this tree would notice `lean_herdr/templates/` dropping out
+    of the build -- `init` reads them off the source checkout in every
+    other test. It would break only in an installed environment, and only
+    on the one call that is supposed to set a project up.
+
+    Marked `integration` because a real build costs seconds; every other
+    test in this suite runs in milliseconds.
+    """
+    if shutil.which("uv") is None:
+        pytest.skip("uv not installed")
+    build = subprocess.run(
+        ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
+        cwd=ROOT, capture_output=True, text=True, timeout=300, check=False,
+    )
+    assert build.returncode == 0, build.stderr
+    wheel = next(iter(tmp_path.glob("*.whl")))
+    with zipfile.ZipFile(wheel) as archive:
+        shipped = set(archive.namelist())
+    wanted = {f"lean_herdr/templates/{name}" for name in LAYOUT}
+    assert wanted <= shipped, sorted(wanted - shipped)
 
 
 @pytest.mark.integration

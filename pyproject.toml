@@ -35,5 +35,5 @@ testpaths = ["tests"]
 # user's system. That happened exactly once.
 addopts = "-m 'not integration'"
 markers = [
-    "integration: needs real lean-ctx/herdr/wt binaries, not in CI",
+    "integration: needs real lean-ctx/herdr/wt binaries or a real wheel build, not in CI",
 ]
