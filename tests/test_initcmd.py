@@ -66,6 +66,41 @@ def test_force_replaces_the_link_instead_of_following_it(monkeypatch, repo, tmp_
     assert "opencode.jsonc" in answer["written"]
 
 
+def test_a_symlinked_parent_directory_is_not_written_through(monkeypatch, repo, tmp_path):
+    """The leaf guard sees a link AT the template's place, never one above it.
+
+    `.claude -> ~/dotfiles/claude` is an ordinary dotfiles setup. `exists()`
+    on `.claude/settings.json` resolves straight through it, and the write
+    lands outside the project -- the same escape one level up.
+    """
+    quiet(monkeypatch)
+    outside = tmp_path.parent / "outside-claude"
+    outside.mkdir(exist_ok=True)
+    (repo / ".claude").symlink_to(outside, target_is_directory=True)
+    answer = workspace_init(root=repo)
+    assert list(outside.iterdir()) == [], "init wrote past the project root"
+    assert ".claude/settings.json" in answer["skipped"]
+
+
+def test_force_does_not_write_through_a_symlinked_parent_either(monkeypatch, repo, tmp_path):
+    """Two levels up, and with --force: still not a way out of the project.
+
+    --force is permission to overwrite a FILE that is already there. A
+    linked directory carries everything else the operator keeps behind it,
+    so it is neither followed nor removed -- it is reported as skipped and
+    the choice stays theirs.
+    """
+    quiet(monkeypatch)
+    outside = tmp_path.parent / "outside-opencode"
+    outside.mkdir(exist_ok=True)
+    link = repo / ".opencode"
+    link.symlink_to(outside, target_is_directory=True)
+    answer = workspace_init(root=repo, force=True)
+    assert list(outside.iterdir()) == [], "init wrote past the project root"
+    assert ".opencode/plugins/lean-ctx-policy.js" in answer["skipped"]
+    assert link.is_symlink(), "the operator's link is not init's to remove"
+
+
 def test_a_layout_parent_that_is_a_file_keeps_the_report(monkeypatch, repo):
     """The docstring promises no exception. A half-built tree tests it.
 

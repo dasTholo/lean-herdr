@@ -131,8 +131,11 @@ def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
     return found
 
 
-def _place(target: Path, source: Path, *, force: bool) -> bool:
+def _place(root: Path, relative: str, source: Path, *, force: bool) -> bool:
     """Write one template. True when it landed, False when it was skipped.
+
+    NO component below `root` may be a symlink -- neither the file at the
+    end of `relative` nor a directory on the way to it.
 
     `exists()` FOLLOWS the link, so a dead symlink at a template's place
     reads as an absent file and the write lands wherever it points --
@@ -140,7 +143,27 @@ def _place(target: Path, source: Path, *, force: bool) -> bool:
     has. `is_symlink()` is the half that sees it. And `--force` is
     permission to overwrite HERE, never to write somewhere else: the link
     goes, its target is not touched.
+
+    A symlinked PARENT is the same escape one directory up, and `.claude`,
+    `.config`, `.lean-ctx` or `.opencode` pointing into a dotfiles checkout
+    is an ordinary setup, not a hostile tree. It is answered more narrowly
+    on purpose: skipped WITH --force as well. Following it is the escape
+    itself, and removing it would detach everything else the operator keeps
+    behind that link -- more than `--force` asks for, which is to overwrite
+    files that are already there. A skip is named in the report, so the
+    gesture stays the operator's.
+
+    Only the components below `root` are looked at. The root itself may
+    legitimately sit under a symlinked path -- a linked home, a linked
+    volume -- and walking past it would make `init` refuse to write
+    anything at all in such a checkout.
     """
+    parent = root
+    for part in Path(relative).parts[:-1]:
+        parent = parent / part
+        if parent.is_symlink():
+            return False
+    target = root / relative
     if (target.is_symlink() or target.exists()) and not force:
         return False
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -180,7 +203,7 @@ def workspace_init(
     skipped: list[str] = []
     try:
         for name, relative in LAYOUT.items():
-            landed = _place(base / relative, TEMPLATES / name, force=force)
+            landed = _place(base, relative, TEMPLATES / name, force=force)
             (written if landed else skipped).append(relative)
     except OSError as exc:
         return {
