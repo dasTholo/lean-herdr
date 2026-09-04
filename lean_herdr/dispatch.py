@@ -49,6 +49,7 @@ from lean_herdr.orderlog import OrderLogError, lean_ctx_data_dir, read_events, s
 from lean_herdr.orders import Order, fold, message_from
 from lean_herdr.settings import (
     DEFAULT_PROFILE,
+    KINDS,
     PROFILE_BY_ROLE,
     SETTINGS_PATH,
     LlmSettings,
@@ -548,7 +549,7 @@ def build_parser() -> argparse.ArgumentParser:
     # argparse would refuse a perfectly valid call. missing_flags() enforces it
     # for the two modes that DO need it -- there it answers with a JSON line
     # instead of exit 2.
-    p.add_argument("--kind", default=None, choices=("claude", "opencode"))
+    p.add_argument("--kind", default=None, choices=KINDS)
     # `--await` would yield the dest `await` -- a keyword, unreachable as
     # args.await. The dest MUST be set.
     p.add_argument(

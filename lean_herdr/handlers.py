@@ -17,17 +17,25 @@ from lean_herdr.config import Config
 from lean_herdr.digest import render_digest, summary_token
 from lean_herdr.herdr import Herdr
 from lean_herdr.leanctx import LeanCtx, newest_handoff
+from lean_herdr.settings import (
+    SETTINGS_PATH,
+    SettingsError,
+    read_settings,
+    settings_for,
+    workspace_settings,
+)
+from lean_herdr.workspace import start_orchestrator
 
 #: The token belongs to the plugin. `esc` belongs to the orchestrator and is
 #: never touched here -- not even to clear it.
 TOKEN = "ctx"
 
-#: The orchestrator pane of the bootstrap. minimal, because it only needs ctx_call.
-ORCHESTRATOR = {
-    "name": "orch",
-    "kind": "opencode",
-    "env": {"LEAN_CTX_TOOL_PROFILE": "minimal", "LEAN_CTX_ROLE": "orchestrator"},
-}
+#: The keystroke is answered by the PANE, not by the agent id: a plugin
+#: handler has nobody to show a result to, and Herdr's handler process is
+#: the wrong place to sit out `[roles.orchestrator].ready_timeout_s` (45 s
+#: by default). `lean-herdr workspace up` keeps the full wait -- its caller
+#: reads the id off stdout and has a use for it.
+KEYSTROKE_READY_TIMEOUT_S = 2.0
 
 
 def _note(text: str) -> None:
@@ -166,9 +174,17 @@ def handle_inject(cfg: Config) -> None:
 def handle_bootstrap(cfg: Config) -> None:
     """A deliberate gesture: open an orchestrator pane in THIS workspace.
 
-    The handler does not act as an agent -- it only types what stage 3 step 1
-    types by hand. An anchor pane from this workspace makes sure the new pane
-    lands here and not in the caller's workspace.
+    Runs the SAME core as `lean-herdr workspace up`. Before this the
+    keystroke read a literal in this module and never opened the config,
+    so the two start paths could drift -- and did.
+
+    The one difference stays in the argument: the workspace id comes from
+    the event, so the core creates nothing and the pane lands here rather
+    than in the caller's workspace.
+
+    Unlike `up`, a missing config is NOT a stop here. `up` is a call whose
+    whole purpose is the config; this is a keystroke that must not fail
+    into nothing, so read_settings({}) and the built-in defaults carry it.
     """
     herdr = Herdr(cfg.herdr_bin, timeout=cfg.timeout)
     event = cfg.event or {}
@@ -181,27 +197,35 @@ def handle_bootstrap(cfg: Config) -> None:
     if not workspace:
         herdr.run("notification", "show", "--message", "lean-herdr: no workspace")
         return
-    if any(a.get("name") == ORCHESTRATOR["name"] for a in herdr.agent_list()):
-        herdr.run(
-            "notification", "show", "--message", "lean-herdr: the orchestrator is already running"
-        )
-        return
     cwd = cwd_from_event(event, herdr, cfg)
-    anchor = next(
-        (str(p["pane_id"]) for p in herdr.pane_list(workspace) if p.get("pane_id")), None
-    )
-    if cwd is None or anchor is None:
+    if cwd is None:
         herdr.run(
-            "notification", "show", "--message", "lean-herdr: workspace without a pane or cwd"
+            "notification", "show", "--message", "lean-herdr: workspace without a cwd"
         )
         return
-    pane = herdr.pane_split(cwd, pane=anchor, env=ORCHESTRATOR["env"])
-    if not pane:
-        herdr.run("notification", "show", "--message", "lean-herdr: pane split failed")
+    try:
+        root = canonical_root(cwd)
+        data = read_settings(root / SETTINGS_PATH)
+        role = settings_for("orchestrator", data)
+        result = start_orchestrator(
+            herdr=herdr,
+            root=root,
+            settings=workspace_settings(data),
+            profile=role.profile,
+            workspace_id=workspace,
+            ready_timeout_s=min(role.ready_timeout_s, KEYSTROKE_READY_TIMEOUT_S),
+        )
+    except (BusError, SettingsError) as exc:
+        herdr.run("notification", "show", "--message", f"lean-herdr: {exc}")
         return
-    herdr.agent_start(
-        ORCHESTRATOR["name"],
-        kind=ORCHESTRATOR["kind"],
-        pane=pane,
-        agent_args=["--agent", "orchestrator"],
-    )
+    if result.get("already_running"):
+        herdr.run(
+            "notification",
+            "show",
+            "--message",
+            "lean-herdr: the orchestrator is already running",
+        )
+    elif not result.get("ok"):
+        herdr.run(
+            "notification", "show", "--message", f"lean-herdr: {result.get('error')}"
+        )

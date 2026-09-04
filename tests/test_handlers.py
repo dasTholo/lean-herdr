@@ -1,9 +1,10 @@
+import functools
 import json
 from pathlib import Path
 
 import pytest
 
-from lean_herdr import handlers
+from lean_herdr import handlers, workspace
 from lean_herdr.config import Config
 from tests.doubles import FakeProc, which_stub
 
@@ -188,12 +189,26 @@ def test_inject_without_a_digest_reports_visibly(world):
     )
 
 
-def test_bootstrap_starts_the_orchestrator_in_its_own_workspace(world):
+def test_bootstrap_starts_the_orchestrator_in_its_own_workspace(world, monkeypatch):
     h_proc, _, tmp_path = world
     h_proc.replies = {
+        # The core reads the RAW `workspace list`. Without an answer the reply
+        # is `{}`, which reads as a dead socket -- it would stop before the
+        # split this test is about.
+        ("workspace", "list"): {"result": {"workspaces": []}},
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p9"}}},
     }
+    # The waiter is INJECTED, not patched at module level: `waiter` is a
+    # default argument of start_orchestrator, bound when that function was
+    # defined, so monkeypatching lean_herdr.workspace.wait_for_agent_id would
+    # never reach it. Left alone the real waiter sleeps out the capped
+    # KEYSTROKE_READY_TIMEOUT_S. An ("agent", "list") reply is no way out:
+    # the same call carries the duplicate check and would skip the split.
+    monkeypatch.setattr(
+        "lean_herdr.handlers.start_orchestrator",
+        functools.partial(workspace.start_orchestrator, waiter=lambda *a, **k: "mcp-42"),
+    )
     handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
         {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
     )))
@@ -202,11 +217,13 @@ def test_bootstrap_starts_the_orchestrator_in_its_own_workspace(world):
     assert "LEAN_CTX_TOOL_PROFILE=minimal" in split
     start = next(c for c in h_proc.calls if c[1:3] == ["agent", "start"])
     assert "orch" in start and "opencode" in start
+    assert not h_proc.called_with("workspace", "create"), h_proc.flat()
 
 
 def test_bootstrap_does_not_start_a_second_orchestrator(world):
     h_proc, _, tmp_path = world
     h_proc.replies = {
+        ("workspace", "list"): {"result": {"workspaces": []}},
         ("agent", "list"): {"result": {"agents": [{"name": "orch", "pane_id": "w2:p9"}]}},
         # An anchor pane and a split reply are present on purpose: without them
         # the handler would skip the split for lack of an anchor, and the test

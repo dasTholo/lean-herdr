@@ -20,14 +20,15 @@ import sys
 
 #: verb -> the module that owns it. The values are import PATHS, not
 #: modules: see the docstring on why nothing is imported up here.
-#: `workspace` joins in its own task; a verb without a module would be a
-#: crash disguised as a usage error.
+#: A verb without a module would be a crash disguised as a usage error --
+#: test_cli.py imports every value to keep that impossible.
 VERBS = {
     "dispatch": "lean_herdr.dispatch",
     "report": "lean_herdr.report",
+    "workspace": "lean_herdr.workspace",
 }
 
-USAGE = "usage: lean-herdr {dispatch|report} ...\n"
+USAGE = "usage: lean-herdr {dispatch|report|workspace} ...\n"
 
 
 def _usage(message: str) -> int:

@@ -183,12 +183,18 @@ rejection on a branch nobody described.
 ## Bootstrap
 
 The orchestrator does not start itself. Once per Herdr server — the
-duplicate check in `handlers.py` reads `herdr agent list`, which is
-server-wide, not per workspace:
+duplicate check reads `herdr agent list`, which is server-wide, not per
+workspace:
 
-    herdr pane split --current --direction right --cwd "$PWD" --no-focus \
-      --env LEAN_CTX_TOOL_PROFILE=minimal --env LEAN_CTX_ROLE=orchestrator
-    herdr agent start orch --kind opencode --pane <id> -- --agent orchestrator
+    lean-herdr workspace up
+
+It reads `[workspace]` and `[roles.orchestrator]` from
+`.lean-ctx/lean-herdr/config.toml`, finds or creates the workspace for
+this repository, splits a pane and starts the agent in it. Called twice it
+answers `already_running` and changes nothing. The keystroke
+"Start the orchestrator in this workspace" in a running Herdr runs the
+same code — it only skips the find-or-create step, so the pane lands in
+the workspace the key was pressed in.
 
 `orch` is the trust anchor: `lean-herdr dispatch order`, `answer` and
 `cancel` stamp that name as the sender from the constant
@@ -204,8 +210,8 @@ That rename turns one test red:
 `tests/test_roles.py::test_the_role_prompts_trust_the_name_dispatch_actually_stamps`
 holds the `ORCHESTRATOR = …` line of both role files against the constant
 `dispatch.ORCHESTRATOR_AGENT`, and the rename moves only the role files.
-Either rename the anchor itself — `ORCHESTRATOR["name"]` in
-`lean_herdr/handlers.py`, which the constant is imported from — and then
+Either rename the anchor itself — `ORCHESTRATOR_AGENT` in
+`lean_herdr/settings.py`, which the constant is imported from — and then
 the test is green again and no `--from` is needed at all; or keep
 `--from` and accept that one red test for as long as the rename lasts. Do
 not "fix" it by loosening the test: it is the only guard that the sender
@@ -221,6 +227,11 @@ determined one.
 edit the project behaves exactly as it does without the file. Precedence is
 **CLI flag > file > built-in default**; `[default]` applies to every role,
 `[roles.<role>]` beats `[default]`.
+
+Four sections: `[default]` and `[roles.<role>]` describe how a pane is
+split, `[llm]` the commit generator and the pre-review judge, and
+`[workspace]` the pane `lean-herdr workspace up` opens for the
+orchestrator — `label`, `kind` and `model`, all optional.
 
 An unknown key, a wrong direction or a `name_template` without `{role}` and
 `{branch}` are errors and are reported — never silently reset to the default.

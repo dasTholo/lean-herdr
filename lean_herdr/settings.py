@@ -72,8 +72,26 @@ _NO_BOOL = ("ratio", "ready_timeout_s")
 
 ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
-#: The only three keys the top level of the file may carry.
-ROOT_KEYS = ("default", "roles", "llm")
+#: The only four keys the top level of the file may carry.
+ROOT_KEYS = ("default", "roles", "llm", "workspace")
+
+#: The two runtimes a role prompt is written for. `dispatch --kind` and
+#: `[workspace].kind` read the SAME tuple -- two lists would let a value
+#: pass one gate and fail the other (M3).
+KINDS = ("claude", "opencode")
+
+#: The herdr agent name of the orchestrator, and the sender the workers
+#: trust. Deliberately NOT a config key: three places must agree on it --
+#: this constant, the line `ORCHESTRATOR = orch` in both role prompts, and
+#: test_roles.py::test_the_role_prompts_trust_the_name_dispatch_actually_stamps.
+#: A key would break that triad without anyone asking for it.
+#:
+#: It lives HERE, in the leaf module, and not in handlers.py where it
+#: started: `handlers` now imports `workspace`, `workspace` imports
+#: `dispatch`, and `dispatch` reaches `ordercmd` -- which read this name at
+#: IMPORT time. Left in handlers.py that chain closes into a cycle that
+#: crashes on the first import, not in a test.
+ORCHESTRATOR_AGENT = "orch"
 
 
 def read_settings(path: str | Path | None = None) -> dict[str, Any]:
@@ -142,7 +160,7 @@ def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
 
 
 def _check_root(table: Any) -> dict[str, Any]:
-    """Top level: only `[default]`, `[roles]` and `[llm]`; `roles` a table.
+    """Top level: `[default]`, `[roles]`, `[llm]`, `[workspace]`; `roles` a table.
 
     Reading just the known sections would let `[defaults]`, `[role.x]` or
     a key without any section header evaporate in silence -- the operator gets
@@ -249,4 +267,76 @@ def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
         level = getattr(values, key)
         if level and level not in EFFORTS:
             raise SettingsError(f"llm.{key}={level!r}, allowed: {list(EFFORTS)}")
+    return values
+
+
+@dataclass(frozen=True)
+class WorkspaceSettings:
+    """`[workspace]` -- what `lean-herdr workspace up` needs to start.
+
+    Deliberately NOT part of RoleSettings. Those describe how a pane is
+    split, per role, and `ALLOWED` is built from their fields -- widening
+    that dataclass would make `label` and `kind` legal under `[roles.*]`
+    as well, where nothing reads them and a typo would stay silent.
+
+    `model = ""` means "no --model at all", exactly what the bootstrap
+    does today. `None` would need a second spelling for the same state.
+
+    What is NOT here: `direction`, `ratio` and `focus`. The orchestrator
+    pane takes `pane_split`'s own defaults -- `start_orchestrator` reads
+    only `profile` and `ready_timeout_s` off `[roles.orchestrator]`. That
+    is what the keystroke does today and the one path both callers share;
+    naming it here keeps it a decision rather than an oversight, in a
+    module whose whole purpose is that a wrong file never stays silent.
+    """
+
+    label: str = "{repo}"
+    kind: str = "opencode"
+    model: str = ""
+
+
+WORKSPACE_ALLOWED = frozenset(f.name for f in fields(WorkspaceSettings))
+
+
+def workspace_settings(data: dict[str, Any] | None = None) -> WorkspaceSettings:
+    """`[workspace]` out of the settings file. No section: every default.
+
+    Same strictness as settings_for(): an unknown key, a wrong type, a
+    kind no role prompt is written for, or a label carrying a placeholder
+    nothing fills is a SettingsError -- never a silent fallback.
+    """
+    table = _check_root({} if data is None else data)
+    block = table.get("workspace")
+    if block is None:
+        return WorkspaceSettings()
+    if not isinstance(block, dict):
+        raise SettingsError(
+            f"workspace: section is not a table, but {type(block).__name__}"
+        )
+    unknown = sorted(set(block) - WORKSPACE_ALLOWED)
+    if unknown:
+        raise SettingsError(
+            f"workspace: unknown keys {unknown}; "
+            f"allowed: {sorted(WORKSPACE_ALLOWED)}"
+        )
+    for key, value in block.items():
+        if not isinstance(value, str):
+            raise SettingsError(
+                f"workspace.{key}: {value!r} is {type(value).__name__}, not str"
+            )
+    values = WorkspaceSettings(**block)
+    if values.kind not in KINDS:
+        raise SettingsError(
+            f"workspace.kind={values.kind!r}, allowed: {list(KINDS)}"
+        )
+    # `{repo}` is OPTIONAL here, unlike name_template's {role}/{branch}:
+    # the label is a caption, not a reuse key, so a literal `label =
+    # "work"` is valid. An UNKNOWN placeholder is not -- it would surface
+    # as a KeyError deep inside `up`, far from the line that caused it.
+    try:
+        values.label.format(repo="r")
+    except (KeyError, IndexError, ValueError) as exc:
+        raise SettingsError(
+            f"workspace.label={values.label!r} is not formattable: {exc}"
+        ) from exc
     return values

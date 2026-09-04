@@ -7,8 +7,10 @@ import pytest
 from lean_herdr.settings import (
     RoleSettings,
     SettingsError,
+    WorkspaceSettings,
     read_settings,
     settings_for,
+    workspace_settings,
 )
 
 
@@ -218,3 +220,29 @@ def test_the_llm_section_must_be_a_table():
 
     with pytest.raises(SettingsError, match="not a table"):
         llm_settings({"llm": "a/b"})
+
+
+def test_an_unknown_workspace_key_does_not_stay_silent():
+    with pytest.raises(SettingsError, match="unknown keys"):
+        workspace_settings({"workspace": {"labl": "x"}})
+
+
+def test_a_workspace_key_under_roles_is_still_unknown():
+    """[workspace] is its own dataclass, not a widened RoleSettings."""
+    with pytest.raises(SettingsError, match="unknown keys"):
+        settings_for("builder", {"roles": {"builder": {"label": "x"}}})
+
+
+def test_a_kind_no_role_prompt_is_written_for_is_rejected():
+    with pytest.raises(SettingsError, match="workspace.kind"):
+        workspace_settings({"workspace": {"kind": "codex"}})
+
+
+def test_a_literal_label_is_valid_but_an_unknown_placeholder_is_not():
+    assert workspace_settings({"workspace": {"label": "work"}}).label == "work"
+    with pytest.raises(SettingsError, match="not formattable"):
+        workspace_settings({"workspace": {"label": "{branch}"}})
+
+
+def test_no_workspace_section_means_every_default():
+    assert workspace_settings({}) == WorkspaceSettings()

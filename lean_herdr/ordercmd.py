@@ -11,6 +11,16 @@ sides of the split need it. Leaving it in dispatch.py would have made the
 import circular. It is public for exactly that reason -- it used to carry
 a leading underscore while being imported across a module boundary, which
 promised a privacy it never had.
+
+`ORCHESTRATOR_AGENT` is imported here, not defined: `settings` owns the name,
+because `handlers` -> `workspace` -> `dispatch` -> `ordercmd` closes into an
+import cycle while `handlers` owns it, and this module binds the name at
+IMPORT time. It stays reachable from here for the one reason that is left --
+`dispatch.py` imports it from this module. It is the sender `order` stamps:
+the bootstrap starts the orchestrator pane under exactly this herdr agent
+name and the workers' role prompts compare against exactly this string, so
+it is imported, never spelled a second time (M3). `--from` overrides it for
+a differently named pane.
 """
 
 from __future__ import annotations
@@ -19,7 +29,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from lean_herdr.handlers import ORCHESTRATOR
 from lean_herdr.orderlog import (
     OrderLogError,
     append,
@@ -28,12 +37,7 @@ from lean_herdr.orderlog import (
     state_dir,
 )
 from lean_herdr.orders import fold, is_terminal
-
-#: Who `order` stamps as the sender. The bootstrap starts the orchestrator
-#: pane under exactly this herdr agent name, and the workers' role prompts
-#: compare against exactly this string -- so it is imported, never spelled
-#: a second time (M3). `--from` overrides it for a differently named pane.
-ORCHESTRATOR_AGENT = ORCHESTRATOR["name"]
+from lean_herdr.settings import ORCHESTRATOR_AGENT
 
 
 def order_result(ok: bool, task_id: str, **rest: Any) -> dict[str, Any]:
