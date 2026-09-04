@@ -367,7 +367,7 @@ def test_main_loads_the_config_once_for_both_modes(monkeypatch, tmp_path):
     """One read, one RoleSettings, both modes -- and read from the repo root.
 
     Two things would break in silence otherwise. `SETTINGS_PATH` is relative:
-    anchored on `$PWD` the file vanishes as soon as `bin/herdr-dispatch` runs
+    anchored on `$PWD` the file vanishes as soon as `lean-herdr dispatch` runs
     from a subdirectory or a worktree -- which is why this test runs from a
     foreign cwd. And a wait mode with different settings would ring an agent
     under a different name than the build mode started.

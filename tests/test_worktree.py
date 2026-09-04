@@ -261,7 +261,8 @@ def test_open_workspace_tab_only_response_names_what_it_got(h):
 def test_wt_switch_passes_base_at_by_default(monkeypatch):
     """A worker's worktree branches off the current HEAD, not the default
     branch — otherwise it lacks whatever the caller's own branch introduced
-    (here: `bin/herdr-report`, without which a worker cannot report back).
+    (here: the role prompts, without which a worker starts without a prompt
+    and never reports back).
     """
     monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: "/usr/bin/wt")
     calls: list[list[str]] = []

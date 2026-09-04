@@ -16,30 +16,24 @@ Herdr installs no toolchains — these things must be present:
 | `herdr` >= 0.8.0 (measured on 0.8.2 in this tree) | panes, agents, workspaces | see the Herdr project |
 | `lean-ctx` >= 3.10.1 | agent bus, project memory, tool profiles | `cargo install lean-ctx` |
 | `uv` | development: test runner and dev dependencies | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| `python3` | runtime of the plugin handlers and both CLIs | your distribution |
+| `python3` | runtime of the plugin handlers | your distribution |
 | `worktrunk` (`wt`) >= 0.75.0 | one worktree per branch, merge, cleanup | `cargo install worktrunk` |
 | Herdr plugin `devashish2203/herdr-worktrunk` | binds worktrees to workspaces; needs `fzf` and `jq` | `herdr plugin install devashish2203/herdr-worktrunk` |
 | `opencode` >= 1.18.25 | orchestrator and reviewer | see the opencode project |
 | Claude Code >= 2.1.252 | builder | see the Claude Code project |
 
-Two approvals in lean-ctx, without which an agent under shell gating can
-steer neither Herdr nor worktrunk:
+Three approvals in lean-ctx, without which an agent under shell gating can
+steer neither Herdr nor worktrunk nor its own order path:
 
     lean-ctx allow herdr
     lean-ctx allow wt
+    lean-ctx allow lean-herdr
 
-`bin/herdr-report` needs no third line — measured against lean-ctx 3.10.1,
-not assumed. The gate normalises a command to its **basename** before it
-compares: `/usr/bin/tail --version` is refused as *"'tail' is not in the
-shell allowlist"*, and `bin/herdr-nonexistent-xyz` as
-*"'herdr-nonexistent-xyz' is not in the shell allowlist"*. `lean-ctx allow`
-takes a bare `<cmd>` and every entry in the effective list is a bare name,
-so a path-shaped entry `bin/herdr-report` would be compared against
-nothing at all. What actually carries the call is that the script exists
-inside the project root: `bin/herdr-report --help` runs through the gate
-with `herdr-report` absent from the allowlist, by the relative and by the
-absolute path alike. Should a worker ever be refused here anyway, the
-spelling that can match is `lean-ctx allow herdr-report` — never the path.
+`lean-herdr` needs its own line now. The gate normalises a command to its
+basename before comparing, and until this change the CLIs lived inside the
+project root, where a script is carried by its path rather than by the
+allowlist. On the PATH that exemption is gone -- and it was never a
+property worth relying on.
 
 Plus one approval in worktrunk. Without it `wt` skips the project hooks from
 `.config/wt.toml` **silently** and reports success — the pre-merge test gate
@@ -111,14 +105,14 @@ Orders live in an append-only, hash-chained event log under
 `<lean-ctx data dir>/lean-herdr/<repo>/orders/`. Every process writes; no
 registration, no MCP identity, no cleanup. The orchestrator drives it with
 
-    bin/herdr-dispatch order   --to <agent> [--after o-…] --message "…"
-    bin/herdr-dispatch answer  --task-id o-… --message "…"
-    bin/herdr-dispatch cancel  --task-id o-… --message "…"
-    bin/herdr-dispatch remember --key lean-herdr/<branch> --message "…"
+    lean-herdr dispatch order    --to <agent> [--after o-…] --message "…"
+    lean-herdr dispatch answer   --task-id o-… --message "…"
+    lean-herdr dispatch cancel   --task-id o-… --message "…"
+    lean-herdr dispatch remember --key lean-herdr/<branch> --message "…"
 
 and the worker answers with
 
-    bin/herdr-report next | show | start | done | fail | ask
+    lean-herdr report next | show | start | done | fail | ask
 
 Nothing removes an order. A non-terminal one left lying is the evidence
 that a run broke off; `cancel` closes it.
@@ -196,7 +190,7 @@ server-wide, not per workspace:
       --env LEAN_CTX_TOOL_PROFILE=minimal --env LEAN_CTX_ROLE=orchestrator
     herdr agent start orch --kind opencode --pane <id> -- --agent orchestrator
 
-`orch` is the trust anchor: `bin/herdr-dispatch order`, `answer` and
+`orch` is the trust anchor: `lean-herdr dispatch order`, `answer` and
 `cancel` stamp that name as the sender from the constant
 `ORCHESTRATOR_AGENT` — never from the pane name — and `roles/builder.md`
 and `roles/reviewer.md` carry the line `ORCHESTRATOR = orch`. Start the

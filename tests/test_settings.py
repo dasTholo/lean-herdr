@@ -191,7 +191,7 @@ def test_the_llm_section_is_read_and_defaults_to_empty():
 
 
 def test_the_llm_section_no_longer_breaks_the_whole_file():
-    """Before this task `[llm]` made EVERY herdr-dispatch call fail."""
+    """Before this task `[llm]` made EVERY lean-herdr dispatch call fail."""
     from lean_herdr.settings import settings_for
 
     assert settings_for("builder", {"llm": {"model": "a/b"}}).profile == "standard"

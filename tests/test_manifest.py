@@ -78,20 +78,27 @@ def test_an_unknown_subcommand_is_not_a_crash(capsys):
 
 
 def test_the_package_parses_on_the_python3_the_manifest_may_meet():
-    """Every command here spawns a bare `python3` -- so does every bin/ script.
+    """Every command in the manifest spawns a bare `python3`.
 
-    That interpreter is whatever the host provides, never the pinned one from
-    `uv`. Syntax it cannot parse kills the handler at IMPORT time, before
-    main() can keep its "exit always 0" promise. PEP 758's parenthesis-free
-    `except A, B:` was such a case. ast.parse only parses, it runs nothing.
+    That interpreter is whatever the host provides, never the pinned one
+    from `uv`. Syntax it cannot parse kills the handler at IMPORT time,
+    before main() can keep its "exit always 0" promise. PEP 758's
+    parenthesis-free `except A, B:` was such a case. ast.parse only
+    parses, it runs nothing.
+
+    `bin/herdr-dispatch` and `bin/herdr-report` used to stand in this list
+    for the same reason and are gone: as the `lean-herdr` entry point the
+    CLIs run under the INSTALLED interpreter. `bin/herdr-llm` stays --
+    worktrunk starts it as a bare `python3` script, not through an entry
+    point. The package glob stays too: `handlers.py` and everything it
+    imports is still reached by a bare `python3`, and that now includes
+    `workspace.py`.
     """
     assert all(e["command"][0] == "python3" for e in manifest()["events"]), (
         "the floor below only matters as long as the manifest spawns python3"
     )
     sources = [
         *sorted((ROOT / "lean_herdr").glob("*.py")),
-        ROOT / "bin" / "herdr-dispatch",
-        ROOT / "bin" / "herdr-report",
         ROOT / "bin" / "herdr-llm",
     ]
     offenders = []

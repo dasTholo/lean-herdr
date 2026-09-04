@@ -284,7 +284,7 @@ def read_events(task_id: str, *, orders: str | Path | None = None) -> list[Event
     `chain_broken: o-1a05e34cd15-1cf3b885 @ 3: not linked to its
     predecessor`. It has to: nothing ever deletes an order and
     `report._folded()` folds every one of them, so a single corrupted log
-    blocks `herdr-report next` for every worker until a human clears it.
+    blocks `lean-herdr report next` for every worker until a human clears it.
     The failure stays hard on purpose -- a broken log is an error, never a
     'nothing to do' -- and naming the order is what makes it fixable.
     """

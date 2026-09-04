@@ -17,7 +17,7 @@ from typing import Any
 
 #: RELATIVE to the repo root, not to $PWD. The caller joins it onto
 #: canonical_root() -- otherwise the config silently fails to load as soon as
-#: bin/herdr-dispatch runs from a subdirectory, and the promise "a wrong file
+#: lean-herdr dispatch runs from a subdirectory, and the promise "a wrong file
 #: never stays silent" would be broken.
 SETTINGS_PATH = Path(".config") / "lean-herdr.toml"
 

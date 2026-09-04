@@ -6,7 +6,7 @@ brings the relevant entries along unasked, capped by `recall_facts_limit`
 and filtered by a relevance threshold, so a read step would cost a tool
 call for something already in the context.
 
-Thin on purpose, like bin/herdr-dispatch: the mechanics live in
+Thin on purpose, like lean-herdr dispatch: the mechanics live in
 orderlog.py and orders.py, and this module only decides who is asking and
 what to print.
 """
@@ -262,7 +262,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = _Parser(prog="herdr-report", description="Report on a work order.")
+    p = _Parser(prog="lean-herdr report", description="Report on a work order.")
     p.add_argument("command", choices=SUBCOMMANDS)
     p.add_argument("--task", default=None, help="the order id; not used by `next`")
     p.add_argument("--message", default=None, help="required for done, fail and ask")
@@ -294,7 +294,7 @@ def missing_flags(args: argparse.Namespace) -> str | None:
 def main(argv: list[str] | None = None) -> int:
     """Output: one JSON line on stdout. Exit ALWAYS 0.
 
-    Same contract as bin/herdr-dispatch, for the same reason: the worker
+    Same contract as lean-herdr dispatch, for the same reason: the worker
     reads `ok`, not the exit code, and a usage error must not abort its
     shell call.
     """

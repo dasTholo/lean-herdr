@@ -75,7 +75,7 @@ AGENT_READY_INTERVAL_S = 0.5
 POLL_INTERVAL_S = 1.0
 
 #: The two variables the build mode stamps on the pane it splits and
-#: `herdr-report` reads back out of its environment. ONE definition each
+#: `lean-herdr report` reads back out of its environment. ONE definition each
 #: (M3): report.py IMPORTS these names rather than spelling the strings a
 #: second time, and the `env=` dict of the pane split below is built from
 #: them. A second spelling on either side is silent in the worst way --
@@ -93,8 +93,8 @@ DEFAULT_TIMEOUT_MS = 300_000
 #: continues after a question -- then it is not new. English, like the role
 #: prompt it is spoken into.
 WAKE_PROMPT = (
-    "Order {task_id} is waiting for you -- bin/herdr-report next shows it, "
-    "bin/herdr-report show --task {task_id} its history."
+    "Order {task_id} is waiting for you -- lean-herdr report next shows it, "
+    "lean-herdr report show --task {task_id} its history."
 )
 
 #: Words the positional slot takes INSTEAD of a role. They write into the
@@ -271,7 +271,7 @@ def dispatch(
                     req.role, req.profile, settings=cfg
                 ),
                 ROLE_ENV: req.role,
-                # The worker's own name, so `herdr-report` does not have to
+                # The worker's own name, so `lean-herdr report` does not have to
                 # derive it. Derivation from role plus branch disagrees with
                 # this side whenever the dispatch carried no `--worktree`:
                 # here the agent is `builder`, there it would be
@@ -538,7 +538,7 @@ class _Parser(argparse.ArgumentParser):
 
 def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
-        prog="herdr-dispatch", description="Build or wait -- one call."
+        prog="lean-herdr dispatch", description="Build or wait -- one call."
     )
     p.add_argument(
         "command",
@@ -741,7 +741,7 @@ def main(argv: list[str] | None = None) -> int:
             # agent the build mode started, and the name comes from here.
             # SETTINGS_PATH is RELATIVE -- anchored on anything but the
             # canonical root the file would silently not be found as soon as
-            # bin/herdr-dispatch runs from a subdirectory or a worktree.
+            # lean-herdr dispatch runs from a subdirectory or a worktree.
             # A SettingsError is caught below and reaches the caller as
             # `config_error: <reason>` -- an operator's wrong config value is
             # not a crash.

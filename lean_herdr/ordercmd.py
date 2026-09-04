@@ -68,7 +68,7 @@ def create_order(
     the write path is a script call -- and unit-testable at last.
 
     `--after` is checked, not merely stored: an id nobody wrote would make
-    `herdr-report next` fold in nothing, silently, and the worker would
+    `lean-herdr report next` fold in nothing, silently, and the worker would
     lose the predecessor's wording without ever learning why.
     """
     if not req.to_agent:

@@ -1,12 +1,12 @@
 {
   "permissions": {
     "allow": [
-      "Bash(bin/herdr-report next)",
-      "Bash(bin/herdr-report show:*)",
-      "Bash(bin/herdr-report start:*)",
-      "Bash(bin/herdr-report done:*)",
-      "Bash(bin/herdr-report fail:*)",
-      "Bash(bin/herdr-report ask:*)",
+      "Bash(lean-herdr report next)",
+      "Bash(lean-herdr report show:*)",
+      "Bash(lean-herdr report start:*)",
+      "Bash(lean-herdr report done:*)",
+      "Bash(lean-herdr report fail:*)",
+      "Bash(lean-herdr report ask:*)",
       "Bash(git add:*)",
       "Bash(uv run pytest:*)",
       "Bash(wt step commit:*)"

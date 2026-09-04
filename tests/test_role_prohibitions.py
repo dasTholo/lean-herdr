@@ -24,7 +24,8 @@ from pathlib import Path
 
 import pytest
 
-ROLES = Path(__file__).resolve().parent.parent / "roles"
+ROOT = Path(__file__).resolve().parent.parent
+ROLES = ROOT / "roles"
 
 #: (role file, prohibition sentence, the constraint behind it)
 PROHIBITIONS = [
@@ -119,17 +120,17 @@ MANDATORY_SENTENCES = [
     # --- Builder ------------------------------------------------------------
     (
         "builder.md",
-        "bin/herdr-report next",
-        "the worker finds its order only through herdr-report next",
+        "lean-herdr report next",
+        "the worker finds its order only through lean-herdr report next",
     ),
     (
         "builder.md",
-        "bin/herdr-report start --task o-…",
+        "lean-herdr report start --task o-…",
         "the orchestrator waits for exactly this event; without it the run is no_reply",
     ),
     (
         "builder.md",
-        "bin/herdr-report done --task o-…",
+        "lean-herdr report done --task o-…",
         "the closing event is the ONLY proof of success (H1)",
     ),
     (
@@ -150,7 +151,7 @@ MANDATORY_SENTENCES = [
     # --- Reviewer -----------------------------------------------------------
     (
         "reviewer.md",
-        "bin/herdr-report start --task o-…",
+        "lean-herdr report start --task o-…",
         "same rule applies to the reviewer",
     ),
     (
@@ -171,12 +172,12 @@ MANDATORY_SENTENCES = [
     ),
     (
         "orchestrator.md",
-        "bin/herdr-dispatch answer --task-id o-…",
+        "lean-herdr dispatch answer --task-id o-…",
         "the answer is an event of its own -- there is no second step",
     ),
     (
         "orchestrator.md",
-        "bin/herdr-dispatch remember --key lean-herdr/<branch>",
+        "lean-herdr dispatch remember --key lean-herdr/<branch>",
         "one memory entry per branch; the cap is global across all projects",
     ),
     (
@@ -244,3 +245,23 @@ def test_remember_key_carries_no_trailing_segment():
         "the remember key now allows a trailing segment after <branch> -- "
         "that is per-order keying, which the memory-cap rule forbids"
     )
+
+
+def test_the_role_file_path_the_orchestrator_types_actually_resolves():
+    """A stale --role-file is a GREEN suite and a dead run.
+
+    dispatch hands this path straight to `--append-system-prompt-file`
+    (claude) or reads its stem as the agent name (opencode). Pointing
+    nowhere, the worker starts without a prompt, never reports, and the
+    orchestrator hits the wait-mode timeout with `no_reply`. Every other
+    test in this file pins a COMMAND; this one pins a path, and nothing
+    else did.
+    """
+    text = (ROLES / "orchestrator.md").read_text(encoding="utf-8")
+    hit = re.search(r"--role-file (\S+)", text)
+    assert hit, "the orchestrator prompt no longer names a --role-file path"
+    template = hit.group(1)
+    assert "<role>" in template, f"{template!r} names no role placeholder"
+    for role in ("orchestrator", "builder", "reviewer"):
+        path = ROOT / template.replace("<role>", role)
+        assert path.is_file(), f"{template} does not resolve for {role}: {path}"

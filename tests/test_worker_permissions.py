@@ -44,14 +44,18 @@ def opencode_key(command: str) -> str:
     would let through anything at all. `next` is the only one that takes no
     flags, so it is the only one without a trailing ` *`.
     """
-    return "bin/herdr-report next" if command == "next" else f"bin/herdr-report {command} *"
+    return (
+        "lean-herdr report next"
+        if command == "next"
+        else f"lean-herdr report {command} *"
+    )
 
 
 def claude_key(command: str) -> str:
     return (
-        "Bash(bin/herdr-report next)"
+        "Bash(lean-herdr report next)"
         if command == "next"
-        else f"Bash(bin/herdr-report {command}:*)"
+        else f"Bash(lean-herdr report {command}:*)"
     )
 
 
@@ -80,10 +84,34 @@ def test_every_worker_may_run_every_report_subcommand(role):
 
 
 def test_the_permission_is_never_a_bare_wildcard():
+    """One binary means the gate is the ONLY separation left.
+
+    Before this, `herdr-dispatch` and `herdr-report` were two programs,
+    and the builder's allowlist separated them by simply never naming the
+    first. Now a sloppy `lean-herdr *` hands the builder the orchestrator's
+    own verb -- `order`, `answer`, `cancel` and `remember` included.
+    """
     for role in WORKERS:
         allowed = opencode()["agent"][role]["permission"]["bash"]
-        assert "bin/herdr-report *" not in allowed
-        assert "bin/herdr-report*" not in allowed
+        for wildcard in ("lean-herdr *", "lean-herdr*", "lean-herdr report *"):
+            assert wildcard not in allowed, f"{role}: {wildcard} is too wide"
+    for entry in claude_allow():
+        assert entry not in ("Bash(lean-herdr:*)", "Bash(lean-herdr)"), entry
+
+
+def test_no_worker_gate_ever_names_the_dispatch_verb():
+    """The verb that belongs to the orchestrator, and to nobody else.
+
+    `dispatch order` writes work orders and `dispatch answer` closes an
+    input-required round trip. A worker holding either could hand itself
+    an order under the sender the other workers trust.
+    """
+    for role in WORKERS:
+        allowed = opencode()["agent"][role]["permission"]["bash"]
+        offenders = [key for key in allowed if "dispatch" in key]
+        assert not offenders, f"{role} may run the dispatch verb: {offenders}"
+    offenders = [key for key in claude_allow() if "dispatch" in key]
+    assert not offenders, f".claude/settings.json: {offenders}"
 
 
 def test_the_repo_ships_the_claude_permissions_too():
@@ -110,15 +138,15 @@ def test_no_permission_file_names_a_subcommand_the_cli_does_not_have():
     expected = set(SUBCOMMANDS)
     for role in WORKERS:
         named = {
-            key.removeprefix("bin/herdr-report ").removesuffix(" *")
+            key.removeprefix("lean-herdr report ").removesuffix(" *")
             for key in opencode()["agent"][role]["permission"]["bash"]
-            if key.startswith("bin/herdr-report")
+            if key.startswith("lean-herdr report")
         }
         assert named == expected, f"{role}: {sorted(named ^ expected)}"
     named = {
-        key.removeprefix("Bash(bin/herdr-report ").removesuffix(":*)").removesuffix(")")
+        key.removeprefix("Bash(lean-herdr report ").removesuffix(":*)").removesuffix(")")
         for key in claude_allow()
-        if key.startswith("Bash(bin/herdr-report")
+        if key.startswith("Bash(lean-herdr report")
     }
     assert named == expected, f".claude/settings.json: {sorted(named ^ expected)}"
 

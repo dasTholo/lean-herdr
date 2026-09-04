@@ -28,7 +28,7 @@
         "write": "deny",
         "bash": {
           "*": "deny",
-          "bin/herdr-dispatch *": "allow",
+          "lean-herdr dispatch *": "allow",
           "herdr *": "allow",
           "wt *": "allow",
           "git status*": "allow",
@@ -37,8 +37,12 @@
       }
     },
     // The worker's order path is a CLI now, so both workers need a shell
-    // permission they never had -- granted per subcommand, because
-    // "bin/herdr-report *" would let through anything behind the program name.
+    // permission they never had -- granted per subcommand. Two reasons, and
+    // the second one is new: `lean-herdr report *` would let through anything
+    // behind the program name, AND `lean-herdr *` would hand the worker the
+    // dispatch verb. Until this commit the separation was structural -- the
+    // builder's allowlist simply never named the other program, because there
+    // was one. Now the gate is the only separation left.
     "builder": {
       "description": "Writes code against one work order at a time.",
       "mode": "primary",
@@ -50,16 +54,16 @@
         // builder could run neither a test nor a commit and would fail on
         // its first step -- so exactly the gate that role text demands is
         // granted, and nothing wider. No `git push`, no bare `git *`, no
-        // wildcard behind `bin/herdr-report`, and one worktrunk subcommand
+        // wildcard behind `lean-herdr report`, and one worktrunk subcommand
         // rather than `wt *`, which would carry merge and push with it.
         "bash": {
           "*": "deny",
-          "bin/herdr-report next": "allow",
-          "bin/herdr-report show *": "allow",
-          "bin/herdr-report start *": "allow",
-          "bin/herdr-report done *": "allow",
-          "bin/herdr-report fail *": "allow",
-          "bin/herdr-report ask *": "allow",
+          "lean-herdr report next": "allow",
+          "lean-herdr report show *": "allow",
+          "lean-herdr report start *": "allow",
+          "lean-herdr report done *": "allow",
+          "lean-herdr report fail *": "allow",
+          "lean-herdr report ask *": "allow",
           "uv run pytest*": "allow",
           "uv run ruff*": "allow",
           "git add*": "allow",
@@ -80,12 +84,12 @@
         "write": "deny",
         "bash": {
           "*": "deny",
-          "bin/herdr-report next": "allow",
-          "bin/herdr-report show *": "allow",
-          "bin/herdr-report start *": "allow",
-          "bin/herdr-report done *": "allow",
-          "bin/herdr-report fail *": "allow",
-          "bin/herdr-report ask *": "allow",
+          "lean-herdr report next": "allow",
+          "lean-herdr report show *": "allow",
+          "lean-herdr report start *": "allow",
+          "lean-herdr report done *": "allow",
+          "lean-herdr report fail *": "allow",
+          "lean-herdr report ask *": "allow",
           "git diff*": "allow",
           "git log*": "allow",
           "git show*": "allow",

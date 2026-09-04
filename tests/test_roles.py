@@ -69,7 +69,7 @@ def test_the_role_prompts_trust_the_name_dispatch_actually_stamps():
 @pytest.mark.parametrize("name", WORKERS)
 def test_workers_work_through_herdr_report(name):
     text = (ROLES / f"{name}.md").read_text(encoding="utf-8")
-    assert "bin/herdr-report next" in text
+    assert "lean-herdr report next" in text
     assert "--task" in text
     assert "--to " not in text, "the worker does not address, it answers in place"
     assert "ctx_task" not in text, "the ctx_task path is gone"

@@ -41,7 +41,7 @@ def test_both_opencode_agents_have_role_text_a_cap_and_a_guard():
 
 def test_orchestrator_may_dispatch_wt_and_herdr():
     bash = load_jsonc(ROOT / "opencode.jsonc")["agent"]["orchestrator"]["permission"]["bash"]
-    assert bash["bin/herdr-dispatch *"] == "allow"
+    assert bash["lean-herdr dispatch *"] == "allow"
     assert bash["wt *"] == "allow"
     assert bash["herdr *"] == "allow"
 
@@ -66,12 +66,12 @@ def test_readme_names_every_runtime_dependency():
         # The path form was never able to match: the gate normalises to the
         # basename and every allowlist entry is a bare name (measured on
         # lean-ctx 3.10.1). The README names the spelling that CAN match.
-        "lean-ctx allow herdr-report",
+        "lean-ctx allow lean-herdr",
         "wt config approvals", "warning:",
         # The work-order path, both halves of it. `ctx_task` used to stand
         # here; it is gone from the project, so requiring it would pin the
         # README to a tool that no longer exists.
-        "bin/herdr-dispatch order", "bin/herdr-report",
+        "lean-herdr dispatch order", "lean-herdr report",
         "ORCHESTRATOR = orch",
     ):
         assert requirement in text, f"README does not name {requirement!r}"

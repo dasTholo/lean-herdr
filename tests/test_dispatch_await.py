@@ -489,7 +489,7 @@ def test_help_keeps_working(capsys):
     with pytest.raises(SystemExit) as exit_info:
         main(["--help"])
     assert exit_info.value.code == 0
-    assert "herdr-dispatch" in capsys.readouterr().out
+    assert "lean-herdr dispatch" in capsys.readouterr().out
 
 
 def test_an_order_can_be_created_from_a_plain_process(tmp_path):

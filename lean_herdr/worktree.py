@@ -65,13 +65,18 @@ def wt_switch(
     `--no-cd` because the script doesn't change directory; `--yes` because no
     human is sitting at the approval prompt. `base` defaults to `@` (the
     currently checked-out branch) rather than `wt`'s own default (the repo's
-    default branch): the order-log path is self-referential — a worker
-    reports back by running `bin/herdr-report`, which is introduced by the
-    orchestrator's own branch. A worktree branched off `main` structurally
-    lacks that script, so the worker runs into the wait-mode timeout and
-    returns `no_reply`. Measured: `wt switch --create feat/probe` with no
-    `--base` produced a worktree at `main`'s HEAD, missing `bin/herdr-report`,
-    `.claude/settings.json` and `lean_herdr/orderlog.py` alike.
+    default branch): the order-log path is self-referential -- a worker reads
+    its role prompt from `.lean-ctx/lean-herdr/roles/`, which is introduced by
+    the orchestrator's own branch. A worktree branched off `main` structurally
+    lacks those files, so the worker starts without a prompt, never reports,
+    and the orchestrator runs into the wait-mode timeout with `no_reply`.
+
+    The report CLI itself is no longer part of this argument: `lean-herdr`
+    lives on the PATH, not in the tree. Measured before that move: `wt switch
+    --create feat/probe` with no `--base` produced a worktree at `main`'s HEAD,
+    missing `bin/herdr-report`, `.claude/settings.json` and
+    `lean_herdr/orderlog.py` alike -- the second and third of those still
+    travel in the branch today.
 
     Honest subtlety: this runs with `cwd=repo_root` (H8 — `--cwd`/`cwd` MUST
     be the repo root, or the later `worktree open` is rejected with

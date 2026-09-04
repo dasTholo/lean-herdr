@@ -10,7 +10,7 @@ other way.
 
 ### 1. Build the worker
 
-    bin/herdr-dispatch <role> --kind <claude|opencode> --model <model> \
+    lean-herdr dispatch <role> --kind <claude|opencode> --model <model> \
       --role-file roles/<role>.md [--worktree <branch>] [--profile <p>]
 
 The output is one JSON line. Read `ok`, never the exit code. On success it
@@ -18,7 +18,7 @@ carries `pane`, `agent_id` and `agent`.
 
 ### 2. Create the order
 
-    bin/herdr-dispatch order --to <the `agent` from step 1> \
+    lean-herdr dispatch order --to <the `agent` from step 1> \
       [--after o-…] --message "<the whole order, as detailed as it needs to be>"
 
 **`--to` MUST be the `agent` value step 1 returned**, never a name you
@@ -34,7 +34,7 @@ it, it appears in every further step.
 
 ### 3. Let it wait
 
-    bin/herdr-dispatch <role> --await --kind <claude|opencode> \
+    lean-herdr dispatch <role> --await --kind <claude|opencode> \
       --task-id o-… [--worktree <branch>] [--timeout-ms 300000]
 
 This call rings the worker and then waits inside the script, not inside you.
@@ -63,7 +63,7 @@ approve -- the strong reviewer runs in every case, `pass` or not.
 
    The builder's wait call may carry `--prereview`:
 
-       bin/herdr-dispatch builder --await --kind claude --task-id o-… \
+       lean-herdr dispatch builder --await --kind claude --task-id o-… \
          --worktree <branch> --prereview
 
    It costs you nothing extra -- you read that JSON line anyway. The key
@@ -93,10 +93,10 @@ approve -- the strong reviewer runs in every case, `pass` or not.
 `error: input_required` means: it needs a decision from you. The question is
 in `message`. Answer with one call:
 
-    bin/herdr-dispatch answer --task-id o-… --message "<your answer>"
+    lean-herdr dispatch answer --task-id o-… --message "<your answer>"
 
 Your answer becomes an event of its own, and the worker sees it in
-`bin/herdr-report show`. The order goes back to `working` on its own — there
+`lean-herdr report show`. The order goes back to `working` on its own — there
 is no second step.
 
 Then step 3 again. That is the only place where the loop comes back to you —
@@ -108,7 +108,7 @@ Nobody cleans up here, and that is intended: an order left sitting on
 `working` is the evidence that a run broke off. Nothing removes a terminal
 order either — the log stays until a human deletes it.
 
-    bin/herdr-dispatch cancel --task-id o-… --message "<why>"
+    lean-herdr dispatch cancel --task-id o-… --message "<why>"
 
 `ctx_task` allowed only the creator to cancel. The log enforces nothing of the
 kind, so it is a rule instead of a guarantee: **nobody but you closes an
@@ -126,7 +126,7 @@ state.
        Read the JSON answer yourself: under `result.worktrees`, find the
        entry whose `branch` is your branch and take its `path` and its
        `open_workspace_id`. Do not pipe the answer through another program.
-       Nothing but `herdr`, `wt`, `git` and `bin/herdr-dispatch` is allowed
+       Nothing but `herdr`, `wt`, `git` and `lean-herdr dispatch` is allowed
        to you.
     3. wt -C <path> step squash --stage none --yes
     4. herdr workspace close <workspace_id>
@@ -168,7 +168,7 @@ comes from the human, not from a loop.
 Write exactly ONE entry into the project memory — for the whole branch, never
 one per order:
 
-    bin/herdr-dispatch remember --key lean-herdr/<branch> \
+    lean-herdr dispatch remember --key lean-herdr/<branch> \
       --message "<one to two sentences: what the branch achieved, and which decision outlives it>"
 
 One to two sentences is the rule, not a matter of taste. The memory cap is

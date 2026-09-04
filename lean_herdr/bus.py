@@ -1,6 +1,6 @@
 """Bus access: canonical project root and messages from registry.json.
 
-The two truths shared by `bin/herdr-dispatch` and the plugin handlers.
+The two truths shared by `lean-herdr dispatch` and the plugin handlers.
 Both exist exactly once, because otherwise both sides would get them
 wrong in different ways.
 """

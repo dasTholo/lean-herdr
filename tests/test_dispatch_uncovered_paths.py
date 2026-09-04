@@ -12,7 +12,7 @@
 4. The `pane_split_failed` branch is reachable but had no dedicated unit
    test.
 
-Production code (lean_herdr/*.py, bin/herdr-dispatch) is not driven from
+Production code (lean_herdr/*.py, the `lean-herdr` CLI) is not driven from
 here in any special way -- this file only adds tests.
 """
 
