@@ -24,7 +24,6 @@ from lean_herdr.settings import (
     settings_for,
     workspace_settings,
 )
-from lean_herdr.workspace import start_orchestrator
 
 #: The token belongs to the plugin. `esc` belongs to the orchestrator and is
 #: never touched here -- not even to clear it.
@@ -203,6 +202,14 @@ def handle_bootstrap(cfg: Config) -> None:
             "notification", "show", "--message", "lean-herdr: workspace without a cwd"
         )
         return
+    # Imported on the call, not up top. This module is imported by EVERY
+    # plugin event, and `pane.agent_status_changed` fires constantly; the
+    # `workspace -> dispatch -> ordercmd -> orderlog/llm` subtree measured
+    # 10.7 ms of a 42 ms `import lean_herdr.handlers` on 2026-09-04. Only
+    # this one handler needs it -- the same trade `workspace.main` makes
+    # for `initcmd`, and the one cli.py's docstring argues for the router.
+    from lean_herdr.workspace import start_orchestrator
+
     try:
         root = canonical_root(cwd)
         data = read_settings(root / SETTINGS_PATH)

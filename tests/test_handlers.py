@@ -1,5 +1,7 @@
 import functools
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -205,8 +207,13 @@ def test_bootstrap_starts_the_orchestrator_in_its_own_workspace(world, monkeypat
     # never reach it. Left alone the real waiter sleeps out the capped
     # KEYSTROKE_READY_TIMEOUT_S. An ("agent", "list") reply is no way out:
     # the same call carries the duplicate check and would skip the split.
+    #
+    # The target is `lean_herdr.workspace`, not `lean_herdr.handlers`:
+    # handle_bootstrap imports the name ON THE CALL, so `handlers` never
+    # holds one to patch. test_bootstrap_resolves_start_orchestrator_at_
+    # call_time keeps that seam honest.
     monkeypatch.setattr(
-        "lean_herdr.handlers.start_orchestrator",
+        "lean_herdr.workspace.start_orchestrator",
         functools.partial(workspace.start_orchestrator, waiter=lambda *a, **k: "mcp-42"),
     )
     handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
@@ -237,6 +244,58 @@ def test_bootstrap_does_not_start_a_second_orchestrator(world):
     assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls)
     note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
     assert "already running" in " ".join(note), note
+
+
+def test_importing_handlers_does_not_drag_in_the_workspace_subtree():
+    """Every plugin event pays for this import -- and one of them fires constantly.
+
+    `pane.agent_status_changed` runs `python3 -m lean_herdr <sub>` again and
+    again, and each run imports this module. Measured 2026-09-04:
+    `import lean_herdr.handlers` cost 42.2 ms, of which the
+    workspace -> dispatch -> ordercmd -> orderlog/llm subtree was 10.7 ms --
+    paid on every event for a name only `handle_bootstrap` ever uses.
+
+    A subprocess, because `sys.modules` in this process is long past the
+    question: pytest has imported `lean_herdr.workspace` for other tests.
+    """
+    proc = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import lean_herdr.handlers, sys;"
+                "print('lean_herdr.workspace' in sys.modules)"
+            ),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=True,
+    )
+    assert proc.stdout.strip() == "False", proc.stdout + proc.stderr
+
+
+def test_bootstrap_resolves_start_orchestrator_at_call_time(world, monkeypatch):
+    """The seam is the DEFINING module, because the import sits on the call.
+
+    With a function-local import the name never lands in `handlers`, so a
+    patch aimed there would quietly stop biting: every bootstrap test would
+    keep passing while running the real waiter. This test fails the moment
+    that happens -- on the patch below AND on the assertion under it.
+    """
+    _, _, tmp_path = world
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        "lean_herdr.workspace.start_orchestrator",
+        lambda **kwargs: (seen.append(kwargs), {"ok": True})[1],
+    )
+    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+    )))
+    assert [k["workspace_id"] for k in seen] == ["w2"]
+    assert not hasattr(handlers, "start_orchestrator"), (
+        "a module-level name would make the patch above a no-op"
+    )
 
 
 def test_main_catches_every_exception_and_ends_with_0(monkeypatch, capsys):
