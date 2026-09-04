@@ -60,3 +60,19 @@
 
 # [workspace]
 # label = "{repo}"     # herdr workspace label; {repo} = directory name, optional
+
+# [models] lets `lean-herdr workspace up` keep [llm].model current from
+# OpenRouter's catalogue. It writes .lean-ctx/lean-herdr/models.auto.toml,
+# which loses to this file: an explicit [llm].model here survives every
+# check. Off by default -- without `auto = true` nothing is fetched and
+# nothing is written. `lean-herdr models check | apply` run either way.
+
+# [models]
+# auto = false                 # true: `workspace up` may refresh the overlay
+# max_age_h = 24.0             # older than this: fetch again
+# min_coding_index = 0.0       # benchmarks.artificial_analysis, 0 = no floor
+# min_intelligence_index = 0.0 # dito
+# max_prompt_price = 0.0       # USD per token. 0.0 is NO LIMIT, not "free only"
+# min_context = 0              # context_length, 0 = no floor
+# requires = ["reasoning"]     # supported_parameters. `tools` is NOT in here:
+#                              # both jobs on [llm].model use zero tools

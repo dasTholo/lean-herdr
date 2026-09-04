@@ -33,6 +33,18 @@ from typing import Any
 #: touching theirs.
 SETTINGS_PATH = Path(".lean-ctx") / "lean-herdr" / "config.toml"
 
+#: RELATIVE to the repo root, exactly like SETTINGS_PATH, and joined onto
+#: canonical_root() by whoever reads it. Written by `lean-herdr models
+#: apply` and by the daily check in `workspace up` -- never by hand.
+#:
+#: It sits BESIDE config.toml because that is where an operator looks for
+#: configuration. That choice has a price the alternative would not have:
+#: the file is machine-local and must never be shared, so a .gitignore
+#: rule has to name it. A blanket `.lean-ctx/` would untrack the four
+#: files in there that are tracked on purpose, so the rule has to hit this
+#: one name (task 9).
+OVERLAY_PATH = Path(".lean-ctx") / "lean-herdr" / "models.auto.toml"
+
 #: Per-role default -- measured fixed cost per step:
 #: minimal 2,711 / standard 4,920 / power 11,559 tokens.
 PROFILE_BY_ROLE = {"orchestrator": "minimal"}
@@ -100,8 +112,8 @@ _NO_BOOL = ("ratio", "ready_timeout_s")
 
 ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
-#: The only four keys the top level of the file may carry.
-ROOT_KEYS = ("default", "roles", "llm", "workspace")
+#: The only five keys the top level of the file may carry.
+ROOT_KEYS = ("default", "roles", "llm", "workspace", "models")
 
 #: The two runtimes a role prompt is written for. `dispatch --kind` and
 #: `[roles.<role>].kind` read the SAME tuple -- two lists would let a
@@ -335,6 +347,110 @@ def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
         if level and level not in EFFORTS:
             raise SettingsError(f"llm.{key}={level!r}, allowed: {list(EFFORTS)}")
     return values
+
+
+@dataclass(frozen=True)
+class ModelsSettings:
+    """`[models]` -- what the daily catalogue check is allowed to do.
+
+    `auto = false` is the default and it is the whole safety: without
+    that one box ticked, nothing is fetched and nothing is written, and
+    `workspace up` does exactly what it does today. `models check` and
+    `models apply` are express commands and run regardless.
+
+    Every threshold defaults to "no threshold". `max_prompt_price = 0.0`
+    therefore means NO LIMIT, not "free models only" -- the reading that
+    would be a nasty surprise, and the one an operator has to be told
+    about in the template comment.
+
+    `requires` goes to the endpoint's `supported_parameters` filter and
+    deliberately does NOT carry `tools`: `[llm].model` serves two pure
+    completion jobs without a single tool, and demanding tool support
+    would rule out cheap candidates for no gain. `reasoning` is in there
+    because `complete()` always sends a reasoning block and the endpoint
+    refuses to have it switched off.
+    """
+
+    auto: bool = False
+    max_age_h: float = 24.0
+    min_coding_index: float = 0.0
+    min_intelligence_index: float = 0.0
+    max_prompt_price: float = 0.0
+    min_context: int = 0
+    requires: tuple[str, ...] = ("reasoning",)
+
+
+MODELS_ALLOWED = frozenset(f.name for f in fields(ModelsSettings))
+
+#: `[models]` numbers where a bool must not slip through: `isinstance(True,
+#: int)` is True, so `min_context = true` would become a live threshold of
+#: 1. Same defect `_NO_BOOL` catches for the role table, same cure.
+_MODELS_NUMBERS = (
+    "max_age_h",
+    "min_coding_index",
+    "min_intelligence_index",
+    "max_prompt_price",
+    "min_context",
+)
+
+
+def models_settings(data: dict[str, Any] | None = None) -> ModelsSettings:
+    """`[models]` out of the settings file. No section: every default.
+
+    Same strictness as everywhere in this module: an unknown key, a wrong
+    type or a negative threshold is a SettingsError, never a silent
+    fallback. A threshold nobody meant is worse than no threshold -- it
+    would quietly pick a different model and cost money for a reason
+    nobody can find.
+    """
+    table = _check_root({} if data is None else data)
+    block = table.get("models")
+    if block is None:
+        return ModelsSettings()
+    if not isinstance(block, dict):
+        raise SettingsError(
+            f"models: section is not a table, but {type(block).__name__}"
+        )
+    unknown = sorted(set(block) - MODELS_ALLOWED)
+    if unknown:
+        raise SettingsError(
+            f"models: unknown keys {unknown}; allowed: {sorted(MODELS_ALLOWED)}"
+        )
+    values = dict(block)
+    if "auto" in values and not isinstance(values["auto"], bool):
+        raise SettingsError(
+            f"models.auto: {values['auto']!r} is "
+            f"{type(values['auto']).__name__}, not bool"
+        )
+    for key in _MODELS_NUMBERS:
+        if key not in values:
+            continue
+        number = values[key]
+        if isinstance(number, bool) or not isinstance(number, (int, float)):
+            raise SettingsError(
+                f"models.{key}: {number!r} is {type(number).__name__}, "
+                "not a number"
+            )
+        if number < 0:
+            raise SettingsError(f"models.{key}={number!r} is negative")
+    if "min_context" in values and not isinstance(values["min_context"], int):
+        raise SettingsError(
+            f"models.min_context={values['min_context']!r} is not a "
+            "whole number"
+        )
+    if "requires" in values:
+        wanted = values["requires"]
+        if not isinstance(wanted, list) or not all(
+            isinstance(item, str) for item in wanted
+        ):
+            raise SettingsError(
+                f"models.requires={wanted!r} is not a list of strings"
+            )
+        # A tuple, because the dataclass is frozen and a list in a frozen
+        # dataclass is a mutable field on an immutable object -- the sort
+        # of thing that works until somebody appends to it.
+        values["requires"] = tuple(wanted)
+    return ModelsSettings(**values)
 
 
 @dataclass(frozen=True)

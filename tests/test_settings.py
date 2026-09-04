@@ -330,6 +330,73 @@ def test_two_roles_on_one_model_warn_unless_confirmed(roles, warned):
     assert not warned or "'sonnet'" in lines[0]
 
 
+# -- models: [models] ---------------------------------------------------
+
+
+def test_models_block_is_a_known_root_key():
+    """Without "models" in ROOT_KEYS every config carrying the block fails."""
+    assert settings_for("builder", {"models": {"auto": True}}).profile == "standard"
+
+
+def test_no_models_section_means_every_default():
+    from lean_herdr.settings import ModelsSettings, models_settings
+
+    assert models_settings({}) == ModelsSettings()
+    assert models_settings({}).auto is False
+
+
+def test_a_negative_threshold_is_a_settings_error():
+    from lean_herdr.settings import models_settings
+
+    with pytest.raises(SettingsError, match="max_prompt_price"):
+        models_settings({"models": {"max_prompt_price": -1.0}})
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        {"auto": "yes"},
+        {"max_age_h": "24"},
+        {"min_coding_index": -1},
+        {"min_context": True},
+        {"min_context": 1.5},
+        {"requires": "reasoning"},
+        {"requires": [1]},
+        {"strict": True},
+    ],
+    ids=[
+        "auto-not-bool",
+        "max_age_h-not-number",
+        "min_coding_index-negative",
+        "min_context-bool",
+        "min_context-not-whole",
+        "requires-not-a-list",
+        "requires-not-strings",
+        "unknown-key",
+    ],
+)
+def test_a_wrong_models_value_is_loud(block):
+    from lean_herdr.settings import models_settings
+
+    with pytest.raises(SettingsError):
+        models_settings({"models": block})
+
+
+def test_the_models_section_must_be_a_table():
+    from lean_herdr.settings import models_settings
+
+    with pytest.raises(SettingsError, match="not a table"):
+        models_settings({"models": "a/b"})
+
+
+def test_requires_arrives_as_a_tuple():
+    from lean_herdr.settings import models_settings
+
+    values = models_settings({"models": {"requires": ["reasoning", "tools"]}})
+    assert values.requires == ("reasoning", "tools")
+    assert isinstance(values.requires, tuple)
+
+
 # -- load_jsonc: opencode's own configuration --------------------------
 
 
