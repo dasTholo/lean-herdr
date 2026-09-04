@@ -11,7 +11,8 @@ other way.
 ### 1. Build the worker
 
     lean-herdr dispatch <role> --kind <claude|opencode> --model <model> \
-      --role-file roles/<role>.md [--worktree <branch>] [--profile <p>]
+      --role-file .lean-ctx/lean-herdr/roles/<role>.md \
+      [--worktree <branch>] [--profile <p>]
 
 The output is one JSON line. Read `ok`, never the exit code. On success it
 carries `pane`, `agent_id` and `agent`.

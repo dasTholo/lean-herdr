@@ -1,0 +1,48 @@
+# lean-herdr configuration. Precedence: CLI flag > this file > built-in default.
+# Everything here is commented out, so the project behaves exactly as it does
+# without this file. Uncomment what you want to change.
+#
+# [default] applies to every role and also beats the built-in per-role
+# defaults (orchestrator = minimal). To change a single role, write it under
+# [roles.<role>].
+
+# [default]
+# direction = "right"          # right | down -- herdr pane split --direction
+# ratio = 0.5                  # 0 < r < 1 -- herdr pane split --ratio
+# focus = false                # true: the new pane takes focus
+# name_template = "{role}-{branch}"   # both placeholders are mandatory
+# profile = "standard"         # minimal 2711 / standard 4920 / power 11559 tokens
+# ready_timeout_s = 45.0       # how long to wait for the agent's MCP server
+
+# [roles.orchestrator]
+# profile = "minimal"
+
+# [roles.builder]
+# direction = "down"
+
+# [roles.reviewer]
+# ratio = 0.3
+
+# [llm]
+# Read by lean_herdr/llm.py alone: the commit generator worktrunk calls
+# through bin/herdr-llm, and the pre-review judge behind --prereview.
+# They are two different jobs -- the generator formats a diffstat, the
+# judge reads code -- so they get separate keys, and the judge inherits
+# only where a line below says so.
+#
+# The commit generator:
+#   model:  --model > $LEAN_HERDR_LLM_MODEL > model > built-in
+#   effort: --effort > effort > built-in "minimal"
+# model = "google/gemini-3.8-flash"   # the judge falls back to this
+# effort = "minimal"                  # THE GENERATOR ONLY -- not the judge
+#
+# The pre-review judge:
+#   model:  --model > $LEAN_HERDR_PREREVIEW_MODEL > prereview_model
+#           > $LEAN_HERDR_LLM_MODEL > model > built-in
+#   effort: --effort > prereview_effort > built-in
+# prereview_model = ""                # empty: share `model` above
+# prereview_effort = "low"            # `effort` above is NOT inherited
+#
+# Raising `model` to make the judge smarter raises the generator's bill
+# on every commit; give the judge `prereview_model` instead.
+# `effort` and `prereview_effort`: minimal | low | medium | high.

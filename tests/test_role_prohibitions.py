@@ -25,7 +25,7 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-ROLES = ROOT / "roles"
+ROLES = ROOT / "lean_herdr" / "templates" / "roles"
 
 #: (role file, prohibition sentence, the constraint behind it)
 PROHIBITIONS = [

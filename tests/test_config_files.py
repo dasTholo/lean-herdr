@@ -32,7 +32,7 @@ def test_both_opencode_agents_have_role_text_a_cap_and_a_guard():
     cfg = load_jsonc(ROOT / "opencode.jsonc")
     for name in ("orchestrator", "reviewer"):
         agent = cfg["agent"][name]
-        assert agent["prompt"] == f"{{file:./roles/{name}.md}}"
+        assert agent["prompt"] == f"{{file:./.lean-ctx/lean-herdr/roles/{name}.md}}"
         assert isinstance(agent["steps"], int) and agent["steps"] > 0
         perm = agent["permission"]
         assert perm["edit"] == "deny" and perm["write"] == "deny"

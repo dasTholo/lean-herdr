@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from lean_herdr.settings import (
-    SETTINGS_PATH,
     RoleSettings,
     SettingsError,
     read_settings,
@@ -153,17 +152,17 @@ def test_a_valid_file_survives_the_top_level_check(tmp_path):
 def test_the_shipped_template_changes_nothing(tmp_path):
     """As SHIPPED the file is fully commented out -- that is its purpose.
 
-    Read from git, not from the working tree: the file exists to invite the
-    operator to uncomment lines, and the first one who does must not get a red
-    suite plus a dirty tree. If git cannot answer, skip -- a skip is honest,
-    a false pass is not.
+    Read the TEMPLATE from git, not the working tree and not this repo's
+    own copy: the template is what `lean-herdr workspace init` writes into
+    a stranger's project, and the first operator who uncomments a line
+    must not get a red suite plus a dirty tree. If git cannot answer,
+    skip -- a skip is honest, a false pass is not.
     """
-    # Anchored on the repo root, not relative: SETTINGS_PATH is relative and
-    # pytest may be started from any directory.
     root = Path(__file__).resolve().parents[1]
+    template = Path("lean_herdr") / "templates" / "config.toml"
     try:
         shipped = subprocess.run(
-            ["git", "show", f"HEAD:{SETTINGS_PATH.as_posix()}"],
+            ["git", "show", f"HEAD:{template.as_posix()}"],
             cwd=root,
             capture_output=True,
             timeout=30,
@@ -172,11 +171,11 @@ def test_the_shipped_template_changes_nothing(tmp_path):
     except (OSError, subprocess.SubprocessError) as exc:
         pytest.skip(f"git is unavailable: {exc}")
     if shipped.returncode != 0:
-        pytest.skip(f"{SETTINGS_PATH} is not in HEAD yet")
-    path = tmp_path / SETTINGS_PATH.name
+        pytest.skip(f"{template} is not in HEAD yet")
+    path = tmp_path / template.name
     path.write_bytes(shipped.stdout)
     data = read_settings(path)
-    assert data == {}, f"{SETTINGS_PATH} carries active values: {sorted(data)}"
+    assert data == {}, f"{template} carries active values: {sorted(data)}"
     assert settings_for("builder", data) == RoleSettings(profile="standard")
     assert settings_for("reviewer", data) == RoleSettings(profile="standard")
     assert settings_for("orchestrator", data) == RoleSettings(profile="minimal")

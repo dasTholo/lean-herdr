@@ -1,0 +1,32 @@
+# worktrunk project hooks. Project hooks need an approval on their first run:
+# `wt config approvals`.
+#
+# pre-merge is the test gate: worktrunk runs it after the rebase and BEFORE the
+# merge, and a failure aborts the merge. That gives one check which does not
+# hang on a model's judgement.
+
+[pre-merge]
+test = "uv run pytest -q"
+
+# W2: `wt list --format=json` emits schema 1 today and announces schema 2 as the
+# future default. Pinned so the output shape cannot shift under a script -- even
+# though this design never parses `wt list`.
+[list]
+json-schema = 1
+
+# Appended to worktrunk's own commit prompt -- we write no template of our
+# own (spec 9). Needs `wt config approvals add` once, through the same
+# approval store as the pre-merge hook above -- but a stricter gate:
+# an unapproved hook is skipped silently, an unapproved fragment fails the
+# whole command (`Cannot prompt for approval in non-interactive
+# environment`, exit 1). Both agent paths pass `--yes`, which consents for
+# that one run without recording anything.
+[commit.generation]
+template-append = """
+Project voice:
+- Conventional Commits with a scope: `type(scope): subject`.
+- English, imperative, no trailing period, subject under 72 characters.
+- Describe WHAT changes, not what it is good for.
+- A body only for a material change, and then measured facts, not intentions.
+- Never mention the tool, the model or the agent that wrote this.
+"""

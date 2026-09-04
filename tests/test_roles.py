@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-ROLES = Path(__file__).resolve().parents[1] / "roles"
+ROLES = Path(__file__).resolve().parents[1] / "lean_herdr" / "templates" / "roles"
 WORKERS = ("builder", "reviewer")
 ALL_ROLES = ("orchestrator", *WORKERS)
 

@@ -1,4 +1,4 @@
-"""`.config/lean-herdr.toml` -> RoleSettings. Precedence: CLI > file > default.
+"""`.lean-ctx/lean-herdr/config.toml` -> RoleSettings. Precedence: CLI > file > default.
 
 `tomllib` is stdlib since 3.11 -- no new runtime dependency.
 
@@ -16,10 +16,15 @@ from pathlib import Path
 from typing import Any
 
 #: RELATIVE to the repo root, not to $PWD. The caller joins it onto
-#: canonical_root() -- otherwise the config silently fails to load as soon as
-#: lean-herdr dispatch runs from a subdirectory, and the promise "a wrong file
-#: never stays silent" would be broken.
-SETTINGS_PATH = Path(".config") / "lean-herdr.toml"
+#: canonical_root() -- otherwise the config silently fails to load as soon
+#: as `lean-herdr dispatch` runs from a subdirectory, and the promise "a
+#: wrong file never stays silent" would be broken.
+#:
+#: `.lean-ctx/<tool>/` is the convention of this tool family -- lean-md is
+#: already there. Not `.config/`: that directory belongs to whoever else
+#: writes into it, and `init` has to be able to write ours without
+#: touching theirs.
+SETTINGS_PATH = Path(".lean-ctx") / "lean-herdr" / "config.toml"
 
 #: Per-role default -- measured fixed cost per step:
 #: minimal 2,711 / standard 4,920 / power 11,559 tokens.

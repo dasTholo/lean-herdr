@@ -82,12 +82,12 @@ names and nothing breaks.
     export OPENROUTER_API_KEY=<your key>
 
 Which model, and how hard it thinks, is configured per project in
-`.config/lean-herdr.toml` under `[llm]` — the same file the role settings
-live in. For the commit generator: `--model` beats `$LEAN_HERDR_LLM_MODEL`,
-which beats `[llm].model`, which beats the built-in; `--effort` beats
-`[llm].effort`, which beats the built-in `minimal`. The pre-review judge has
-keys of its own — see the work-order section. A broken or absent file costs
-the defaults, never the commit.
+`.lean-ctx/lean-herdr/config.toml` under `[llm]` — the same file the role
+settings live in. For the commit generator: `--model` beats
+`$LEAN_HERDR_LLM_MODEL`, which beats `[llm].model`, which beats the built-in;
+`--effort` beats `[llm].effort`, which beats the built-in `minimal`. The
+pre-review judge has keys of its own — see the work-order section. A broken
+or absent file costs the defaults, never the commit.
 
 **The new attack surface, named:** the builder may now run a command that
 sends the contents of its worktree to a third-party service. That was already
@@ -141,7 +141,7 @@ The judge may run on a model of its own. The two jobs are not the same one:
 the commit generator formats a diffstat and is happy with the smallest model
 there is, the judge reads code.
 
-    # .config/lean-herdr.toml -- the durable place
+    # .lean-ctx/lean-herdr/config.toml -- the durable place
     [llm]
     model = "google/gemini-3.8-flash"   # both
     prereview_model = ""                # the judge only; empty: share `model`
@@ -192,12 +192,13 @@ server-wide, not per workspace:
 
 `orch` is the trust anchor: `lean-herdr dispatch order`, `answer` and
 `cancel` stamp that name as the sender from the constant
-`ORCHESTRATOR_AGENT` — never from the pane name — and `roles/builder.md`
-and `roles/reviewer.md` carry the line `ORCHESTRATOR = orch`. Start the
-pane under another name and the constant still stamps `orch`: pass
-`--from <name>` on every `order`, `answer` and `cancel` call, and set
-`ORCHESTRATOR = <name>` in both role files. The two must agree, or every
-order is refused.
+`ORCHESTRATOR_AGENT` — never from the pane name — and
+`.lean-ctx/lean-herdr/roles/builder.md` and
+`.lean-ctx/lean-herdr/roles/reviewer.md` carry the line
+`ORCHESTRATOR = orch`. Start the pane under another name and the constant
+still stamps `orch`: pass `--from <name>` on every `order`, `answer` and
+`cancel` call, and set `ORCHESTRATOR = <name>` in both role files. The two
+must agree, or every order is refused.
 
 That rename turns one test red:
 `tests/test_roles.py::test_the_role_prompts_trust_the_name_dispatch_actually_stamps`
@@ -216,8 +217,8 @@ determined one.
 
 ## Configuration
 
-`.config/lean-herdr.toml` ships fully commented out: without an edit the
-project behaves exactly as it does without the file. Precedence is
+`.lean-ctx/lean-herdr/config.toml` ships fully commented out: without an
+edit the project behaves exactly as it does without the file. Precedence is
 **CLI flag > file > built-in default**; `[default]` applies to every role,
 `[roles.<role>]` beats `[default]`.
 

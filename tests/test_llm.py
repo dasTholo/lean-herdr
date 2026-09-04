@@ -13,12 +13,12 @@ from pathlib import Path
 import pytest
 
 from lean_herdr import llm
-from lean_herdr.settings import LlmSettings
+from lean_herdr.settings import SETTINGS_PATH, LlmSettings
 from tests.doubles import Completed
 
 #: Every generate() call in here passes `settings=` explicitly. Without
 #: it generate() calls file_settings(), which runs `git rev-parse` and
-#: reads THIS repository's own .config/lean-herdr.toml -- a unit test
+#: reads THIS repository's own .lean-ctx/lean-herdr/config.toml -- a unit test
 #: that quietly depends on the checkout it runs in.
 NO_FILE = LlmSettings()
 
@@ -219,12 +219,23 @@ def test_the_first_non_empty_candidate_wins():
     assert llm._first(None, "", fallback="f") == "f"
 
 
+def _write_config(root: Path, text: str) -> Path:
+    """Put the config where SETTINGS_PATH says it lives, never at a literal.
+
+    Spelling the path out here once cost a red suite when it moved out of
+    `.config/`: `file_settings()` resolves SETTINGS_PATH, so a fixture that
+    writes anywhere else tests the missing-file path under a name that
+    promises the opposite.
+    """
+    path = root / SETTINGS_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def test_a_broken_settings_file_costs_the_defaults_not_the_commit(tmp_path, capsys):
     """The hard invariant, at the one place that could break it."""
-    (tmp_path / ".config").mkdir()
-    (tmp_path / ".config" / "lean-herdr.toml").write_text(
-        "[llm]\nmodel = 5\n", encoding="utf-8"
-    )
+    _write_config(tmp_path, "[llm]\nmodel = 5\n")
     assert llm.file_settings(tmp_path) == LlmSettings()
     assert "ignoring the settings file" in capsys.readouterr().err
 
@@ -258,10 +269,8 @@ def test_a_missing_file_is_the_normal_case_and_says_nothing(tmp_path, capsys):
 
 
 def test_the_file_is_read_relative_to_the_repo_root(tmp_path):
-    (tmp_path / ".config").mkdir()
-    (tmp_path / ".config" / "lean-herdr.toml").write_text(
-        '[llm]\nmodel = "from/file"\nprereview_effort = "medium"\n',
-        encoding="utf-8",
+    _write_config(
+        tmp_path, '[llm]\nmodel = "from/file"\nprereview_effort = "medium"\n'
     )
     got = llm.file_settings(tmp_path)
     assert got.model == "from/file"

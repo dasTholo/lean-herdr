@@ -43,7 +43,7 @@ from lean_herdr.worktree import find_worktree
 
 #: OpenRouter's slug for the model measured in the design (spec 2.2).
 #: The floor of the chain, never the decision: `[llm]` in
-#: .config/lean-herdr.toml, `$LEAN_HERDR_LLM_MODEL` and the CLI flag all
+#: .lean-ctx/lean-herdr/config.toml, `$LEAN_HERDR_LLM_MODEL` and the CLI flag
 #: beat it, in that rising order. See the precedence block below.
 DEFAULT_MODEL = "google/gemini-3.8-flash"
 MODEL_ENV = "LEAN_HERDR_LLM_MODEL"
@@ -51,7 +51,7 @@ KEY_ENV = "OPENROUTER_API_KEY"
 ENDPOINT = "https://openrouter.ai/api/v1/chat/completions"
 
 # THE TWO CHAINS. This block is the authority; the four other places that
-# describe them -- .config/lean-herdr.toml, the argparse help texts, and the
+# describe them -- .lean-ctx/lean-herdr/config.toml, the argparse help texts,
 # README at two places -- keep these levels in this order, and name them the
 # way their own medium names things (inside the `[llm]` table the key is
 # `model`, not `[llm].model`; for an operator the floor is "the built-in
@@ -372,7 +372,7 @@ def _first(*candidates: str | None, fallback: str) -> str:
 
 
 def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
-    """`[llm]` from `<repo root>/.config/lean-herdr.toml` -- NEVER raises.
+    """`[llm]` from `<repo root>/.lean-ctx/lean-herdr/config.toml` -- NEVER raises.
 
     Never, and that is the whole reason this wrapper exists next to
     `settings.llm_settings()`. worktrunk starts `bin/herdr-llm generate`
@@ -384,7 +384,7 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
 
     `SETTINGS_PATH` is relative and gets joined onto the repo root, not
     onto $PWD: the generator runs in the builder's worktree, and a
-    `.config/` lookup from there would miss (settings.py:20-24).
+    `.lean-ctx/` lookup from there would miss (settings.py:18-27).
 
     `root` is handed in by callers that resolved it already -- the wait
     mode has it. Without it this asks git once, per process.
@@ -654,7 +654,7 @@ def build_parser() -> argparse.ArgumentParser:
         # opposite of the truth.
         "--model", default=None,
         help="generate: beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
-             ".config/lean-herdr.toml, then the built-in default. "
+             ".lean-ctx/lean-herdr/config.toml, then the built-in default. "
              "prereview: beats $LEAN_HERDR_PREREVIEW_MODEL, then "
              "[llm].prereview_model, then those same three",
     )
