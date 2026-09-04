@@ -8,11 +8,34 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
-from collections.abc import Sequence
+import time
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
 DEFAULT_TIMEOUT_S = 10.0
+
+#: The exit code `_run` reports when NO process ran at all -- a missing
+#: binary, an OSError, a timeout. Negative and far outside the range a real
+#: one can take (0-255, or the negated signal number of a kill), so a caller
+#: can tell "Herdr said no" from "Herdr never spoke".
+NO_PROCESS_RC = -999
+
+#: `agent start` refuses a pane whose shell has not reached its interactive
+#: prompt yet -- `agent_pane_busy`, exit 1, nothing on stdout, after 0.0 s.
+#: Measured 2026-09-04 against the live 0.8.2 server, walking the sequence
+#: both callers walk (`workspace create` -> `pane split` -> `agent start`):
+#:
+#:   immediately, as the callers did before   3 of 5 -- 2 refused at 0.0 s
+#:   with a 2 s settle after the create       4 of 5 -- a sleep does not cure it
+#:   retry up to 5x, 0.5 s apart              6 of 6, never more than 2 tries
+#:
+#: So it is a transient race that fails fast and loudly, and one repeat
+#: clears it. The bound exists because a PERMANENT refusal -- an invalid
+#: agent name, an unknown kind -- answers in exactly the same shape and must
+#: not be repeated forever.
+AGENT_START_ATTEMPTS = 5
+AGENT_START_INTERVAL_S = 0.5
 
 
 class Herdr:
@@ -49,8 +72,25 @@ class Herdr:
         nor per subcommand) and aborts with exit 2. It doesn't exist because
         Herdr always writes JSON to stdout anyway.
         """
+        return self._run(*args, timeout=timeout)[0]
+
+    def _run(
+        self, *args: str, timeout: float | None = None
+    ) -> tuple[dict[str, Any], int]:
+        """`run()`, plus the exit code it throws away.
+
+        `run()` flattens "Herdr refused" and "Herdr answered nothing" onto the
+        same `{}` -- and the reason (`agent_pane_busy`, say) went to stderr,
+        which nobody kept. That is indistinguishable at the call site, and it
+        cost `agent start` its whole diagnosis. The class contract stays as it
+        is -- errors become {}, never exceptions -- and this is the private
+        seam beneath it, for the one caller that has to tell the two apart.
+
+        The code is NO_PROCESS_RC wherever no process ran, so a caller reading
+        it cannot mistake that for a refusal.
+        """
         if not self.is_available():
-            return {}
+            return {}, NO_PROCESS_RC
         cmd = [self.binary, *args]
         try:
             proc = self._runner(
@@ -60,14 +100,14 @@ class Herdr:
                 timeout=timeout if timeout is not None else self.timeout,
             )
         except (OSError, subprocess.SubprocessError):
-            return {}
+            return {}, NO_PROCESS_RC
         if proc.returncode != 0 and not proc.stdout.strip():
-            return {}
+            return {}, proc.returncode
         try:
             data = json.loads(proc.stdout)
         except json.JSONDecodeError:
-            return {}
-        return data if isinstance(data, dict) else {}
+            return {}, proc.returncode
+        return (data if isinstance(data, dict) else {}), proc.returncode
 
     @staticmethod
     def _result(data: dict[str, Any], *keys: str) -> Any:
@@ -121,17 +161,41 @@ class Herdr:
         return str(pane) if pane else None
 
     def agent_start(
-        self, name: str, *, kind: str, pane: str, agent_args: Sequence[str] = ()
+        self,
+        name: str,
+        *,
+        kind: str,
+        pane: str,
+        agent_args: Sequence[str] = (),
+        sleep: Callable[[float], None] = time.sleep,
     ) -> dict[str, Any]:
         """Start an agent in the pane. Native arguments after `--`.
 
         Herdr rejects multi-line arguments (H2) — role texts come as a file,
         never as argument text.
+
+        Retries a non-zero exit code up to AGENT_START_ATTEMPTS times: the
+        pane split a moment ago may not have reached its interactive prompt
+        yet, and that refusal is transient — see the constants for the
+        measurement. Returns the reply of the last attempt, `{}` when every
+        one of them was refused; that empty dict is what the callers report
+        `agent_start_failed` on.
         """
         args = ["agent", "start", name, "--kind", kind, "--pane", pane]
         if agent_args:
             args = [*args, "--", *agent_args]
-        return self.run(*args)
+        reply: dict[str, Any] = {}
+        for attempt in range(AGENT_START_ATTEMPTS):
+            reply, code = self._run(*args)
+            if code <= 0:
+                # 0 is the start that worked. A NEGATIVE code is
+                # NO_PROCESS_RC: no binary, an OSError, a timeout. None of
+                # those is the prompt race, and repeating a timeout five
+                # times would cost five full timeouts.
+                return reply
+            if attempt + 1 < AGENT_START_ATTEMPTS:
+                sleep(AGENT_START_INTERVAL_S)
+        return reply
 
     def agent_prompt(
         self,

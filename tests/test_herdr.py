@@ -1,8 +1,14 @@
+import json
 import subprocess
+from typing import Any
 
 import pytest
 
-from lean_herdr.herdr import Herdr
+from lean_herdr.herdr import (
+    AGENT_START_ATTEMPTS,
+    AGENT_START_INTERVAL_S,
+    Herdr,
+)
 from tests.doubles import Completed, FakeProc, which_stub
 
 
@@ -14,6 +20,51 @@ def fake(monkeypatch) -> FakeProc:
 
 def h(fake: FakeProc) -> Herdr:
     return Herdr(runner=fake)
+
+
+#: What `agent start` really answers when the pane's shell has not reached its
+#: interactive prompt yet: exit 1, nothing on stdout, the reason on stderr --
+#: where `Herdr.run()` never looked. Measured 2026-09-04 against 0.8.2.
+PANE_BUSY = (
+    '{"error":{"code":"agent_pane_busy",'
+    '"message":"agent target pane w8:p5 is not an available shell"}}'
+)
+
+#: And what it answers when it works.
+STARTED = {
+    "id": "cli:agent:start",
+    "result": {
+        "type": "agent_started",
+        "agent": {
+            "agent": "opencode",
+            "name": "orch",
+            "pane_id": "w8:p5",
+            "agent_status": "idle",
+            "interactive_ready": True,
+        },
+    },
+}
+
+
+class StartProc:
+    """`herdr agent start` with a SEQUENCE of exit codes.
+
+    FakeProc answers every call the same way and always with returncode 0, so
+    it cannot express what this retry exists for: a refusal, then the very
+    same call going through. `codes` is handed out one per call, the last one
+    repeating. A non-zero code answers the way the real CLI does.
+    """
+
+    def __init__(self, *codes: int) -> None:
+        self.codes: tuple[int, ...] = codes or (0,)
+        self.calls: list[list[str]] = []
+
+    def __call__(self, cmd: list[str], **kwargs: Any) -> Completed:
+        self.calls.append(list(cmd))
+        code = self.codes[min(len(self.calls) - 1, len(self.codes) - 1)]
+        if code:
+            return Completed(returncode=code, stderr=PANE_BUSY)
+        return Completed(stdout=json.dumps(STARTED))
 
 
 def test_pane_split_sets_env_pairs(fake):
@@ -123,3 +174,76 @@ def test_report_metadata_builds_the_token_pair(fake):
 def test_worktree_open_takes_the_repo_root_as_cwd(fake):
     h(fake).worktree_open(cwd="/repo", path="/repo.feat", label="feat/auth")
     assert fake.called_with("--cwd", "/repo", "--path", "/repo.feat", "--label", "feat/auth")
+
+
+def test_run_still_answers_every_failure_path_with_an_empty_dict(monkeypatch):
+    """Guards the split into _run(): run()'s public behaviour is unchanged.
+
+    Four ways out, one answer. The class contract is `errors become {}, never
+    exceptions`, and the returncode the private half now hands back may not
+    leak an exception or a non-dict through the public one.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(False))
+    assert Herdr(runner=FakeProc()).run("agent", "list") == {}
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    assert Herdr(runner=FakeProc(raises=OSError(2, "no herdr"))).run("agent") == {}
+    timeout = subprocess.TimeoutExpired(cmd=["herdr"], timeout=1)
+    assert Herdr(runner=FakeProc(raises=timeout)).run("agent") == {}
+    refused = Herdr(runner=lambda cmd, **kw: Completed(returncode=1, stderr=PANE_BUSY))
+    assert refused.run("agent", "start") == {}
+    garbage = Herdr(runner=lambda cmd, **kw: Completed(stdout="<html>nope</html>"))
+    assert garbage.run("agent", "list") == {}
+
+
+def test_agent_start_returns_at_once_when_herdr_says_yes(monkeypatch):
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    proc = StartProc(0)
+    naps: list[float] = []
+    reply = Herdr(runner=proc).agent_start(
+        "orch", kind="opencode", pane="w8:p5", sleep=naps.append
+    )
+    assert reply == STARTED
+    assert len(proc.calls) == 1
+    assert naps == [], "a start that works may not cost a single sleep"
+
+
+def test_agent_start_retries_the_pane_that_is_not_a_shell_yet(monkeypatch):
+    """Measured 2026-09-04: the refusal lands at 0.0 s and one repeat clears it."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    proc = StartProc(1, 0)
+    naps: list[float] = []
+    reply = Herdr(runner=proc).agent_start(
+        "orch", kind="opencode", pane="w8:p5", sleep=naps.append
+    )
+    assert reply == STARTED, "the reply of the attempt that worked, not the refusal"
+    assert len(proc.calls) == 2
+    assert naps == [AGENT_START_INTERVAL_S]
+
+
+def test_agent_start_gives_up_after_the_bound(monkeypatch):
+    """A PERMANENT refusal -- an invalid name, an unknown kind -- answers
+    exactly like the transient one: exit 1, nothing on stdout. Without the
+    bound the wrapper would repeat it forever."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    proc = StartProc(1)
+    naps: list[float] = []
+    assert Herdr(runner=proc).agent_start(
+        "nope", kind="claude", pane="w8:p5", sleep=naps.append
+    ) == {}
+    assert len(proc.calls) == AGENT_START_ATTEMPTS
+    assert naps == [AGENT_START_INTERVAL_S] * (AGENT_START_ATTEMPTS - 1)
+
+
+def test_agent_start_does_not_retry_when_no_process_ran_at_all(monkeypatch):
+    """A timeout is not the race, and five repeats would cost five timeouts.
+
+    Same for a missing binary. Those paths carry the sentinel returncode, not
+    a refusal, and the loop tells them apart by its sign.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    proc = FakeProc(raises=subprocess.TimeoutExpired(cmd=["herdr"], timeout=1))
+    naps: list[float] = []
+    assert Herdr(runner=proc).agent_start(
+        "orch", kind="opencode", pane="w8:p5", sleep=naps.append
+    ) == {}
+    assert len(proc.calls) == 1 and naps == []
