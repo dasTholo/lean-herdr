@@ -17,3 +17,6 @@ dist/
 # LMD skills are installed artefacts, reproducible via:
 #   lean-md skill install <name> --local
 .claude/skills/
+
+# machine-local, written by `lean-herdr models` -- never shared
+.lean-ctx/lean-herdr/models.auto.toml

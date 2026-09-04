@@ -173,6 +173,29 @@ including the `skipped` a failure of its own machinery produces. Leave
 `--order` out and it declines to judge at all: an empty order would invite a
 rejection on a branch nobody described.
 
+## Keeping the model current
+
+`[llm].model` can be kept current from OpenRouter's catalogue: the cheapest
+model that can reason and clears the floors you set.
+
+    lean-herdr models list     # what would qualify, cheapest first
+    lean-herdr models check    # the winner, and what runs today
+    lean-herdr models apply    # write it
+
+`apply` writes `.lean-ctx/lean-herdr/models.auto.toml`, which loses to
+`[llm]` in `config.toml`: an explicit `model` there survives every check.
+The file is machine-local -- add it to `.gitignore`:
+
+    .lean-ctx/lean-herdr/models.auto.toml
+
+With `[models].auto = true`, `lean-herdr workspace up` does the same by
+itself, at most once every `max_age_h`, after the orchestrator is already
+running and never blocking it. Without that key -- the default -- `up`
+fetches nothing and writes nothing. A candidate must support both efforts
+the two jobs resolve to, and a model with no
+`benchmarks.artificial_analysis` block does not clear an index floor:
+missing evidence is not a pass.
+
 ## What else ships here
 
 - `herdr-plugin.toml` — the Herdr plugin: it shows the lean-ctx context per

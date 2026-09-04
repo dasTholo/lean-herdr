@@ -1,4 +1,4 @@
-"""One binary, three verbs: `lean-herdr dispatch | report | workspace`.
+"""One binary, four verbs: `lean-herdr dispatch | models | report | workspace`.
 
 A router, nothing more. Every verb hands off to a `main(argv) -> int`
 that already exists and already keeps the house contract: one JSON line
@@ -26,11 +26,12 @@ import sys
 #: test_cli.py imports every value to keep that impossible.
 VERBS = {
     "dispatch": "lean_herdr.dispatch",
+    "models": "lean_herdr.catalog",
     "report": "lean_herdr.report",
     "workspace": "lean_herdr.workspace",
 }
 
-USAGE = "usage: lean-herdr {dispatch|report|workspace} ...\n"
+USAGE = "usage: lean-herdr {dispatch|models|report|workspace} ...\n"
 
 
 def _usage(message: str) -> int:

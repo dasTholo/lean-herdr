@@ -9,23 +9,38 @@ a flag expresses exactly (spec 1.4).
 
 `llm.py` must NEVER import this module. The commit path runs on the
 system interpreter at every commit in every repository on this machine;
-catalogue code has no business there. The dependency goes the other way
-round and only that way: catalog -> openrouter, catalog -> settings.
+catalogue code has no business there. The dependency runs the other way
+and only that way: catalog -> openrouter, settings, llm and dispatch --
+the last two for the CLI at the bottom, which reuses their constants and
+their parser rather than growing a third copy.
 """
 
 from __future__ import annotations
 
+import argparse
 import json
 import math
 import re
+import sys
+import time
 import urllib.parse
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from lean_herdr import openrouter
-from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH, ModelsSettings
+from lean_herdr import llm, openrouter
+from lean_herdr.bus import BusError, canonical_root
+from lean_herdr.dispatch import UsageError, _Parser
+from lean_herdr.settings import (
+    OVERLAY_PATH,
+    SETTINGS_PATH,
+    ModelsSettings,
+    SettingsError,
+    llm_settings_layered,
+    models_settings,
+    read_settings,
+)
 
 CATALOG_URL = f"{openrouter.BASE_URL}/models"
 
@@ -229,3 +244,164 @@ def write_overlay(model: str, *, root: Path, stamp: str | None = None) -> Path:
         encoding="utf-8",
     )
     return path
+
+
+#: The reasons `check()` can give. Every one of them leaves the overlay
+#: exactly as it was; only `written` changes a file.
+#:   auto_off      -- [models].auto is false and this was not `apply`
+#:   fresh         -- the overlay is younger than max_age_h
+#:   no_catalog    -- the endpoint gave nothing usable
+#:   no_candidate  -- nobody cleared the thresholds
+#:   bad_slug      -- the winner's id is not one we will write
+#:   write_failed  -- the filesystem said no
+#:   written       -- a new overlay is on disk
+
+
+def _outcome(
+    reason: str, *, model: str | None = None, written: bool = False
+) -> dict[str, Any]:
+    return {"written": written, "model": model, "reason": reason}
+
+
+def check(
+    *,
+    root: Path,
+    settings: ModelsSettings,
+    efforts: Sequence[str],
+    force: bool = False,
+    now: float | None = None,
+    request: Any = openrouter.request,
+) -> dict[str, Any]:
+    """Fetch, recommend, write -- or say why it did none of it. Never raises.
+
+    The STAMP is the overlay's own mtime. No second file and no second
+    piece of state that can go stale on its own.
+
+    `force=True` is `models apply`: an express command, which runs
+    regardless of `[models].auto` and regardless of the age. Without it
+    this is the daily check `workspace up` makes, and `auto = false` --
+    the default -- means it does nothing at all and costs nothing.
+
+    Nothing here is allowed to be fatal. `up` opens the working day, and
+    a catalogue that did not answer is not a failed `up`: the file stays
+    as it is, the reason travels in the answer, and the built-in default
+    carries the day as it did before.
+    """
+    if not (settings.auto or force):
+        return _outcome("auto_off")
+    path = Path(root) / OVERLAY_PATH
+    if not force and settings.max_age_h:
+        try:
+            age_h = ((now or time.time()) - path.stat().st_mtime) / 3600.0
+        except OSError:
+            # No file yet -- or one we cannot stat. Either way there is
+            # nothing to be fresh, so fetch.
+            age_h = None
+        if age_h is not None and age_h < settings.max_age_h:
+            return _outcome("fresh")
+    models = fetch(requires=settings.requires, request=request)
+    if models is None:
+        return _outcome("no_catalog")
+    winner = recommend(models, thresholds=settings, efforts=efforts)
+    if winner is None:
+        return _outcome("no_candidate")
+    slug = str(winner.get("id") or "")
+    try:
+        write_overlay(slug, root=Path(root))
+    except ValueError:
+        return _outcome("bad_slug", model=slug)
+    except OSError:
+        return _outcome("write_failed", model=slug)
+    return _outcome("written", model=slug, written=True)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    p = _Parser(
+        prog="lean-herdr models",
+        description="Show, check or apply OpenRouter's cheapest fitting model.",
+    )
+    p.add_argument("command", choices=("list", "check", "apply"))
+    p.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="list: how many survivors to show (default 10)",
+    )
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Output: one JSON line on stdout. Exit ALWAYS 0.
+
+    `list` and `check` touch the network and write nothing. `apply`
+    writes, and it writes regardless of `[models].auto`: `auto` is the
+    permission for `up` to do this by itself, never a gate on an express
+    command somebody typed.
+    """
+    result: dict[str, Any]
+    try:
+        args = build_parser().parse_args(argv)
+        root = canonical_root()
+        data = read_settings(root / SETTINGS_PATH)
+        cfg = models_settings(data)
+        llm_cfg = llm_settings_layered(root, data)
+        # BOTH resolved levels, because the one key the overlay writes
+        # serves both jobs. The fallbacks are llm.py's constants, and they
+        # are imported rather than respelled -- a second spelling would
+        # drift the day one of them changes (M3).
+        efforts = (
+            llm_cfg.effort or llm.GENERATE_EFFORT,
+            llm_cfg.prereview_effort or llm.PREREVIEW_EFFORT,
+        )
+        if args.command == "list":
+            models = fetch(requires=cfg.requires)
+            if models is None:
+                result = {"ok": False, "error": "no_catalog"}
+            else:
+                survivors = [
+                    entry
+                    for entry in models
+                    if _clears(entry, thresholds=cfg, efforts=efforts)
+                ]
+                result = {
+                    "ok": True,
+                    "efforts": list(efforts),
+                    "total": len(survivors),
+                    "models": [
+                        {
+                            "id": entry.get("id"),
+                            "prompt_price": (entry.get("pricing") or {}).get(
+                                "prompt"
+                            ),
+                            "context_length": entry.get("context_length"),
+                        }
+                        for entry in survivors[: args.limit]
+                    ],
+                }
+        elif args.command == "check":
+            models = fetch(requires=cfg.requires)
+            if models is None:
+                result = {"ok": False, "error": "no_catalog"}
+            else:
+                winner = recommend(models, thresholds=cfg, efforts=efforts)
+                result = {
+                    "ok": winner is not None,
+                    "model": None if winner is None else winner.get("id"),
+                    "efforts": list(efforts),
+                    "current": llm_cfg.model or llm.DEFAULT_MODEL,
+                }
+        else:
+            outcome = check(
+                root=root, settings=cfg, efforts=efforts, force=True
+            )
+            result = {"ok": outcome["written"], **outcome}
+    except UsageError as exc:
+        result = {"ok": False, "error": f"usage_error: {exc}"}
+    except SettingsError as exc:
+        result = {"ok": False, "error": f"config_error: {exc}"}
+    except BusError as exc:
+        result = {"ok": False, "error": str(exc)}
+    except Exception as exc:  # noqa: BLE001 -- never abort the caller
+        result = {"ok": False, "error": f"models_crashed: {exc}"}
+    sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
+    return 0

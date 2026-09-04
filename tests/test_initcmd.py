@@ -9,10 +9,11 @@ from lean_herdr.initcmd import (
     WARM_TIMEOUT_S,
     _check_allowlist,
     _check_approvals,
+    _check_overlay_ignored,
     _check_plugins,
     workspace_init,
 )
-from lean_herdr.settings import SETTINGS_PATH
+from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 from tests.doubles import Completed, FakeProc, which_stub
 
@@ -224,6 +225,55 @@ def test_the_plugin_check_only_fires_on_a_warning_line(monkeypatch):
     noisy = FakeProc(replies={("plugin", "list"): "- lean.herdr\n  warning: unknown event\n"})
     line = _check_plugins(noisy)
     assert line is not None and "warning:" in line
+
+
+def test_the_overlay_check_asks_git_rather_than_reading_gitignore(monkeypatch, repo):
+    """The verdict is git's, not ours.
+
+    A rule can sit in a parent directory, in `.git/info/exclude` or in a
+    global excludes file, and a text search over `.gitignore` would raise
+    a false alarm on every one of them.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    named = FakeProc(
+        replies={("check-ignore",): f".gitignore:20:{OVERLAY_PATH}\t{OVERLAY_PATH}"}
+    )
+    assert _check_overlay_ignored(repo, named) is None
+    silent = FakeProc(replies={("check-ignore",): ""})
+    line = _check_overlay_ignored(repo, silent)
+    assert line is not None and str(OVERLAY_PATH) in line
+
+
+def test_without_git_there_is_no_verdict_on_the_overlay(monkeypatch, repo):
+    """No git at all: no answer, and an unasked question invents none."""
+    monkeypatch.setattr(
+        "shutil.which", lambda binary: None if binary == "git" else "/usr/bin/fake"
+    )
+    assert _check_overlay_ignored(repo, FakeProc(default="")) is None
+
+
+def test_the_gitignore_warning_only_appears_when_auto_is_on(monkeypatch, repo):
+    """Guarded by the config, unlike its three neighbours.
+
+    Without `[models].auto` no overlay is ever written, and a rule for a
+    file that cannot exist would be noise in every project that never
+    switched the feature on.
+
+    The config is written BEFORE the run and the run gets no `--force`,
+    so `_place` skips it and the file `_warnings` reads is this one.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    proc = FakeProc(default="")
+
+    (repo / SETTINGS_PATH).write_text("[models]\nauto = false\n", encoding="utf-8")
+    off = workspace_init(root=repo, runner=proc)["warnings"]
+    assert not any("does not ignore" in w for w in off)
+
+    (repo / SETTINGS_PATH).write_text("[models]\nauto = true\n", encoding="utf-8")
+    on = workspace_init(root=repo, runner=proc)["warnings"]
+    assert any("does not ignore" in w and str(OVERLAY_PATH) in w for w in on)
+    assert not (repo / ".gitignore").exists(), "init reports, it never repairs"
 
 
 def test_a_machine_without_the_three_binaries_names_every_one_of_them(monkeypatch, repo):

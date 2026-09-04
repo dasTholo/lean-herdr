@@ -34,7 +34,9 @@ from lean_herdr.settings import (
     SETTINGS_PATH,
     SettingsError,
     WorkspaceSettings,
+    llm_settings_layered,
     load_jsonc,
+    models_settings,
     read_settings,
     settings_for,
     workspace_settings,
@@ -333,7 +335,11 @@ def workspace_up(
         }
     data = read_settings(path)
     role = settings_for("orchestrator", data)
-    return start_orchestrator(
+    # Validated even when `auto` is off: a typo in [models] must not stay
+    # silent, which is this module's whole promise. workspace.main() turns
+    # a SettingsError from here into `config_error:`.
+    models = models_settings(data)
+    result = start_orchestrator(
         herdr=herdr if herdr is not None else Herdr(),
         root=base,
         settings=workspace_settings(data),
@@ -343,6 +349,32 @@ def workspace_up(
         workspace_id=None,
         ready_timeout_s=role.ready_timeout_s,
     )
+    if not models.auto:
+        return result
+    # AFTER the start, never before: `up` opens the working day, and a
+    # price comparison must not stand between the operator and a running
+    # orchestrator. Merged in additively -- `ok` belongs to the start
+    # alone, and a catalogue that did not answer is not a failed `up`.
+    #
+    # Imported on the call, like `initcmd` above it and for the same
+    # reason: `catalog` reaches urllib, llm AND dispatch, and the common
+    # path -- `auto` off, the default -- returns above without paying for
+    # any of it.
+    from lean_herdr.catalog import check
+    from lean_herdr.llm import GENERATE_EFFORT, PREREVIEW_EFFORT
+
+    llm_cfg = llm_settings_layered(base, data)
+    return {
+        **result,
+        "models": check(
+            root=base,
+            settings=models,
+            efforts=(
+                llm_cfg.effort or GENERATE_EFFORT,
+                llm_cfg.prereview_effort or PREREVIEW_EFFORT,
+            ),
+        ),
+    }
 
 
 def build_parser() -> argparse.ArgumentParser:

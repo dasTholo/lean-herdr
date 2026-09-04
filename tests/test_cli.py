@@ -28,6 +28,24 @@ def test_each_verb_reaches_its_own_main_with_the_rest(monkeypatch, verb, module)
     assert seen["argv"] == ["--kind", "opencode"], "the verb must not travel on"
 
 
+def test_the_models_verb_reaches_the_catalogue(monkeypatch):
+    """The fourth verb, and the one that must never reach the network here.
+
+    `catalog.main` has no `request` seam on purpose, so the seam is the
+    function itself -- exactly what the router hands the rest of the
+    arguments to.
+    """
+    seen: dict[str, list[str]] = {}
+
+    def fake_main(argv: list[str]) -> int:
+        seen["argv"] = argv
+        return 0
+
+    monkeypatch.setattr("lean_herdr.catalog.main", fake_main)
+    assert cli.main(["models", "check"]) == 0
+    assert seen["argv"] == ["check"]
+
+
 def test_an_unknown_verb_is_a_json_line_and_exit_zero(capsys):
     """Exit 2 plus a line on stderr would reach the caller as no output."""
     assert cli.main(["does-not-exist"]) == 0

@@ -508,6 +508,88 @@ def test_up_carries_every_value_out_of_a_real_config_file(monkeypatch, tmp_path)
     assert proc.called_with("--", "--model", "opus", "--agent", "orchestrator")
 
 
+#: The same config with the daily check switched on. `[models]` is the
+#: fifth top-level table and the only one `up` reads for anything but the
+#: pane it opens.
+AUTO_ON = CONFIG + '\n[models]\nauto = true\n'
+
+
+def test_up_with_auto_off_never_asks_the_catalogue(monkeypatch, tmp_path):
+    """`auto = false` is the default, and then `up` fetches nothing at all.
+
+    The import in `workspace_up` sits in the function body for exactly
+    this reason: the common path returns before `catalog` -- and urllib,
+    llm and dispatch behind it -- is ever loaded.
+    """
+    _write_config(tmp_path, CONFIG)
+    herdr, _ = herdr_with(monkeypatch, {})
+    monkeypatch.setattr(workspace, "start_orchestrator", lambda **kw: {"ok": True})
+
+    def boom(**kwargs):
+        raise AssertionError("auto is off; the catalogue must not be asked")
+
+    monkeypatch.setattr("lean_herdr.catalog.check", boom)
+    assert workspace.workspace_up(root=tmp_path, herdr=herdr) == {"ok": True}
+
+
+def test_up_with_auto_on_carries_the_catalogue_answer(monkeypatch, tmp_path):
+    """AFTER the start, never before, and merged in additively.
+
+    `up` opens the working day: a price comparison must not stand between
+    the operator and a running orchestrator.
+    """
+    _write_config(tmp_path, AUTO_ON)
+    herdr, _ = herdr_with(monkeypatch, {})
+    order: list[str] = []
+
+    def started(**kwargs):
+        order.append("start")
+        return {"ok": True, "agent": "orch"}
+
+    def checked(**kwargs):
+        order.append("catalogue")
+        return {"written": True, "model": "cheap/one", "reason": "written"}
+
+    monkeypatch.setattr(workspace, "start_orchestrator", started)
+    monkeypatch.setattr("lean_herdr.catalog.check", checked)
+    answer = workspace.workspace_up(root=tmp_path, herdr=herdr)
+    assert order == ["start", "catalogue"], "the start never waits on a price"
+    assert answer["agent"] == "orch", "the start's own answer survives whole"
+    assert answer["models"] == {
+        "written": True,
+        "model": "cheap/one",
+        "reason": "written",
+    }
+
+
+def test_a_catalogue_that_did_not_answer_is_not_a_failed_up(monkeypatch, tmp_path):
+    """`ok` belongs to the start alone."""
+    _write_config(tmp_path, AUTO_ON)
+    herdr, _ = herdr_with(monkeypatch, {})
+    monkeypatch.setattr(workspace, "start_orchestrator", lambda **kw: {"ok": True})
+    monkeypatch.setattr(
+        "lean_herdr.catalog.check",
+        lambda **kw: {"written": False, "model": None, "reason": "no_catalog"},
+    )
+    answer = workspace.workspace_up(root=tmp_path, herdr=herdr)
+    assert answer["ok"] is True
+    assert answer["models"]["reason"] == "no_catalog"
+
+
+def test_a_broken_models_block_is_read_even_with_auto_off(monkeypatch, tmp_path):
+    """A typo in `[models]` must not stay silent -- that is the promise.
+
+    `main()` turns this into `config_error:`; validating it only behind
+    `auto` would leave the operator's typo undiscovered until the day
+    they switch the feature on.
+    """
+    _write_config(tmp_path, CONFIG + '\n[models]\nmax_age_h = "soon"\n')
+    herdr, _ = herdr_with(monkeypatch, {})
+    monkeypatch.setattr(workspace, "start_orchestrator", lambda **kw: {"ok": True})
+    with pytest.raises(SettingsError, match="max_age_h"):
+        workspace.workspace_up(root=tmp_path, herdr=herdr)
+
+
 def test_main_answers_a_bad_command_with_one_json_line(capsys):
     assert workspace.main(["nope"]) == 0
     answer = json.loads(capsys.readouterr().out)

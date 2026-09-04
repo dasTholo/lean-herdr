@@ -28,9 +28,11 @@ from typing import Any
 
 from lean_herdr.bus import BusError, canonical_root
 from lean_herdr.settings import (
+    OVERLAY_PATH,
     SETTINGS_PATH,
     SettingsError,
     model_warnings,
+    models_settings,
     read_settings,
     settings_for,
     workspace_settings,
@@ -161,6 +163,32 @@ def _check_plugins(runner: Any) -> str | None:
     )
 
 
+def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
+    """`[models].auto` is on and git does not ignore the overlay.
+
+    `git check-ignore` is asked rather than `.gitignore` read, because the
+    answer is git's and not ours: a rule can sit in a parent directory, in
+    `.git/info/exclude` or in a global excludes file, and a text search
+    would raise a false alarm on every one of them.
+
+    `init` does NOT append the line itself. A `.gitignore` belongs to the
+    project, and this module writes only its own files -- the operator
+    gets the exact line and decides.
+    """
+    answer = _read(
+        runner, "git", "check-ignore", "-v", str(OVERLAY_PATH), cwd=root
+    )
+    if answer is None or answer.strip():
+        # None: no git at all, so no verdict. Non-empty: git named the
+        # rule that covers it, which is exactly what we wanted.
+        return None
+    return (
+        f"[models].auto is on and git does not ignore {OVERLAY_PATH} -- "
+        "it is machine-local and must not be shared. Add to .gitignore: "
+        f"{OVERLAY_PATH}"
+    )
+
+
 def _warnings(
     root: Path, *, data: dict[str, Any], runner: Any = subprocess.run
 ) -> list[str]:
@@ -187,6 +215,13 @@ def _warnings(
         _check_allowlist(runner),
         _check_approvals(root, runner),
         _check_plugins(runner),
+        # Guarded by the config, unlike its three neighbours: without
+        # `[models].auto` no overlay is ever written, and a rule for a file
+        # that cannot exist would be noise in every project that never
+        # switched the feature on.
+        _check_overlay_ignored(root, runner)
+        if models_settings(data).auto
+        else None,
     )
     found.extend(line for line in checks if line is not None)
     found.extend(model_warnings(data))

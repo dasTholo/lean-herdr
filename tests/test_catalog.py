@@ -5,9 +5,10 @@ from pathlib import Path
 
 import pytest
 
-from lean_herdr import catalog
+from lean_herdr import catalog, llm
 from lean_herdr.settings import (
     OVERLAY_PATH,
+    SETTINGS_PATH,
     ModelsSettings,
     llm_settings,
     read_settings,
@@ -291,3 +292,215 @@ def test_llm_does_not_import_the_catalogue():
     """
     source = Path(catalog.__file__).with_name("llm.py").read_text(encoding="utf-8")
     assert "catalog" not in source
+
+
+def test_auto_off_touches_neither_the_network_nor_the_file(tmp_path):
+    """`[models].auto = false` is the default, and it is the whole safety.
+
+    Not one byte on the wire and not one on the disk. The daily check
+    `workspace up` makes has to cost exactly nothing until somebody ticks
+    that box.
+    """
+    fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
+    outcome = catalog.check(
+        root=tmp_path, settings=ModelsSettings(), efforts=(), request=fake
+    )
+    assert outcome == {"written": False, "model": None, "reason": "auto_off"}
+    assert fake.urls == [], "auto is off; nothing may be fetched"
+    assert not (tmp_path / OVERLAY_PATH).exists()
+
+
+def test_apply_fetches_although_auto_is_off(tmp_path):
+    """`force=True` is `models apply`, and `auto` is not its gate.
+
+    `auto` is the permission for `up` to run this by itself, never a
+    switch on an express command somebody typed.
+    """
+    fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(),
+        efforts=(),
+        force=True,
+        request=fake,
+    )
+    assert outcome["written"] is True
+    assert outcome["model"] == "cheap/no-benchmarks"
+    assert fake.urls, "an express command asks regardless of the config"
+
+
+def test_a_fresh_overlay_is_not_refetched(tmp_path):
+    """The overlay's own mtime IS the stamp.
+
+    No second file and no second piece of state that could go stale on
+    its own -- the thing whose age matters is the thing that is asked.
+    """
+    catalog.write_overlay("good/all-clear", root=tmp_path)
+    fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(auto=True),
+        efforts=(),
+        request=fake,
+    )
+    assert outcome == {"written": False, "model": None, "reason": "fresh"}
+    assert fake.urls == []
+
+
+def test_an_overlay_past_max_age_h_is_fetched_again(tmp_path):
+    path = catalog.write_overlay("good/all-clear", root=tmp_path)
+    fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(auto=True, max_age_h=1.0),
+        efforts=(),
+        now=path.stat().st_mtime + 3601.0,
+        request=fake,
+    )
+    assert outcome["written"] is True
+    assert fake.urls
+
+
+def test_max_age_zero_fetches_every_single_time(tmp_path):
+    """`0` means NO threshold here, the reading every `[models]` number has."""
+    catalog.write_overlay("good/all-clear", root=tmp_path)
+    fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(auto=True, max_age_h=0.0),
+        efforts=(),
+        request=fake,
+    )
+    assert outcome["written"] is True
+    assert fake.urls
+
+
+def test_without_an_overlay_there_is_nothing_to_be_fresh(tmp_path):
+    fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(auto=True),
+        efforts=(),
+        request=fake,
+    )
+    assert outcome["written"] is True
+    assert llm_settings(read_settings(tmp_path / OVERLAY_PATH)).model == (
+        "cheap/no-benchmarks"
+    )
+
+
+def test_a_catalogue_that_did_not_answer_leaves_the_file_alone(tmp_path):
+    """Never fatal. `up` opens the working day, and a catalogue that did
+    not answer is not a failed `up`: the file stays as it is and the
+    reason travels in the answer.
+    """
+    path = catalog.write_overlay("good/all-clear", root=tmp_path)
+    before = path.read_text(encoding="utf-8")
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(auto=True),
+        efforts=(),
+        force=True,
+        request=FakeRequest(None),
+    )
+    assert outcome == {"written": False, "model": None, "reason": "no_catalog"}
+    assert path.read_text(encoding="utf-8") == before
+
+
+def test_thresholds_nobody_clears_leave_the_file_alone(tmp_path):
+    """`no_candidate` is not `no_catalog`: the endpoint answered fine."""
+    path = catalog.write_overlay("good/all-clear", root=tmp_path)
+    before = path.read_text(encoding="utf-8")
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(auto=True, min_intelligence_index=99.0),
+        efforts=(),
+        force=True,
+        request=FakeRequest(FIXTURE.read_text(encoding="utf-8")),
+    )
+    assert outcome == {"written": False, "model": None, "reason": "no_candidate"}
+    assert path.read_text(encoding="utf-8") == before
+
+
+def no_network(monkeypatch, root):
+    """`main()` has no `request` seam on purpose -- patch the MODULE.
+
+    An unpatched `main(["check"])` would go to the real endpoint and an
+    unpatched `main(["apply"])` would write into this very repository.
+    """
+    monkeypatch.setattr("lean_herdr.catalog.canonical_root", lambda *a, **kw: root)
+    monkeypatch.setattr("lean_herdr.catalog.fetch", lambda **kw: sample())
+
+
+def one_line(capsys) -> dict:
+    out = capsys.readouterr().out
+    assert out.count("\n") == 1, out
+    return json.loads(out)
+
+
+def test_main_list_shows_the_survivors_and_writes_nothing(
+    monkeypatch, tmp_path, capsys
+):
+    """Both resolved effort levels, because one `[llm].model` serves both jobs."""
+    no_network(monkeypatch, tmp_path)
+    assert catalog.main(["list", "--limit", "2"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is True
+    assert answer["efforts"] == [llm.GENERATE_EFFORT, llm.PREREVIEW_EFFORT]
+    assert answer["total"] == 3, "cheap/no-minimal-effort cannot do `minimal`"
+    assert [entry["id"] for entry in answer["models"]] == [
+        "cheap/no-benchmarks",
+        "mid/small-context",
+    ]
+    assert not (tmp_path / OVERLAY_PATH).exists(), "list writes nothing"
+
+
+def test_main_check_names_the_winner_and_what_runs_today(
+    monkeypatch, tmp_path, capsys
+):
+    no_network(monkeypatch, tmp_path)
+    assert catalog.main(["check"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is True
+    assert answer["model"] == "cheap/no-benchmarks"
+    assert answer["current"] == llm.DEFAULT_MODEL
+    assert not (tmp_path / OVERLAY_PATH).exists(), "check writes nothing"
+
+
+def test_main_apply_writes_the_overlay_regardless_of_auto(
+    monkeypatch, tmp_path, capsys
+):
+    """No `[models]` section at all here, so `auto` is at its `false` default."""
+    no_network(monkeypatch, tmp_path)
+    assert catalog.main(["apply"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is True
+    assert answer["reason"] == "written"
+    assert llm_settings(read_settings(tmp_path / OVERLAY_PATH)).model == (
+        answer["model"]
+    )
+
+
+def test_main_answers_a_bad_command_with_one_json_line(capsys):
+    """Exit 2 plus a line on stderr would reach the caller as no output.
+
+    No patching needed and none wanted: the parser raises before
+    `canonical_root()`, so this never touches a root or a socket.
+    """
+    assert catalog.main(["nope"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("usage_error:")
+
+
+def test_main_turns_a_broken_config_into_one_json_line(
+    monkeypatch, tmp_path, capsys
+):
+    """A `[models]` typo is reported, never swallowed into a default."""
+    no_network(monkeypatch, tmp_path)
+    (tmp_path / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / SETTINGS_PATH).write_text("[models]\nauto = 1\n", encoding="utf-8")
+    assert catalog.main(["check"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("config_error:")
