@@ -42,8 +42,13 @@ PROHIBITIONS = [
     ),
     (
         "orchestrator.md",
-        "Never take the same model as for the builder.",
+        "a different model, not a second opinion from the same one",
         "reviewer deliberately from a different model family",
+    ),
+    (
+        "orchestrator.md",
+        "Leave `--kind` and `--model` off your dispatch calls",
+        "the runtime and the model come from the config, not from the orchestrator",
     ),
     (
         "orchestrator.md",

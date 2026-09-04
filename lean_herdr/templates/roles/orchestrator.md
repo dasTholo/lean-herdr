@@ -10,7 +10,7 @@ other way.
 
 ### 1. Build the worker
 
-    lean-herdr dispatch <role> --kind <claude|opencode> --model <model> \
+    lean-herdr dispatch <role> \
       --role-file .lean-ctx/lean-herdr/roles/<role>.md \
       [--worktree <branch>] [--profile <p>]
 
@@ -35,25 +35,34 @@ it, it appears in every further step.
 
 ### 3. Let it wait
 
-    lean-herdr dispatch <role> --await --kind <claude|opencode> \
+    lean-herdr dispatch <role> --await \
       --task-id o-… [--worktree <branch>] [--timeout-ms 300000]
 
 This call rings the worker and then waits inside the script, not inside you.
 It costs you one model step, however long the work takes.
 
-## Model choice — your judgement
+## Model and runtime — not your choice
 
-| Task | Worker | kind | Model |
-|---|---|---|---|
-| Write, rebuild, test code | `builder` | claude | sonnet |
-| Check what the builder built | `reviewer` | opencode | a different one than the builder |
+Which model and which runtime a worker gets stands in
+`.lean-ctx/lean-herdr/config.toml`, under `[roles.builder]` and
+`[roles.reviewer]`. **Leave `--kind` and `--model` off your dispatch
+calls** -- the file fills them in. Pass one only to override the file for
+a single call, and say why when you do.
 
-The reviewer's value is that it is a different model — different blind spots.
-Never take the same model as for the builder.
+If the file names no model for a role, `dispatch` answers
+`usage_error: build mode needs --model` and builds nothing. That is
+deliberate: a worker quietly running on its runtime's default model costs
+real money and nobody sees it.
+
+The reviewer earns its keep by having **different blind spots** than the
+builder -- a different model, not a second opinion from the same one. If
+the config gives both the same model, your reviewer dispatch line carries
+a `warnings` entry saying so. It is a warning, not a refusal: report it
+and carry on.
 
 The pre-review is not a third worker: it is a flag on the builder's wait
-call, and the model behind it is small and cheap. It may block, it may never
-approve -- the strong reviewer runs in every case, `pass` or not.
+call, and the model behind it is small and cheap. It may block, it may
+never approve -- the strong reviewer runs in every case, `pass` or not.
 
 ## Sequence per task
 
@@ -64,7 +73,7 @@ approve -- the strong reviewer runs in every case, `pass` or not.
 
    The builder's wait call may carry `--prereview`:
 
-       lean-herdr dispatch builder --await --kind claude --task-id o-… \
+       lean-herdr dispatch builder --await --task-id o-… \
          --worktree <branch> --prereview
 
    It costs you nothing extra -- you read that JSON line anyway. The key

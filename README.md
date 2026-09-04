@@ -203,8 +203,8 @@ run is the cure: every start after it takes about three seconds. The
 result reports it as `warmed` once the warm-up RAN -- not that it
 succeeded: a project whose `opencode.jsonc` never named the orchestrator
 agent exits at once and still reports `true`. It is `false` when there is
-no `opencode` on PATH, when the workspace's `kind` is not `opencode`, or
-when the run itself could not start.
+no `opencode` on PATH, when `[roles.orchestrator].kind` is not `opencode`,
+or when the run itself could not start.
 
 What it does NOT do is repair your machine. The three lean-ctx approvals,
 the worktrunk hook approval and the Herdr plugin registration are reported
@@ -267,7 +267,25 @@ edit the project behaves exactly as it does without the file. Precedence is
 Four sections: `[default]` and `[roles.<role>]` describe how a pane is
 split, `[llm]` the commit generator and the pre-review judge, and
 `[workspace]` the pane `lean-herdr workspace up` opens for the
-orchestrator — `label`, `kind` and `model`, all optional.
+orchestrator — `label` alone, and that one optional.
+
+Which model and which runtime each role gets is configured per role, in
+`[roles.orchestrator]`, `[roles.builder]` and `[roles.reviewer]`:
+
+    [roles.builder]
+    kind  = "claude"
+    model = "sonnet"
+
+    [roles.reviewer]
+    kind  = "opencode"
+    model = "<a different one>"   # different blind spots is the point
+    # shares_builder_model = true # confirm the same model on purpose
+
+`--kind` and `--model` on a `dispatch` call beat the file; with neither,
+`dispatch` refuses to build. A worker quietly running on its runtime's
+default model costs real money and nobody sees it. The orchestrator is the
+one exception: an empty `model` means no `--model` at all, which is what
+the keystroke has always done.
 
 An unknown key, a wrong direction or a `name_template` without `{role}` and
 `{branch}` are errors and are reported — never silently reset to the default.
