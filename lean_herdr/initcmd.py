@@ -90,10 +90,20 @@ def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
     # Word boundaries, not a plain substring: the listing prints the config
     # path too, and a project directory called lean-herdr would otherwise
     # read as a granted permission.
+    #
+    # This line can only ever be a hint. `lean-ctx allow --list` prints the
+    # additive `Extra` list in full but reduces the base `shell_allowlist`
+    # to a COUNT ("74 command(s) permitted"), so an operator who put
+    # `lean-herdr` in the base list is indistinguishable here from one who
+    # granted it nowhere. Measured 2026-09-04; there is no --format json.
+    # Claiming "does not allow" would therefore be a verdict the check
+    # cannot reach -- and a false alarm on every run, in every project.
     if allowlist is not None and not re.search(r"\blean-herdr\b", allowlist):
         found.append(
-            "lean-ctx does not allow `lean-herdr` -- "
-            "an agent under shell gating cannot run it: lean-ctx allow lean-herdr"
+            "lean-ctx allow --list does not name `lean-herdr` -- it shows only the "
+            "additive `Extra` list, never the base allowlist, so this is a hint and "
+            "not a verdict. If the base list does not carry it either, an agent under "
+            "shell gating cannot run it: lean-ctx allow lean-herdr"
         )
 
     approvals = _read(runner, "wt", "config", "approvals", "list", "--format", "json", cwd=root)
