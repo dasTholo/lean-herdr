@@ -366,7 +366,7 @@ def llm_settings_layered(
 
     `data` is config.toml ALREADY READ. `dispatch.main()` hands it in
     because it read the file for its RoleSettings anyway, and
-    `test_main_loads_the_config_once_for_both_modes` counts that read.
+    `test_main_reads_config_toml_exactly_once_per_call` counts that read.
 
     BOTH consumers must call this -- `llm.file_settings()` and
     `dispatch.main()`. If only one read the overlay, the commit generator

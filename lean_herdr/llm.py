@@ -41,7 +41,7 @@ from lean_herdr.settings import (
 from lean_herdr.worktree import find_worktree
 
 #: OpenRouter's slug for the model measured in the design (spec 2.2).
-#: The floor of the chain, never the decision: `[llm]` in
+#: The floor of the chain, never the decision: `models.auto.toml`, `[llm]` in
 #: .lean-ctx/lean-herdr/config.toml, `$LEAN_HERDR_LLM_MODEL` and the CLI flag
 #: beat it, in that rising order. See the precedence block below.
 DEFAULT_MODEL = "google/gemini-3.8-flash"
@@ -101,10 +101,11 @@ FALLBACK_FILES = 3
 PREREVIEW_TIMEOUT_S = 60.0
 DIFF_TIMEOUT_S = 30.0
 
-#: A model of its own for the judge. It is the second of six levels --
+#: A model of its own for the judge. It is the second of seven levels --
 #: `model=` (the CLI's --model), this, `[llm].prereview_model`,
-#: $LEAN_HERDR_LLM_MODEL, `[llm].model`, DEFAULT_MODEL; the block above
-#: is the authority. Without it the two jobs would be stuck on one
+#: $LEAN_HERDR_LLM_MODEL, `[llm].model`, the same key in
+#: `models.auto.toml`, DEFAULT_MODEL; the block above is the authority.
+#: Without it the two jobs would be stuck on one
 #: variable, and they are not the same job: the commit path formats a
 #: diffstat and is happy with the smallest model there is, the judge
 #: reads code. The builder inherits the pane's environment, so moving
@@ -466,9 +467,10 @@ def prereview(
 
     The judge resolves its own two levels FIRST and falls back to the
     shared ones: flag, `$LEAN_HERDR_PREREVIEW_MODEL`,
-    `[llm].prereview_model`, `$LEAN_HERDR_LLM_MODEL`, `[llm].model`,
-    constant. The effort does NOT fall back to `[llm].effort` -- that
-    one is the commit generator's `minimal`, and inheriting it would
+    `[llm].prereview_model`, `$LEAN_HERDR_LLM_MODEL`, `[llm].model`, the
+    same key in `models.auto.toml`, constant. The effort does NOT fall
+    back to `[llm].effort` -- that one is the commit generator's
+    `minimal`, and inheriting it would
     quietly make the judge as thoughtless as the formatter.
     """
     if not order.strip():

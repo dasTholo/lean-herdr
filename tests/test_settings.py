@@ -303,11 +303,15 @@ def test_an_empty_value_in_the_foreground_lets_the_overlay_through(tmp_path):
     assert llm_settings_layered(tmp_path).model == "auto/pick"
 
 
-def test_handed_in_data_spares_the_second_read_of_config_toml(tmp_path):
+def test_handed_in_data_beats_the_file_on_disk(tmp_path):
     """`data` is config.toml ALREADY READ -- dispatch.main() hands it in.
 
-    The proof that the file is not read a second time: it says one thing,
-    `data` says another, and `data` wins.
+    Precedence only, and the name says so now: the file says one thing,
+    `data` says another, and `data` wins. This would stay green against an
+    implementation that read the file anyway and then discarded it, so it
+    is NOT the proof that the read is spared --
+    `test_main_reads_config_toml_exactly_once_per_call` in
+    tests/test_dispatch.py counts the reads and is.
     """
     from lean_herdr.settings import llm_settings_layered
 

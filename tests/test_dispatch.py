@@ -483,6 +483,37 @@ def test_main_loads_the_config_once_for_both_modes(monkeypatch, tmp_path):
     assert agent_name("builder", "feat/auth", settings=seen[0]) == "feat-auth.builder"
 
 
+def test_main_reads_config_toml_exactly_once_per_call(monkeypatch, tmp_path, capsys):
+    """The read COUNT, which its neighbour above does not check.
+
+    `test_main_loads_the_config_once_for_both_modes` compares the settings
+    the two modes see; it would stay green against an implementation that
+    read the file three times and agreed with itself every time. The
+    constraint is about the count, and `dispatch.main()`'s own comment
+    names a test as its guard -- so one has to actually count.
+
+    The overlay is a SECOND file and is expected: `llm_settings_layered`
+    reads it beside config.toml. This counts config.toml alone.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    reads: list[str] = []
+    real = dispatch_module.read_settings
+
+    def counting(path, *args, **kwargs):
+        reads.append(Path(path).name)
+        return real(path, *args, **kwargs)
+
+    monkeypatch.setattr("lean_herdr.dispatch.read_settings", counting)
+    monkeypatch.setattr("lean_herdr.settings.read_settings", counting)
+    _spy_dispatch(monkeypatch)
+
+    _line([*BUILD_ARGS, "--model", "opus"], root, monkeypatch, capsys)
+
+    assert reads.count("config.toml") == 1, reads
+    assert reads.count("models.auto.toml") == 1, reads
+
+
 def _no_launch(monkeypatch):
     """Make the real launch path unreachable, loudly.
 
