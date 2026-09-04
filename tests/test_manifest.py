@@ -10,8 +10,11 @@ ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "herdr-plugin.toml"
 
 #: The oldest interpreter a bare `python3` on an operator host may turn out to
-#: be. Nothing this package imports needs grammar newer than that.
-OLDEST_PYTHON = (3, 11)
+#: be. Raised from 3.11 by operator decision on 2026-09-04: the hosts this
+#: plugin runs on carry 3.14, and the workspace-start plan names that floor in
+#: its Global Constraints. The number only ever loosens what `ast.parse`
+#: accepts below -- lowering it again is the strict direction, not the lax one.
+OLDEST_PYTHON = (3, 14)
 
 #: Confirmed via `plugin link` without warning. `layout.updated` does NOT exist.
 VALID_EVENTS = {
