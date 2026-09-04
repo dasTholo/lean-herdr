@@ -6,12 +6,15 @@ import pytest
 
 from lean_herdr.initcmd import (
     LAYOUT,
+    WARM_TIMEOUT_S,
     _check_allowlist,
     _check_approvals,
     _check_plugins,
     workspace_init,
 )
-from tests.doubles import FakeProc, which_stub
+from lean_herdr.settings import SETTINGS_PATH
+from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
+from tests.doubles import Completed, FakeProc, which_stub
 
 
 @pytest.fixture
@@ -252,3 +255,70 @@ def test_init_never_runs_a_command_that_changes_anything(monkeypatch, repo):
     workspace_init(root=repo, runner=proc)
     for forbidden in (("allow", "lean-herdr"), ("approvals", "add"), ("plugin", "link")):
         assert not proc.called_with(*forbidden), proc.flat()
+
+
+def test_init_warms_the_project_once_and_says_so(monkeypatch, repo):
+    """The first opencode bootstrap here would hang -- so `init` spends it.
+
+    Measured 2026-09-04: a bootstrap that got far enough and was then
+    aborted warms the project, and the next start takes 3.4 s instead of
+    hanging. `init` is where that cost is visible and harmless.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    proc = FakeProc(default="")
+    answer = workspace_init(root=repo, runner=proc)
+    assert answer["warmed"] is True
+    warm = [c for c in proc.calls if c[0] == "opencode"]
+    assert warm == [["opencode", "debug", "agent", OPENCODE_ORCHESTRATOR]]
+    assert "--pure" not in warm[0], (
+        "--pure skips external plugins -- exactly the step to be warmed "
+        "(measured 3 of 3 still hanging afterwards)"
+    )
+
+
+def test_the_warm_up_budget_is_hard_and_the_abort_is_the_point(monkeypatch, repo):
+    """It is aborted, and the abort counts as warmed -- not as a failure."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    seen: dict[str, object] = {}
+
+    def runner(cmd, **kwargs):
+        if cmd[0] == "opencode":
+            seen["timeout"] = kwargs["timeout"]
+            seen["cwd"] = kwargs["cwd"]
+            raise subprocess.TimeoutExpired(cmd=cmd, timeout=WARM_TIMEOUT_S)
+        return Completed(stdout="")
+
+    assert workspace_init(root=repo, runner=runner)["warmed"] is True
+    assert seen["timeout"] == WARM_TIMEOUT_S
+    assert seen["cwd"] == str(repo), "the project is what gets warmed"
+
+
+def test_without_opencode_on_path_nothing_is_warmed_and_nothing_is_said(
+    monkeypatch, repo
+):
+    """Silent, like every other check that cannot run."""
+    quiet(monkeypatch)
+    proc = FakeProc(default="")
+    answer = workspace_init(root=repo, runner=proc)
+    assert answer["warmed"] is False
+    assert not any(c[0] == "opencode" for c in proc.calls), proc.flat()
+
+
+def test_a_claude_project_is_not_warmed(monkeypatch, repo):
+    """The hang is opencode's; a claude workspace pays nothing for it.
+
+    The config is placed BEFORE the run, and the run gets no `--force`:
+    `_place` skips a file that is already there, so the `kind` written
+    here is the one the warm-up decision reads. With `--force` the
+    template would land on top of it and the test would measure the
+    default instead of what it set.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (repo / SETTINGS_PATH).write_text(
+        '[workspace]\nkind = "claude"\n', encoding="utf-8"
+    )
+    proc = FakeProc(default="")
+    answer = workspace_init(root=repo, runner=proc)
+    assert answer["warmed"] is False
+    assert not any(c[0] == "opencode" for c in proc.calls), proc.flat()

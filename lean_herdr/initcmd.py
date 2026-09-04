@@ -11,7 +11,10 @@ The second: preconditions are REPORTED, never repaired. Every foreign
 command here only READS -- `lean-ctx allow --list`, `wt config approvals
 list --format json`, `herdr plugin list`. `init` runs no `lean-ctx allow`
 and no `wt config approvals add`: granting a machine-wide permission is a
-gesture that belongs to the human at the keyboard.
+gesture that belongs to the human at the keyboard. The ONE exception is
+the warm-up (`_warm_opencode`), and it stays inside the rule's intent: it
+changes nothing on the machine, only opencode's own cache for this
+project, and it is aborted on purpose.
 """
 
 from __future__ import annotations
@@ -24,11 +27,29 @@ from pathlib import Path
 from typing import Any
 
 from lean_herdr.bus import BusError, canonical_root
+from lean_herdr.settings import (
+    SETTINGS_PATH,
+    SettingsError,
+    read_settings,
+    workspace_settings,
+)
+from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 
 TEMPLATES = Path(__file__).resolve().parent / "templates"
 
 #: A read-only check must not hold up the whole call.
 CHECK_TIMEOUT_S = 10.0
+
+#: The warm-up, and the one number it turns on. opencode's FIRST bootstrap
+#: in a project that carries a project plugin hangs -- and the plugin this
+#: very command writes is such a plugin. A bootstrap that got far enough
+#: and was then ABORTED warms the project; the next start measures 3.4 s.
+#: 5 s warmed 6 of 6 runs on 2026-09-04, 8 s is the margin. The ABORT is
+#: the point: the exit code and the output are worthless here.
+#:
+#: NOT `--pure`: that switch skips external plugins, i.e. exactly the step
+#: that has to be warmed. Measured 3 of 3 still hanging afterwards.
+WARM_TIMEOUT_S = 8.0
 
 #: template inside the package -> where it goes in the target project.
 #: THE one truth: tests/test_templates.py imports this table to hold each
@@ -162,6 +183,36 @@ def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
     return found
 
 
+def _warm_opencode(root: Path, *, runner: Any) -> bool:
+    """One aborted `opencode debug agent` in `root`. True when it ran.
+
+    The only foreign command in this module that is not a pure read --
+    and it still changes nothing on the operator's machine, only inside
+    opencode's own cache for this project.
+
+    Silent on every failure: a warm-up that did not happen costs the next
+    `workspace up` its second attempt and nothing else, while an
+    exception here would take the written/skipped report with it.
+    """
+    if shutil.which("opencode") is None:
+        return False
+    try:
+        runner(
+            ["opencode", "debug", "agent", OPENCODE_ORCHESTRATOR],
+            capture_output=True,
+            text=True,
+            timeout=WARM_TIMEOUT_S,
+            cwd=str(root),
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
+        # The expected end, not an error: the abort IS the warm-up.
+        return True
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return True
+
+
 def _place(root: Path, relative: str, source: Path, *, force: bool) -> bool:
     """Write one template. True when it landed, False when it was skipped.
 
@@ -244,10 +295,23 @@ def workspace_init(
             "written": sorted(written),
             "skipped": sorted(skipped),
         }
+    warnings = _warnings(base, runner=runner)
+    warmed = False
+    try:
+        kind = workspace_settings(read_settings(base / SETTINGS_PATH)).kind
+    except SettingsError as exc:
+        # A config we cannot read is not a reason to fail `init` -- the files
+        # are already written. It only means we cannot tell whether opencode
+        # is the runtime here, so the warm-up is skipped and said so.
+        warnings.append(f"no warm-up: {exc}")
+        kind = ""
+    if kind == "opencode":
+        warmed = _warm_opencode(base, runner=runner)
     return {
         "ok": True,
         "root": str(base),
         "written": sorted(written),
         "skipped": sorted(skipped),
-        "warnings": _warnings(base, runner=runner),
+        "warmed": warmed,
+        "warnings": warnings,
     }

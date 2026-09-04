@@ -196,6 +196,13 @@ It writes eight files -- the config and the three role prompts under
 owners look for them. An existing file is skipped and named in the result;
 `--force` overwrites. It needs a git repository and does not create one.
 
+It also spends one aborted opencode bootstrap in the project, up to eight
+seconds. opencode's first bootstrap in a project that carries a project
+plugin hangs -- and one of the eight files is such a plugin. The aborted
+run is the cure: every start after it takes about three seconds. The
+result reports it as `warmed`; without `opencode` on PATH, or in a
+workspace whose `kind` is not `opencode`, it is `false` and nothing runs.
+
 What it does NOT do is repair your machine. The three lean-ctx approvals,
 the worktrunk hook approval and the Herdr plugin registration are reported
 as `warnings` and stay yours to grant.
