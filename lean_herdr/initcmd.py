@@ -121,6 +121,25 @@ def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
     return found
 
 
+def _place(target: Path, source: Path, *, force: bool) -> bool:
+    """Write one template. True when it landed, False when it was skipped.
+
+    `exists()` FOLLOWS the link, so a dead symlink at a template's place
+    reads as an absent file and the write lands wherever it points --
+    outside the project this command was aimed at, past the only guard it
+    has. `is_symlink()` is the half that sees it. And `--force` is
+    permission to overwrite HERE, never to write somewhere else: the link
+    goes, its target is not touched.
+    """
+    if (target.is_symlink() or target.exists()) and not force:
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    if target.is_symlink():
+        target.unlink()
+    target.write_bytes(source.read_bytes())
+    return True
+
+
 def workspace_init(
     *,
     root: Path | None = None,
@@ -131,22 +150,36 @@ def workspace_init(
 
     No git repository: a hard stop with a named next step. `init` does not
     run `git init` itself -- that is a gesture belonging to the human.
+
+    A tree that is hostile or half-built -- a dead symlink at a template's
+    place, a regular file where a directory belongs, a directory nobody may
+    write -- ends the run early with `init_stopped` and the report so far.
+    Letting the exception through would take the written/skipped list with
+    it, and nobody could then say which files already landed.
     """
     try:
         base = root if root is not None else canonical_root()
     except BusError:
         return {"ok": False, "error": "not_a_git_repo: run `git init` first"}
+    except OSError as exc:
+        # `canonical_root()` shells out to git; with no git on the PATH that
+        # is a FileNotFoundError, which is not a BusError.
+        return {"ok": False, "error": f"init_stopped: {exc}"}
 
     written: list[str] = []
     skipped: list[str] = []
-    for name, relative in LAYOUT.items():
-        target = base / relative
-        if target.exists() and not force:
-            skipped.append(relative)
-            continue
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes((TEMPLATES / name).read_bytes())
-        written.append(relative)
+    try:
+        for name, relative in LAYOUT.items():
+            landed = _place(base / relative, TEMPLATES / name, force=force)
+            (written if landed else skipped).append(relative)
+    except OSError as exc:
+        return {
+            "ok": False,
+            "error": f"init_stopped: {exc}",
+            "root": str(base),
+            "written": sorted(written),
+            "skipped": sorted(skipped),
+        }
     return {
         "ok": True,
         "root": str(base),

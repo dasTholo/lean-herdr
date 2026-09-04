@@ -37,6 +37,51 @@ def test_a_second_run_writes_nothing(monkeypatch, repo):
     assert answer["skipped"] == sorted(LAYOUT.values())
 
 
+def test_a_dangling_symlink_is_not_written_through(monkeypatch, repo, tmp_path):
+    """`exists()` follows the link, so a dead one looks like an absent file.
+
+    A stranger's tree that carries `opencode.jsonc -> ../outside.json` would
+    otherwise have `init` write the template to a path OUTSIDE the project it
+    was pointed at -- past the one guard this command has.
+    """
+    quiet(monkeypatch)
+    outside = tmp_path.parent / "outside.json"
+    assert not outside.exists()
+    (repo / "opencode.jsonc").symlink_to(outside)
+    answer = workspace_init(root=repo)
+    assert not outside.exists(), "init wrote past the project root"
+    assert "opencode.jsonc" in answer["skipped"]
+
+
+def test_force_replaces_the_link_instead_of_following_it(monkeypatch, repo, tmp_path):
+    """--force is permission to overwrite HERE, not to write elsewhere."""
+    quiet(monkeypatch)
+    outside = tmp_path.parent / "outside.json"
+    outside.write_text("not mine", encoding="utf-8")
+    link = repo / "opencode.jsonc"
+    link.symlink_to(outside)
+    answer = workspace_init(root=repo, force=True)
+    assert outside.read_text(encoding="utf-8") == "not mine"
+    assert not link.is_symlink() and link.is_file()
+    assert "opencode.jsonc" in answer["written"]
+
+
+def test_a_layout_parent_that_is_a_file_keeps_the_report(monkeypatch, repo):
+    """The docstring promises no exception. A half-built tree tests it.
+
+    Without the guard the FileExistsError escapes mid-loop and takes the
+    written/skipped list with it -- leaving nobody able to say which files
+    already landed.
+    """
+    quiet(monkeypatch)
+    (repo / ".claude").write_text("a file where a directory belongs", encoding="utf-8")
+    answer = workspace_init(root=repo)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("init_stopped: ")
+    assert (repo / ".claude").is_file(), "the stranger's file must survive"
+    assert "written" in answer and "skipped" in answer, "the report must survive"
+
+
 def test_a_stranger_file_survives_without_force(monkeypatch, repo):
     """The most expensive mistake this tool could make."""
     quiet(monkeypatch)
