@@ -43,6 +43,15 @@ AGENT_START_INTERVAL_S = 0.5
 #: it. Measured 2026-09-04 against 0.8.2.
 HERDR_MAX_TIMEOUT_MS = 300_000
 
+#: And the same bound from below. `AgentStartParams.timeout_ms` in the shipped
+#: `herdr-api.schema.json`: "Values must be greater than 3000 and at most
+#: 300000." A `ready_timeout_s` of 2 or 3 is a legal setting -- `settings.py`
+#: validates it as `> 0` only -- and passing it straight through would turn a
+#: short budget into an INSTANT refusal, which is the failure the cap above
+#: exists to prevent, only approached from the other end. Greater than 3000,
+#: so the smallest value we may send is 3001.
+HERDR_MIN_TIMEOUT_MS = 3_001
+
 #: Above the whole cost of a run of pure refusals -- AGENT_START_ATTEMPTS
 #: answers after 0.0 s plus the sleeps between them -- and far below any
 #: `--timeout` a caller passes. An `agent start` slower than this did not
@@ -63,8 +72,12 @@ PANE_FREE_INTERVAL_S = 0.5
 
 
 def timeout_ms_for(seconds: float) -> int:
-    """A budget in seconds as Herdr's `--timeout`, capped at its maximum."""
-    return min(int(seconds * 1000), HERDR_MAX_TIMEOUT_MS)
+    """A budget in seconds as Herdr's `--timeout`, held inside its bounds.
+
+    Both ends, and for the same reason: a value outside them is not a long
+    or a short wait, it is an immediate refusal.
+    """
+    return max(HERDR_MIN_TIMEOUT_MS, min(int(seconds * 1000), HERDR_MAX_TIMEOUT_MS))
 
 
 class Herdr:
@@ -227,8 +240,19 @@ class Herdr:
         measurement. It stops early on an attempt that took longer than
         AGENT_START_REFUSAL_S: that one is not the race but a `--timeout`
         Herdr sat out, and repeating it would cost five full budgets.
-        Returns the reply of the last attempt, `{}` when every one of them
-        was refused; that empty dict is what the callers report on.
+
+        A reply comes back ONLY for a zero exit code; every positive one
+        answers `{}`, and that empty dict is what the callers report on.
+        The line has to be drawn here rather than left to `_run`, which
+        collapses a failure to `{}` only while stdout stays EMPTY. That
+        holds for every refusal measured so far (2026-09-04:
+        `agent_pane_not_found` came back exit 1, stdout empty, the reason
+        on stderr) -- but what Herdr prints when its OWN `--timeout`
+        expires is not measured, because before this method passed
+        `--timeout` through, our subprocess budget always fired first and
+        Herdr never got to report that timeout at all. A body on stdout
+        behind a failed start would otherwise read as a start that worked,
+        and `start_agent` would answer `ok` for an agent that never came up.
         """
         args = ["agent", "start", name, "--kind", kind, "--pane", pane]
         if timeout_ms is not None:
@@ -236,7 +260,6 @@ class Herdr:
         if agent_args:
             args = [*args, "--", *agent_args]
         budget = None if timeout_ms is None else timeout_ms / 1000.0 + self.timeout
-        reply: dict[str, Any] = {}
         for attempt in range(AGENT_START_ATTEMPTS):
             started_at = now()
             reply, code = self._run(*args, timeout=budget)
@@ -246,11 +269,13 @@ class Herdr:
                 # those is the prompt race, and repeating a timeout five
                 # times would cost five full timeouts.
                 return reply
+            # Past here the code is POSITIVE: nothing came up, whatever the
+            # process may have written. Both exits below answer `{}`.
             if now() - started_at >= AGENT_START_REFUSAL_S:
-                return reply
+                return {}
             if attempt + 1 < AGENT_START_ATTEMPTS:
                 sleep(AGENT_START_INTERVAL_S)
-        return reply
+        return {}
 
     def agent_prompt(
         self,

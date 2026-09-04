@@ -11,6 +11,7 @@ from lean_herdr.herdr import (
     DEFAULT_TIMEOUT_S,
     FIRST_START_TIMEOUT_MS,
     HERDR_MAX_TIMEOUT_MS,
+    HERDR_MIN_TIMEOUT_MS,
     PANE_FREE_TIMEOUT_S,
     Herdr,
     _free_pane,
@@ -266,8 +267,25 @@ def test_agent_start_does_not_retry_when_no_process_ran_at_all(monkeypatch):
 def test_timeout_ms_for_caps_at_herdrs_own_maximum():
     """A `ready_timeout_s` beyond Herdr's limit must not become a refusal."""
     assert timeout_ms_for(45) == 45_000
-    assert timeout_ms_for(1.5) == 1_500
+    assert timeout_ms_for(4) == 4_000
     assert timeout_ms_for(600) == HERDR_MAX_TIMEOUT_MS
+
+
+def test_timeout_ms_for_holds_herdrs_own_minimum():
+    """Herdr refuses a `--timeout` of 3000 or less, so we never send one.
+
+    `AgentStartParams.timeout_ms` in `herdr-api.schema.json`: "Values must
+    be greater than 3000 and at most 300000." A `ready_timeout_s` of 2 or 3
+    is a legal setting -- `settings.py` validates it as `> 0` only -- and
+    without the floor it would turn a short budget into an INSTANT refusal.
+    That is the same failure the cap above prevents, approached from the
+    other end, so the same rule answers it: Herdr's bound is honoured, not
+    assumed away.
+    """
+    assert HERDR_MIN_TIMEOUT_MS > 3_000
+    assert timeout_ms_for(2) == HERDR_MIN_TIMEOUT_MS
+    assert timeout_ms_for(3) == HERDR_MIN_TIMEOUT_MS
+    assert timeout_ms_for(4) == 4_000
 
 
 def test_the_timeout_is_passed_through_and_becomes_the_subprocess_budget(
@@ -498,3 +516,80 @@ def test_a_small_first_budget_is_floored_to_the_refusal_threshold(monkeypatch):
     assert result == {"ok": False, "error": "opencode_stuck"}
     assert all(int(c[c.index("--timeout") + 1]) >= floor_ms for c in calls)
     assert len(calls) == 1, "the floored budget must trigger the early stop after one attempt"
+
+
+#: A non-zero exit that ALSO carries a body on stdout. `Herdr._run` collapses a
+#: failure to `{}` only while stdout stays empty -- which is how every refusal
+#: measured so far behaves (2026-09-04: `agent_pane_not_found` came back exit 1,
+#: stdout empty, the reason on stderr). What Herdr prints when its own
+#: `--timeout` expires is NOT measured: before this branch our 10 s subprocess
+#: budget always fired first, so Herdr never got to report that timeout at all.
+#: These three tests make the answer not depend on it.
+REFUSED_WITH_BODY = Completed(returncode=1, stdout=PANE_BUSY)
+
+
+def test_a_failure_that_wrote_to_stdout_is_still_no_reply(monkeypatch):
+    """The exit code decides what a start answered, never the body."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={("agent", "start"): (12.0, [REFUSED_WITH_BODY])},
+    )
+    assert (
+        Herdr(runner=proc).agent_start(
+            "orch",
+            kind="opencode",
+            pane="w8:p5",
+            timeout_ms=12_000,
+            sleep=clock.sleep,
+            now=clock.now,
+        )
+        == {}
+    )
+    assert len(proc.calls) == 1, proc.flat()
+
+
+def test_the_loop_falls_through_to_nothing_too(monkeypatch):
+    """The other exit from the retry loop must answer `{}` just the same."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={("agent", "start"): (0.0, [REFUSED_WITH_BODY])},
+    )
+    assert (
+        Herdr(runner=proc).agent_start(
+            "orch",
+            kind="opencode",
+            pane="w8:p5",
+            timeout_ms=12_000,
+            sleep=clock.sleep,
+            now=clock.now,
+        )
+        == {}
+    )
+    assert len(proc.calls) == AGENT_START_ATTEMPTS, proc.flat()
+
+
+def test_a_hang_that_answered_with_a_body_is_still_opencode_stuck(monkeypatch):
+    """Read as a reply, this inverts the whole detector.
+
+    `start_agent` asks `if reply:`. A hang whose answer carried a body
+    would come back `{"ok": True}` for a start that never came up: no
+    `ctrl-c`, no second attempt, no warm-up -- and `up` would then sit out
+    the waiter's full `ready_timeout_s` and report `no_agent_id`. That is
+    the very bug this branch set out to remove, under the wrong one of the
+    three names.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={
+            ("agent", "start"): (12.0, [REFUSED_WITH_BODY]),
+            ("agent", "list"): (0.0, [{"result": {"agents": []}}]),
+        },
+    )
+    assert _helper(proc, clock) == {"ok": False, "error": "opencode_stuck"}
+    assert proc.called_with("pane", "send-keys", "w8:p5", "ctrl-c")
