@@ -322,3 +322,37 @@ def test_a_claude_project_is_not_warmed(monkeypatch, repo):
     answer = workspace_init(root=repo, runner=proc)
     assert answer["warmed"] is False
     assert not any(c[0] == "opencode" for c in proc.calls), proc.flat()
+
+
+def test_a_malformed_config_skips_the_warm_up_and_says_why(monkeypatch, repo):
+    """`read_settings` raising SettingsError must not fail `init` -- the
+    files are already written, only the runtime is unknown, so the warm-up
+    is skipped and the reason lands in `warnings`.
+
+    The config is placed BEFORE the run, and the run gets no `--force`:
+    `_place` skips it, so the broken file the warm-up decision reads is
+    the stranger's, not the template's.
+    """
+    quiet(monkeypatch)
+    (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (repo / SETTINGS_PATH).write_text("[workspace\nkind = opencode\n", encoding="utf-8")
+    answer = workspace_init(root=repo)
+    assert answer["ok"] is True
+    assert answer["warmed"] is False
+    assert any(w.startswith("no warm-up: ") for w in answer["warnings"])
+
+
+def test_a_warm_up_that_cannot_run_at_all_is_not_reported_as_success(monkeypatch, repo):
+    """`_warm_opencode`'s own except branch: a spawn failure is not warmed,
+    but `init` still finishes and reports it rather than crashing with it.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+
+    def runner(cmd, **kwargs):
+        if cmd[0] == "opencode":
+            raise OSError("cannot execute")
+        return Completed(stdout="")
+
+    answer = workspace_init(root=repo, runner=runner)
+    assert answer["ok"] is True
+    assert answer["warmed"] is False

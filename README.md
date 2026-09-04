@@ -200,8 +200,11 @@ It also spends one aborted opencode bootstrap in the project, up to eight
 seconds. opencode's first bootstrap in a project that carries a project
 plugin hangs -- and one of the eight files is such a plugin. The aborted
 run is the cure: every start after it takes about three seconds. The
-result reports it as `warmed`; without `opencode` on PATH, or in a
-workspace whose `kind` is not `opencode`, it is `false` and nothing runs.
+result reports it as `warmed` once the warm-up RAN -- not that it
+succeeded: a project whose `opencode.jsonc` never named the orchestrator
+agent exits at once and still reports `true`. It is `false` when there is
+no `opencode` on PATH, when the workspace's `kind` is not `opencode`, or
+when the run itself could not start.
 
 What it does NOT do is repair your machine. The three lean-ctx approvals,
 the worktrunk hook approval and the Herdr plugin registration are reported

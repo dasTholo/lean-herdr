@@ -7,10 +7,13 @@ import pytest
 from lean_herdr.herdr import (
     AGENT_START_ATTEMPTS,
     AGENT_START_INTERVAL_S,
+    AGENT_START_REFUSAL_S,
     DEFAULT_TIMEOUT_S,
     FIRST_START_TIMEOUT_MS,
     HERDR_MAX_TIMEOUT_MS,
+    PANE_FREE_TIMEOUT_S,
     Herdr,
+    _free_pane,
     start_agent,
     timeout_ms_for,
 )
@@ -388,6 +391,24 @@ def test_a_hung_start_is_aborted_and_the_second_attempt_carries_it(monkeypatch):
     assert starts[1][starts[1].index("--timeout") + 1] == "45000"
 
 
+def test_free_pane_sends_both_keys_before_it_may_end_on_an_empty_agent_list(monkeypatch):
+    """A hung start never became an agent, so `agent_list()` is empty from
+    the very first poll -- and that must not let the wait end after a single
+    `ctrl-c`. Regression for the bug where PANE_FREE_TIMEOUT_S and the
+    second key were dead code on exactly this path.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={("agent", "list"): (0.0, [{"result": {"agents": []}}])},
+    )
+    _free_pane(Herdr(runner=proc), "w8:p5", sleep=clock.sleep, now=clock.now)
+    keys = [c for c in proc.calls if c[1:3] == ["pane", "send-keys"]]
+    assert len(keys) == 2, "the second ctrl-c must still go out on an empty agent_list()"
+    assert clock.t >= PANE_FREE_TIMEOUT_S / 2, "must not return before the second key's deadline"
+
+
 def test_a_refusal_is_named_at_once_and_costs_no_second_attempt(monkeypatch):
     """0.0 s is Herdr saying no -- a name it does not know, a kind it has not."""
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
@@ -443,3 +464,37 @@ def test_without_a_retry_budget_the_hang_is_reported_at_once(monkeypatch):
     assert not proc.called_with("pane", "send-keys"), (
         "no key, no poll, no second attempt -- the handler must come back"
     )
+
+
+def test_a_small_first_budget_is_floored_to_the_refusal_threshold(monkeypatch):
+    """`ready_timeout_s` is validated as `> 0` only, so a caller may
+    legitimately grant a first attempt below AGENT_START_REFUSAL_S. Without
+    the floor, a hang that sits out exactly that small budget looks like a
+    refusal and gets repeated AGENT_START_ATTEMPTS times inside
+    `agent_start` -- the very cost the threshold exists to prevent.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    calls: list[list[str]] = []
+
+    def runner(cmd: list[str], **kwargs: Any) -> Completed:
+        calls.append(list(cmd))
+        # A real hang sits out exactly the --timeout it was given.
+        timeout_ms = int(cmd[cmd.index("--timeout") + 1])
+        clock.t += timeout_ms / 1000.0
+        return Completed(returncode=1)
+
+    result = start_agent(
+        Herdr(runner=runner),
+        "orch",
+        kind="opencode",
+        pane="w8:p5",
+        first_timeout_ms=3_000,
+        retry_timeout_ms=0,
+        sleep=clock.sleep,
+        now=clock.now,
+    )
+    floor_ms = timeout_ms_for(AGENT_START_REFUSAL_S)
+    assert result == {"ok": False, "error": "opencode_stuck"}
+    assert all(int(c[c.index("--timeout") + 1]) >= floor_ms for c in calls)
+    assert len(calls) == 1, "the floored budget must trigger the early stop after one attempt"

@@ -238,6 +238,15 @@ def dispatch(
     Creates NO task and does not wait. This process can do neither:
     `ctx_task create` requires a registered, long-lived MCP agent
     (tools/ctx_task.rs:12), and a `lean-ctx call` is exactly not that.
+
+    Per worker, the worst case now costs FIRST_START_TIMEOUT_MS (12 s) plus
+    the `ctrl-c` deadline (PANE_FREE_TIMEOUT_S, 6 s) plus `ready_timeout_s`
+    for the second attempt plus `ready_timeout_s` again for the waiter --
+    about 108 s at the 45 s default -- and the orchestrator builds its
+    workers serially, one `dispatch()` call after another. That is
+    deliberate, the same trade `start_orchestrator` makes for the same
+    reason: a warm project pays none of it, because the first attempt
+    carries and the rest of the chain never runs.
     """
     cfg = settings or RoleSettings(profile=PROFILE_BY_ROLE.get(req.role, DEFAULT_PROFILE))
     name = agent_name(req.role, req.worktree, settings=cfg)

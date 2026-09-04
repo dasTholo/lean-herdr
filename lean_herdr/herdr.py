@@ -339,27 +339,31 @@ def _free_pane(
     never drew its surface and therefore never grabbed the key, while one
     that did draw it did.
 
-    The wait STARTS with a sleep, and that order is the whole point. A
-    hung start never got as far as being an agent, so `agent_list()`
-    carries no entry for this pane to begin with -- polling first would
-    return on the spot, give `ctrl-c` no time to land at all and make
-    both PANE_FREE_TIMEOUT_S and the second key dead code. The deadline
-    is a ceiling, not a promise: when it passes with the pane still
-    taken, this returns anyway and lets the second attempt say so.
+    The wait is not cut short by an empty `agent_list()`, and that is the
+    whole point. A hung start never got as far as being an agent, so no
+    entry carries this pane to begin with -- ending on that would give
+    `ctrl-c` a single poll interval to land and make both
+    PANE_FREE_TIMEOUT_S and the second key dead code. So the pane is only
+    read as free once the second key has gone out; before that the
+    deadline is what governs.
+
+    The deadline is a ceiling, not a promise: when it passes with the pane
+    still taken, this returns anyway and lets the second attempt say so.
     """
     herdr.pane_send_keys(pane, "ctrl-c")
-    deadline = now() + PANE_FREE_TIMEOUT_S
-    again_at = now() + PANE_FREE_TIMEOUT_S / 2
+    started_at = now()
+    deadline = started_at + PANE_FREE_TIMEOUT_S
+    again_at = started_at + PANE_FREE_TIMEOUT_S / 2
     again = False
     while True:
         sleep(PANE_FREE_INTERVAL_S)
-        if not any(a.get("pane_id") == pane for a in herdr.agent_list()):
-            return
-        if now() >= deadline:
-            return
         if not again and now() >= again_at:
             herdr.pane_send_keys(pane, "ctrl-c")
             again = True
+        if now() >= deadline:
+            return
+        if again and not any(a.get("pane_id") == pane for a in herdr.agent_list()):
+            return
 
 
 def start_agent(
@@ -394,6 +398,15 @@ def start_agent(
         {"ok": False, "error": "agent_start_failed"}   Herdr refused
         {"ok": False, "error": "opencode_stuck"}       the start hangs
 
+    `opencode_stuck` is named after the measured cause, not after the
+    runtime: a start of any kind that never reached input-readiness gets
+    it. A `claude` worker on a loaded machine can end here too, and the
+    repair is the same one -- look at the pane.
+
+    The first attempt is never let run under AGENT_START_REFUSAL_S: a
+    smaller `first_timeout_ms` is raised to it, because the refusal/hang
+    split above depends on outlasting that threshold.
+
     A refusal is answered at once and gets NO second attempt: it arrives
     after 0.0 s, the transient half of it was already repeated
     AGENT_START_ATTEMPTS times inside `agent_start`, and a `ctrl-c` into a
@@ -409,6 +422,14 @@ def start_agent(
 
     Never raises; the caller reads `ok`.
     """
+    # The refusal/hang split below is a DURATION test, so the first attempt
+    # must outlast the threshold or the split cannot work: a budget under
+    # AGENT_START_REFUSAL_S makes every hang look like a refusal, and
+    # `agent_start`'s own early stop never fires -- the loop would then repeat
+    # the hang AGENT_START_ATTEMPTS times, which is the very cost the
+    # threshold exists to prevent. `ready_timeout_s` is validated as `> 0`
+    # only, so a caller may legitimately grant less than that.
+    first_timeout_ms = max(first_timeout_ms, timeout_ms_for(AGENT_START_REFUSAL_S))
     started_at = now()
     reply = herdr.agent_start(
         name,
