@@ -30,8 +30,9 @@ from lean_herdr.bus import BusError, canonical_root
 from lean_herdr.settings import (
     SETTINGS_PATH,
     SettingsError,
+    model_warnings,
     read_settings,
-    workspace_settings,
+    settings_for,
 )
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 
@@ -159,12 +160,19 @@ def _check_plugins(runner: Any) -> str | None:
     )
 
 
-def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
+def _warnings(
+    root: Path, *, data: dict[str, Any], runner: Any = subprocess.run
+) -> list[str]:
     """The README checklist as lines. Nothing here changes anything.
 
     The three foreign checks each live in their own function: they share
     nothing but the `runner`, and four independent checks in one body sat
     over the complexity threshold and could only be tested through `init`.
+
+    `data` is the settings file, already read. The config-derived warnings
+    come out of `settings`, never out of a second reading here -- one
+    producer per rule (M3), and `dispatch` reads the very same one for the
+    reviewer's build line.
     """
     found: list[str] = []
     for binary, why in (
@@ -180,6 +188,7 @@ def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
         _check_plugins(runner),
     )
     found.extend(line for line in checks if line is not None)
+    found.extend(model_warnings(data))
     return found
 
 
@@ -295,18 +304,22 @@ def workspace_init(
             "written": sorted(written),
             "skipped": sorted(skipped),
         }
-    warnings = _warnings(base, runner=runner)
-    warmed = False
+    # ONE read, two readers below: the warning list and the warm-up
+    # decision. `data` stays `{}` when the file is unreadable -- init has
+    # already written its files at this point, and a config we cannot
+    # parse is not a reason to lose that report.
+    warnings: list[str] = []
     try:
-        kind = workspace_settings(read_settings(base / SETTINGS_PATH)).kind
+        data = read_settings(base / SETTINGS_PATH)
+        kind = settings_for("orchestrator", data).kind
     except SettingsError as exc:
         # A config we cannot read is not a reason to fail `init` -- the files
         # are already written. It only means we cannot tell whether opencode
         # is the runtime here, so the warm-up is skipped and said so.
         warnings.append(f"no warm-up: {exc}")
-        kind = ""
-    if kind == "opencode":
-        warmed = _warm_opencode(base, runner=runner)
+        data, kind = {}, ""
+    warnings = _warnings(base, data=data, runner=runner) + warnings
+    warmed = _warm_opencode(base, runner=runner) if kind == "opencode" else False
     return {
         "ok": True,
         "root": str(base),

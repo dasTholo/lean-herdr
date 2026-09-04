@@ -16,12 +16,20 @@
 
 # [roles.orchestrator]
 # profile = "minimal"
+# kind  = "opencode"   # claude | opencode -- built-in for THIS role only
+# model = ""           # empty: no --model at all
 
 # [roles.builder]
 # direction = "down"
+# kind  = "claude"     # workers have no built-in kind -- say it here or
+# model = "sonnet"     # pass --kind/--model on every dispatch
 
 # [roles.reviewer]
 # ratio = 0.3
+# kind  = "opencode"
+# model = ""           # a DIFFERENT model than the builder: different
+#                      # blind spots is the whole point of the second pass
+# shares_builder_model = false   # true: same model as the builder, meant
 
 # [llm]
 # Read by lean_herdr/llm.py alone: the commit generator worktrunk calls
@@ -48,9 +56,7 @@
 # `effort` and `prereview_effort`: minimal | low | medium | high.
 
 # [workspace] describes the pane `lean-herdr workspace up` opens for the
-# orchestrator. Everything here has a built-in default too.
+# orchestrator. `kind` and `model` moved to [roles.orchestrator].
 
 # [workspace]
 # label = "{repo}"     # herdr workspace label; {repo} = directory name, optional
-# kind  = "opencode"   # claude | opencode -- the orchestrator's runtime
-# model = ""           # empty: no --model at all

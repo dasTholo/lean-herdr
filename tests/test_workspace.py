@@ -73,6 +73,8 @@ def core(herdr, **rest):
         "root": ROOT,
         "settings": WorkspaceSettings(),
         "profile": "minimal",
+        "model": "",
+        "kind": "opencode",
         "workspace_id": None,
         "ready_timeout_s": 1.0,
         "waiter": lambda *a, **k: "mcp-42",
@@ -331,7 +333,7 @@ def test_an_empty_model_means_no_model_flag_at_all(monkeypatch):
     herdr, proc = herdr_with(monkeypatch, replies)
     core(herdr)
     assert not proc.called_with("agent", "start", "--model"), proc.flat()
-    core(herdr, settings=WorkspaceSettings(model="sonnet"))
+    core(herdr, model="sonnet")
     assert proc.called_with("--", "--model", "sonnet", "--agent", "orchestrator")
 
 
@@ -411,7 +413,7 @@ def test_a_claude_orchestrator_needs_no_opencode_config(monkeypatch, tmp_path):
         herdr,
         root=tmp_path,
         workspace_id="w7",
-        settings=WorkspaceSettings(kind="claude"),
+        kind="claude",
     )
     assert not (tmp_path / "opencode.jsonc").exists()
     assert answer["ok"] is True and answer["agent_id"] == "mcp-42"
@@ -434,14 +436,35 @@ def _write_config(root: Path, text: str) -> None:
 #: literal left anywhere on the path is a failure and not a coincidence.
 CONFIG = """\
 [workspace]
-kind = "claude"
-model = "opus"
 label = "orch-{repo}"
 
 [roles.orchestrator]
 profile = "power"
 ready_timeout_s = 1.5
+kind = "claude"
+model = "opus"
 """
+
+
+def test_up_takes_model_and_kind_from_the_orchestrator_role(monkeypatch, tmp_path):
+    """Both arrive ONE BY ONE, out of the table the other two already come from.
+
+    `settings` is down to the one thing that is about the WORKSPACE and
+    not about the agent: its label. Splitting one pane's settings across
+    two tables was the accident this holds shut.
+    """
+    _write_config(tmp_path, CONFIG)
+    herdr, _ = herdr_with(monkeypatch, {})
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(
+        workspace,
+        "start_orchestrator",
+        lambda **kwargs: (seen.update(kwargs), {"ok": True})[1],
+    )
+    assert workspace.workspace_up(root=tmp_path, herdr=herdr)["ok"] is True
+    assert seen["model"] == "opus"
+    assert seen["kind"] == "claude"
+    assert seen["settings"] == WorkspaceSettings(label="orch-{repo}")
 
 
 def test_up_carries_every_value_out_of_a_real_config_file(monkeypatch, tmp_path):
@@ -450,7 +473,7 @@ def test_up_carries_every_value_out_of_a_real_config_file(monkeypatch, tmp_path)
     `up` is the caller whose whole purpose is that file, and its two
     sections leave by different doors: `[workspace]` through the herdr
     calls, `[roles.orchestrator]` into the core's own arguments. Every
-    other test in this file hands `start_orchestrator` its settings
+    other test in this file hands `start_orchestrator` its arguments
     directly and would stay green with the file never read at all.
     """
     _write_config(tmp_path, CONFIG)
@@ -478,7 +501,7 @@ def test_up_carries_every_value_out_of_a_real_config_file(monkeypatch, tmp_path)
     # [roles.orchestrator] -- read by the core, never by herdr.
     assert seen["profile"] == "power"
     assert seen["ready_timeout_s"] == 1.5
-    # [workspace] -- read on the way to herdr.
+    # [workspace] -- one key left, and it is read on the way to herdr.
     assert proc.called_with("workspace", "create", "--label", f"orch-{tmp_path.name}")
     assert proc.called_with("--env", "LEAN_CTX_TOOL_PROFILE=power")
     assert proc.called_with("agent", "start", "orch", "--kind", "claude")

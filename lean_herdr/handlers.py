@@ -228,6 +228,8 @@ def handle_bootstrap(cfg: Config) -> None:
             root=root,
             settings=workspace_settings(data),
             profile=role.profile,
+            model=role.model,
+            kind=role.kind,
             workspace_id=workspace,
             ready_timeout_s=min(role.ready_timeout_s, KEYSTROKE_READY_TIMEOUT_S),
             # No second attempt here, for the same reason the timeout above is

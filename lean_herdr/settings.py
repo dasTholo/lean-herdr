@@ -38,6 +38,13 @@ SETTINGS_PATH = Path(".lean-ctx") / "lean-herdr" / "config.toml"
 PROFILE_BY_ROLE = {"orchestrator": "minimal"}
 DEFAULT_PROFILE = "standard"
 
+#: The orchestrator's built-in runtime, so the keystroke route
+#: (handlers.handle_bootstrap) keeps behaving exactly as it does today
+#: without reading a thing. Workers have NO built-in kind: they say it,
+#: by flag or by config, or `dispatch` refuses -- a worker started on the
+#: wrong runtime resolves a role prompt that is not written for it.
+KIND_BY_ROLE = {"orchestrator": "opencode"}
+
 #: `herdr pane split --direction` knows exactly these two.
 DIRECTIONS = ("right", "down")
 
@@ -59,6 +66,17 @@ class RoleSettings:
     name_template: str = "{role}-{branch}"
     profile: str = DEFAULT_PROFILE
     ready_timeout_s: float = 45.0
+    #: "" is "not set", the same spelling LlmSettings uses, so a caller
+    #: can fall through with a plain `or`. `None` would need a second
+    #: spelling for one state and a second check at every level.
+    model: str = ""
+    kind: str = ""
+    #: Only [roles.reviewer] has a reader for this one, and that is the
+    #: same price `direction` already pays under [roles.orchestrator]:
+    #: ALLOWED is built from these fields, so every key is legal under
+    #: every role. Setting it elsewhere changes nothing -- it does not
+    #: quietly change something else either.
+    shares_builder_model: bool = False
 
 
 _TYPES: dict[str, Any] = {
@@ -68,6 +86,9 @@ _TYPES: dict[str, Any] = {
     "name_template": str,
     "profile": str,
     "ready_timeout_s": (float, int),
+    "model": str,
+    "kind": str,
+    "shares_builder_model": bool,
 }
 
 #: Keys where a bool would slip through `_TYPES`: `isinstance(True, int)` is
@@ -83,8 +104,8 @@ ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 ROOT_KEYS = ("default", "roles", "llm", "workspace")
 
 #: The two runtimes a role prompt is written for. `dispatch --kind` and
-#: `[workspace].kind` read the SAME tuple -- two lists would let a value
-#: pass one gate and fail the other (M3).
+#: `[roles.<role>].kind` read the SAME tuple -- two lists would let a
+#: value pass one gate and fail the other (M3).
 KINDS = ("claude", "opencode")
 
 #: The herdr agent name of the orchestrator, and the sender the workers
@@ -134,6 +155,10 @@ def _validate(values: RoleSettings, role: str) -> None:
     if values.direction not in DIRECTIONS:
         raise SettingsError(
             f"{role}: direction={values.direction!r}, allowed: {list(DIRECTIONS)}"
+        )
+    if values.kind and values.kind not in KINDS:
+        raise SettingsError(
+            f"{role}: kind={values.kind!r}, allowed: {list(KINDS)}"
         )
     if values.ratio is not None and not 0.0 < float(values.ratio) < 1.0:
         raise SettingsError(f"{role}: ratio={values.ratio!r} is not between 0 and 1")
@@ -198,11 +223,46 @@ def settings_for(role: str, data: dict[str, Any] | None = None) -> RoleSettings:
     change only the builder, write it under `[roles.builder]`.
     """
     table = _check_root({} if data is None else data)
-    values = RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
+    values = RoleSettings(
+        profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE),
+        kind=KIND_BY_ROLE.get(role, ""),
+    )
     for block in (table.get("default"), (table.get("roles") or {}).get(role)):
         if block is not None:
             values = _overlay(values, block, role)
     return values
+
+
+def model_warnings(data: dict[str, Any] | None = None) -> list[str]:
+    """What a config earns without being wrong. A list, empty is normal.
+
+    The reviewer's value is that it is a DIFFERENT model -- different
+    blind spots. That sentence used to stand in the orchestrator's role
+    prompt, where it governed a choice the orchestrator made in the run.
+    Once the config decides, the prompt cannot enforce it any more, so it
+    becomes a warning here -- and a warning, never a refusal: two workers
+    on one model is a legitimate thing to want, it just must not happen
+    by accident.
+
+    Raises whatever `settings_for()` raises. Both callers read the file
+    once and validated already; a second, quieter error path here would
+    be a second rule for one thing (M3).
+    """
+    builder = settings_for("builder", data)
+    reviewer = settings_for("reviewer", data)
+    if (
+        not builder.model
+        or builder.model != reviewer.model
+        or reviewer.shares_builder_model
+    ):
+        return []
+    return [
+        (
+            f"builder and reviewer both run on {builder.model!r} -- the "
+            "reviewer earns its keep by having different blind spots. Set "
+            "[roles.reviewer].shares_builder_model = true if this is meant."
+        )
+    ]
 
 
 #: OpenRouter's reasoning levels. A typo would otherwise reach the
@@ -281,36 +341,40 @@ def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
 class WorkspaceSettings:
     """`[workspace]` -- what `lean-herdr workspace up` needs to start.
 
-    Deliberately NOT part of RoleSettings. Those describe how a pane is
-    split, per role, and `ALLOWED` is built from their fields -- widening
-    that dataclass would make `label` and `kind` legal under `[roles.*]`
-    as well, where nothing reads them and a typo would stay silent.
-
-    `model = ""` means "no --model at all", exactly what the bootstrap
-    does today. `None` would need a second spelling for the same state.
+    One key, and that is the whole table now: `kind` and `model` moved to
+    `[roles.orchestrator]`, where the other two things
+    `start_orchestrator` reads already live (`profile`,
+    `ready_timeout_s`). Splitting one pane's settings across two tables
+    was the accident; the label is a caption for the workspace, not for
+    the agent, and stays.
 
     What is NOT here: `direction`, `ratio` and `focus`. The orchestrator
-    pane takes `pane_split`'s own defaults -- `start_orchestrator` reads
-    only `profile` and `ready_timeout_s` off `[roles.orchestrator]`. That
-    is what the keystroke does today and the one path both callers share;
-    naming it here keeps it a decision rather than an oversight, in a
-    module whose whole purpose is that a wrong file never stays silent.
+    pane takes `pane_split`'s own defaults. That is what the keystroke
+    does today and the one path both callers share; naming it here keeps
+    it a decision rather than an oversight, in a module whose whole
+    purpose is that a wrong file never stays silent.
     """
 
     label: str = "{repo}"
-    kind: str = "opencode"
-    model: str = ""
 
 
 WORKSPACE_ALLOWED = frozenset(f.name for f in fields(WorkspaceSettings))
+
+#: Keys that USED to live under `[workspace]`. The generic complaint --
+#: "unknown keys ['model']; allowed: ['label']" -- is true and useless:
+#: it sends the reader hunting for a typo instead of to the new home.
+#: This is the sort of message this module writes anyway; whoever writes
+#: `direction = "links"` and silently gets `right` will hunt the bug in
+#: the wrong place.
+MOVED_TO_ORCHESTRATOR = ("model", "kind")
 
 
 def workspace_settings(data: dict[str, Any] | None = None) -> WorkspaceSettings:
     """`[workspace]` out of the settings file. No section: every default.
 
-    Same strictness as settings_for(): an unknown key, a wrong type, a
-    kind no role prompt is written for, or a label carrying a placeholder
-    nothing fills is a SettingsError -- never a silent fallback.
+    Same strictness as settings_for(): an unknown key, a wrong type, or a
+    label carrying a placeholder nothing fills is a SettingsError --
+    never a silent fallback.
     """
     table = _check_root({} if data is None else data)
     block = table.get("workspace")
@@ -319,6 +383,14 @@ def workspace_settings(data: dict[str, Any] | None = None) -> WorkspaceSettings:
     if not isinstance(block, dict):
         raise SettingsError(
             f"workspace: section is not a table, but {type(block).__name__}"
+        )
+    moved = [key for key in MOVED_TO_ORCHESTRATOR if key in block]
+    if moved:
+        raise SettingsError(
+            "; ".join(
+                f"workspace.{key} has moved to [roles.orchestrator].{key}"
+                for key in moved
+            )
         )
     unknown = sorted(set(block) - WORKSPACE_ALLOWED)
     if unknown:
@@ -332,10 +404,6 @@ def workspace_settings(data: dict[str, Any] | None = None) -> WorkspaceSettings:
                 f"workspace.{key}: {value!r} is {type(value).__name__}, not str"
             )
     values = WorkspaceSettings(**block)
-    if values.kind not in KINDS:
-        raise SettingsError(
-            f"workspace.kind={values.kind!r}, allowed: {list(KINDS)}"
-        )
     # `{repo}` is OPTIONAL here, unlike name_template's {role}/{branch}:
     # the label is a caption, not a reuse key, so a literal `label =
     # "work"` is valid. An UNKNOWN placeholder is not -- it would surface

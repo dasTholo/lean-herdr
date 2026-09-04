@@ -9,6 +9,7 @@ from lean_herdr.settings import (
     SettingsError,
     WorkspaceSettings,
     load_jsonc,
+    model_warnings,
     read_settings,
     settings_for,
     workspace_settings,
@@ -181,7 +182,9 @@ def test_the_shipped_template_changes_nothing(tmp_path):
     assert data == {}, f"{template} carries active values: {sorted(data)}"
     assert settings_for("builder", data) == RoleSettings(profile="standard")
     assert settings_for("reviewer", data) == RoleSettings(profile="standard")
-    assert settings_for("orchestrator", data) == RoleSettings(profile="minimal")
+    assert settings_for("orchestrator", data) == RoleSettings(
+        profile="minimal", kind="opencode"
+    )
 
 
 def test_the_llm_section_is_read_and_defaults_to_empty():
@@ -235,8 +238,42 @@ def test_a_workspace_key_under_roles_is_still_unknown():
 
 
 def test_a_kind_no_role_prompt_is_written_for_is_rejected():
-    with pytest.raises(SettingsError, match="workspace.kind"):
-        workspace_settings({"workspace": {"kind": "codex"}})
+    """The check moved with the key: `kind` is a role setting now."""
+    with pytest.raises(SettingsError, match="builder: kind="):
+        settings_for("builder", {"roles": {"builder": {"kind": "codex"}}})
+
+
+def test_a_role_carries_its_own_model_and_kind():
+    values = settings_for(
+        "builder", {"roles": {"builder": {"kind": "claude", "model": "sonnet"}}}
+    )
+    assert values.kind == "claude"
+    assert values.model == "sonnet"
+
+
+def test_only_the_orchestrator_has_a_built_in_kind():
+    """A worker says it -- by flag or by config -- or `dispatch` refuses.
+
+    Started on the wrong runtime it resolves a role prompt that is not
+    written for it, so there is nothing sensible to fall back to.
+    """
+    assert settings_for("orchestrator").kind == "opencode"
+    assert settings_for("builder").kind == ""
+    assert settings_for("reviewer").kind == ""
+
+
+def test_workspace_model_names_its_new_home():
+    """"unknown keys ['model']" is true and useless -- it sends the reader
+    hunting for a typo instead of to the new home.
+    """
+    with pytest.raises(SettingsError, match=r"\[roles.orchestrator\].model"):
+        workspace_settings({"workspace": {"model": "x"}})
+    with pytest.raises(SettingsError, match=r"\[roles.orchestrator\].kind"):
+        workspace_settings({"workspace": {"kind": "claude"}})
+    with pytest.raises(SettingsError) as both:
+        workspace_settings({"workspace": {"model": "x", "kind": "claude"}})
+    assert "workspace.model has moved" in str(both.value)
+    assert "workspace.kind has moved" in str(both.value)
 
 
 def test_a_literal_label_is_valid_but_an_unknown_placeholder_is_not():
@@ -247,6 +284,50 @@ def test_a_literal_label_is_valid_but_an_unknown_placeholder_is_not():
 
 def test_no_workspace_section_means_every_default():
     assert workspace_settings({}) == WorkspaceSettings()
+
+
+def test_a_default_model_reaches_every_role():
+    """The mechanics of `ALLOWED`, held down so nobody reads it as an accident.
+
+    `[default]` is overlaid onto every role, the orchestrator included --
+    one line sets the model for the whole project.
+    """
+    data = {"default": {"model": "sonnet"}}
+    assert [
+        settings_for(role, data).model
+        for role in ("builder", "reviewer", "orchestrator")
+    ] == ["sonnet", "sonnet", "sonnet"]
+
+
+@pytest.mark.parametrize(
+    ("roles", "warned"),
+    [
+        pytest.param(
+            {"builder": {"model": "sonnet"}, "reviewer": {"model": "opus"}},
+            False,
+            id="two models, nothing to say",
+        ),
+        pytest.param(
+            {"builder": {"model": "sonnet"}, "reviewer": {"model": "sonnet"}},
+            True,
+            id="one model, and nobody said so",
+        ),
+        pytest.param(
+            {
+                "builder": {"model": "sonnet"},
+                "reviewer": {"model": "sonnet", "shares_builder_model": True},
+            },
+            False,
+            id="one model, and it is meant",
+        ),
+        pytest.param({}, False, id="no model at all is not a shared model"),
+    ],
+)
+def test_two_roles_on_one_model_warn_unless_confirmed(roles, warned):
+    """A warning, never a refusal: two workers on one model is legitimate."""
+    lines = model_warnings({"roles": roles})
+    assert bool(lines) is warned
+    assert not warned or "'sonnet'" in lines[0]
 
 
 # -- load_jsonc: opencode's own configuration --------------------------

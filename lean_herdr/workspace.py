@@ -177,12 +177,19 @@ def start_orchestrator(
     root: Path,
     settings: WorkspaceSettings,
     profile: str,
+    model: str,
+    kind: str,
     workspace_id: str | None,
     ready_timeout_s: float,
     retry_on_hang: bool = True,
     waiter: Callable[..., str | None] = wait_for_agent_id,
 ) -> dict[str, Any]:
     """Start the orchestrator. Never raises; the result carries `ok`.
+
+    `model` and `kind` arrive one by one, like `profile` and
+    `ready_timeout_s` before them and out of the same table --
+    `[roles.orchestrator]`. `settings` is down to the one thing that is
+    about the WORKSPACE and not about the agent: its label.
 
     `workspace_id=None` means "find the workspace for `root`, or create
     one" -- the `up` path. A given id means "use exactly this one and
@@ -208,7 +215,7 @@ def start_orchestrator(
     # it takes the built-in defaults on purpose -- so for `handle_bootstrap`
     # this is the only thing standing between a keystroke and a wait for an
     # agent opencode could not name.
-    problem = missing_agent_config(root, settings.kind)
+    problem = missing_agent_config(root, kind)
     if problem:
         return {"ok": False, "error": f"no_agent_config: {problem} -- {INIT_HINT}"}
     if not herdr.is_available():
@@ -260,8 +267,8 @@ def start_orchestrator(
     # and --model is omitted entirely when the config leaves it empty --
     # exactly what handle_bootstrap does today.
     agent_args = ["--agent", OPENCODE_ORCHESTRATOR]
-    if settings.model:
-        agent_args = ["--model", settings.model, *agent_args]
+    if model:
+        agent_args = ["--model", model, *agent_args]
     # Both budgets come out of the ONE the caller granted. `up` grants 45 s
     # and gets the full FIRST_START_TIMEOUT_MS; the keystroke grants 6
     # (handlers.KEYSTROKE_READY_TIMEOUT_S) and its first attempt shrinks with
@@ -270,7 +277,7 @@ def start_orchestrator(
     started = start_agent(
         herdr,
         ORCHESTRATOR_AGENT,
-        kind=settings.kind,
+        kind=kind,
         pane=pane,
         agent_args=agent_args,
         first_timeout_ms=min(
@@ -331,6 +338,8 @@ def workspace_up(
         root=base,
         settings=workspace_settings(data),
         profile=role.profile,
+        model=role.model,
+        kind=role.kind,
         workspace_id=None,
         ready_timeout_s=role.ready_timeout_s,
     )

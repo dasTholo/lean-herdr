@@ -419,6 +419,29 @@ def test_the_keystroke_asks_for_no_second_attempt(world, monkeypatch):
     assert seen[0]["ready_timeout_s"] == handlers.KEYSTROKE_READY_TIMEOUT_S
 
 
+def test_the_keystroke_reads_the_runtime_out_of_the_same_table_up_does(
+    world, monkeypatch
+):
+    """No config in reach -- and the built-ins still say `opencode`.
+
+    `kind` used to come off `[workspace]`, whose default was opencode.
+    `KIND_BY_ROLE` gives the orchestrator the same word without a file, so
+    the gesture behaves exactly as it did -- and now out of the one table
+    `up` reads too.
+    """
+    _, _, tmp_path = world
+    seen: list[dict] = []
+    monkeypatch.setattr(
+        "lean_herdr.workspace.start_orchestrator",
+        lambda **kwargs: (seen.append(kwargs), {"ok": True})[1],
+    )
+    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
+        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+    )))
+    assert seen[0]["kind"] == "opencode"
+    assert seen[0]["model"] == ""
+
+
 def test_main_catches_every_exception_and_ends_with_0(monkeypatch, capsys):
     """The monkeypatch bites ONLY because __main__ resolves the handler by NAME.
 

@@ -316,12 +316,57 @@ def test_a_claude_project_is_not_warmed(monkeypatch, repo):
     monkeypatch.setattr("shutil.which", which_stub(True))
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
     (repo / SETTINGS_PATH).write_text(
-        '[workspace]\nkind = "claude"\n', encoding="utf-8"
+        '[roles.orchestrator]\nkind = "claude"\n', encoding="utf-8"
     )
     proc = FakeProc(default="")
     answer = workspace_init(root=repo, runner=proc)
     assert answer["warmed"] is False
     assert not any(c[0] == "opencode" for c in proc.calls), proc.flat()
+
+
+def test_a_leftover_workspace_kind_decides_nothing_here(monkeypatch, repo):
+    """`kind` moved, and `init` asks the new home ALONE.
+
+    The old spelling is refused where it is read -- by `workspace up`,
+    through `workspace_settings`. `init` reads `[roles.orchestrator]`, so
+    a line left behind under `[workspace]` does not quietly go on
+    steering the warm-up: the role's built-in `opencode` does.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (repo / SETTINGS_PATH).write_text(
+        '[workspace]\nkind = "claude"\n', encoding="utf-8"
+    )
+    proc = FakeProc(default="")
+    assert workspace_init(root=repo, runner=proc)["warmed"] is True
+
+
+@pytest.mark.parametrize(
+    ("extra", "warned"),
+    [
+        pytest.param("", True, id="one model, and nobody said so"),
+        pytest.param(
+            "shares_builder_model = true\n", False, id="one model, and it is meant"
+        ),
+    ],
+)
+def test_init_warns_when_builder_and_reviewer_share_a_model(
+    monkeypatch, repo, extra, warned
+):
+    """The reviewer earns its keep by having DIFFERENT blind spots.
+
+    `settings.model_warnings` is the one producer of this line; `init`
+    reads the config once and hands it to the checklist.
+    """
+    quiet(monkeypatch)
+    (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (repo / SETTINGS_PATH).write_text(
+        '[roles.builder]\nmodel = "sonnet"\n\n'
+        '[roles.reviewer]\nmodel = "sonnet"\n' + extra,
+        encoding="utf-8",
+    )
+    warnings = workspace_init(root=repo)["warnings"]
+    assert any("different blind spots" in w for w in warnings) is warned
 
 
 def test_a_malformed_config_skips_the_warm_up_and_says_why(monkeypatch, repo):
