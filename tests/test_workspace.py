@@ -9,7 +9,7 @@ import pytest
 
 from lean_herdr import workspace
 from lean_herdr.bus import BusError
-from lean_herdr.herdr import Herdr
+from lean_herdr.herdr import FIRST_START_TIMEOUT_MS, Herdr
 from lean_herdr.settings import SETTINGS_PATH, SettingsError, WorkspaceSettings
 from tests.doubles import (
     FakeProc,
@@ -204,6 +204,89 @@ def test_a_refused_agent_start_is_reported_instead_of_waited_out(monkeypatch):
         "workspace": "w3",
         "pane": "w3:p9",
     }
+
+
+def test_a_hung_start_is_reported_as_opencode_stuck_with_pane_and_workspace(
+    monkeypatch,
+):
+    """The new error, and the two ids the operator needs to find the tile.
+
+    `agent_start_failed` stays reserved for a real refusal; a start that
+    hung through both attempts gets its own name, because it is its own
+    repair -- the tile is alive and holds a process that never painted.
+    """
+    replies = {
+        ("workspace", "list"): BY_WORKTREE,
+        ("agent", "list"): NO_AGENTS,
+        ("pane", "list"): PANES,
+        ("pane", "split"): SPLIT,
+    }
+    herdr, _ = herdr_with(monkeypatch, replies)
+    monkeypatch.setattr(
+        workspace,
+        "start_agent",
+        lambda *a, **kw: {"ok": False, "error": "opencode_stuck"},
+    )
+
+    def waiter(*_a, **_kw):
+        raise AssertionError("the waiter must not run after a stuck start")
+
+    assert core(herdr, waiter=waiter) == {
+        "ok": False,
+        "error": "opencode_stuck",
+        "workspace": "w3",
+        "pane": "w3:p9",
+    }
+
+
+def test_the_orchestrator_start_goes_through_the_shared_helper(monkeypatch):
+    """One mechanism, not two -- and the retry gets the configured budget."""
+    replies = {
+        ("workspace", "list"): BY_WORKTREE,
+        ("agent", "list"): NO_AGENTS,
+        ("pane", "list"): PANES,
+        ("pane", "split"): SPLIT,
+    }
+    herdr, _ = herdr_with(monkeypatch, replies)
+    seen: dict[str, object] = {}
+    real = workspace.start_agent
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(workspace, "start_agent", spy)
+    core(herdr, ready_timeout_s=45.0)
+    assert seen["first_timeout_ms"] == FIRST_START_TIMEOUT_MS
+    assert seen["retry_timeout_ms"] == 45_000
+
+
+def test_a_small_budget_shrinks_the_first_attempt_with_it(monkeypatch):
+    """The keystroke grants 6 s -- the first attempt must not take 12.
+
+    `handle_bootstrap` runs inside Herdr's handler process and caps the
+    budget at KEYSTROKE_READY_TIMEOUT_S for a measured reason. A flat
+    FIRST_START_TIMEOUT_MS would have made the keystroke block for twice
+    that cap before anything else even started.
+    """
+    replies = {
+        ("workspace", "list"): BY_WORKTREE,
+        ("agent", "list"): NO_AGENTS,
+        ("pane", "list"): PANES,
+        ("pane", "split"): SPLIT,
+    }
+    herdr, _ = herdr_with(monkeypatch, replies)
+    seen: dict[str, object] = {}
+    real = workspace.start_agent
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(workspace, "start_agent", spy)
+    core(herdr, ready_timeout_s=6.0, retry_on_hang=False)
+    assert seen["first_timeout_ms"] == 6_000
+    assert seen["retry_timeout_ms"] == 0, "no second attempt for the keystroke"
 
 
 def test_a_timeout_without_an_agent_id_is_not_ok(monkeypatch):

@@ -230,6 +230,13 @@ def handle_bootstrap(cfg: Config) -> None:
             profile=role.profile,
             workspace_id=workspace,
             ready_timeout_s=min(role.ready_timeout_s, KEYSTROKE_READY_TIMEOUT_S),
+            # No second attempt here, for the same reason the timeout above is
+            # capped: this process is Herdr's, and a hung first bootstrap
+            # would hold it for another PANE_FREE_TIMEOUT_S plus a whole
+            # retry. The cold start stays the accepted false alarm it already
+            # is -- and it now cures itself, because the aborted attempt warms
+            # the project and the next press comes up warm.
+            retry_on_hang=False,
         )
     # `OSError` beside the two named ones, because `canonical_root()` shells
     # out to git: with no git on the PATH that is a bare FileNotFoundError

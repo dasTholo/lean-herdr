@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from lean_herdr import dispatch as dispatch_module
 from lean_herdr.dispatch import (
     AGENT_ENV,
     AGENT_READY_TIMEOUT_S,
@@ -14,7 +15,7 @@ from lean_herdr.dispatch import (
     main,
     profile_for,
 )
-from lean_herdr.herdr import Herdr
+from lean_herdr.herdr import FIRST_START_TIMEOUT_MS, Herdr, timeout_ms_for
 from lean_herdr.report import resolve_agent
 from lean_herdr.settings import (
     SETTINGS_PATH,
@@ -377,6 +378,47 @@ def test_a_refused_agent_start_is_reported_instead_of_waited_out(world):
         "pane": "w1:p6",
         "agent_id": None,
         "error": "agent_start_failed",
+    }
+
+
+def test_a_worker_start_goes_through_the_same_helper(world, monkeypatch):
+    """`dispatch` must not grow a second start path.
+
+    A worktree is a NEW project to opencode, so a worker meets the very
+    same first-bootstrap hang the orchestrator does. One helper, one
+    retry, one pair of error names.
+    """
+    _h_proc, _ = world
+    seen: dict[str, object] = {}
+    real = dispatch_module.start_agent
+
+    def spy(*a, **kw):
+        seen.update(kw)
+        return real(*a, **kw)
+
+    monkeypatch.setattr(dispatch_module, "start_agent", spy)
+    run_dispatch(world, reg=registry())
+    assert seen["first_timeout_ms"] == FIRST_START_TIMEOUT_MS
+    assert seen["retry_timeout_ms"] == timeout_ms_for(AGENT_READY_TIMEOUT_S)
+
+
+def test_a_hung_worker_start_is_opencode_stuck(world, monkeypatch):
+    _h_proc, _ = world
+    monkeypatch.setattr(
+        dispatch_module,
+        "start_agent",
+        lambda *a, **kw: {"ok": False, "error": "opencode_stuck"},
+    )
+    result = run_dispatch(
+        world,
+        reg=registry(),
+        waiter=lambda *a, **kw: pytest.fail("no waiter after a stuck start"),
+    )
+    assert result == {
+        "ok": False,
+        "pane": "w1:p6",
+        "agent_id": None,
+        "error": "opencode_stuck",
     }
 
 

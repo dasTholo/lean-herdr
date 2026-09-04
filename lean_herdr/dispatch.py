@@ -26,7 +26,12 @@ from lean_herdr.bus import (
     read_registry,
 )
 from lean_herdr.export import session_error, session_id_from_agent_list
-from lean_herdr.herdr import Herdr
+from lean_herdr.herdr import (
+    FIRST_START_TIMEOUT_MS,
+    Herdr,
+    start_agent,
+    timeout_ms_for,
+)
 from lean_herdr.join import resolve_agent_id
 from lean_herdr.leanctx import LeanCtx
 
@@ -283,21 +288,22 @@ def dispatch(
         ) or ""
         if not pane:
             return _result(False, None, None, error="pane_split_failed")
-        started = herdr.agent_start(
+        started = start_agent(
+            herdr,
             name,
             kind=req.kind,
             pane=pane,
             agent_args=agent_args(req.kind, req.model, req.role_file),
+            first_timeout_ms=FIRST_START_TIMEOUT_MS,
+            retry_timeout_ms=timeout_ms_for(cfg.ready_timeout_s),
         )
-        if not started:
-            # Herdr refused the start -- after 0.0 s, with the reason on
-            # stderr. The reply was discarded here until 2026-09-04, and the
-            # wait below then sat out its full `ready_timeout_s` for an agent
-            # that had never been started, only to report `no_agent_id`.
-            # Herdr retries the transient refusal itself
-            # (herdr.AGENT_START_ATTEMPTS); an empty reply means every
-            # attempt was turned down.
-            return _result(False, pane, None, error="agent_start_failed")
+        if not started["ok"]:
+            # `agent_start_failed` is Herdr refusing after 0.0 s;
+            # `opencode_stuck` is opencode's first bootstrap in this project
+            # hanging, twice. ONE mechanism with `workspace up` -- a worktree
+            # is a new project to opencode, so a worker meets the very same
+            # hang the orchestrator does.
+            return _result(False, pane, None, error=started["error"])
 
     agent_id = waiter(
         herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s

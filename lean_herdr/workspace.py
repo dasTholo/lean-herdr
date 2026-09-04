@@ -23,7 +23,12 @@ from typing import Any, NoReturn
 
 from lean_herdr.bus import BusError, canonical_root
 from lean_herdr.dispatch import UsageError, wait_for_agent_id
-from lean_herdr.herdr import Herdr
+from lean_herdr.herdr import (
+    FIRST_START_TIMEOUT_MS,
+    Herdr,
+    start_agent,
+    timeout_ms_for,
+)
 from lean_herdr.settings import (
     ORCHESTRATOR_AGENT,
     SETTINGS_PATH,
@@ -174,6 +179,7 @@ def start_orchestrator(
     profile: str,
     workspace_id: str | None,
     ready_timeout_s: float,
+    retry_on_hang: bool = True,
     waiter: Callable[..., str | None] = wait_for_agent_id,
 ) -> dict[str, Any]:
     """Start the orchestrator. Never raises; the result carries `ok`.
@@ -181,6 +187,14 @@ def start_orchestrator(
     `workspace_id=None` means "find the workspace for `root`, or create
     one" -- the `up` path. A given id means "use exactly this one and
     create nothing" -- the keystroke path.
+
+    `retry_on_hang=False` takes the second attempt away: a hang is then
+    reported at once instead of being sat out. That is the keystroke's path
+    -- `handle_bootstrap` runs inside Herdr's handler process, which is the
+    wrong place to block (handlers.KEYSTROKE_READY_TIMEOUT_S), and the cold
+    start is a deliberately accepted false alarm there. It costs that path
+    nothing: the aborted first attempt warms the project anyway, so the next
+    press is the one that carries.
     """
     # FIRST, ahead of every other precondition: this is one stat and no
     # subprocess at all, and a run that cannot possibly work must cost
@@ -248,22 +262,32 @@ def start_orchestrator(
     agent_args = ["--agent", OPENCODE_ORCHESTRATOR]
     if settings.model:
         agent_args = ["--model", settings.model, *agent_args]
-    started = herdr.agent_start(
+    # Both budgets come out of the ONE the caller granted. `up` grants 45 s
+    # and gets the full FIRST_START_TIMEOUT_MS; the keystroke grants 6
+    # (handlers.KEYSTROKE_READY_TIMEOUT_S) and its first attempt shrinks with
+    # it -- a flat 12 s would have made a keystroke sit in Herdr's handler
+    # process for twice what that cap allows.
+    started = start_agent(
+        herdr,
         ORCHESTRATOR_AGENT,
         kind=settings.kind,
         pane=pane,
         agent_args=agent_args,
+        first_timeout_ms=min(
+            FIRST_START_TIMEOUT_MS, timeout_ms_for(ready_timeout_s)
+        ),
+        retry_timeout_ms=timeout_ms_for(ready_timeout_s) if retry_on_hang else 0,
     )
-    if not started:
-        # Herdr refused the start — after 0.0 s, with the reason on stderr.
-        # The reply was discarded here until 2026-09-04, and the wait below
-        # then sat out its full `ready_timeout_s` for an agent that had never
-        # been started, only to report `no_agent_id`. Herdr retries the
-        # transient refusal itself (herdr.AGENT_START_ATTEMPTS); an empty
-        # reply means every attempt was turned down.
+    if not started["ok"]:
+        # Two failures, two names, and the helper is the one that can tell
+        # them apart: `agent_start_failed` is Herdr saying no after 0.0 s,
+        # `opencode_stuck` is a start that did not reach readiness even on
+        # the second attempt. Both carry the pane, because the tile is still
+        # there and the operator needs to find it -- the helper aborts the
+        # PROCESS, never the pane.
         return {
             "ok": False,
-            "error": "agent_start_failed",
+            "error": started["error"],
             "workspace": target,
             "pane": pane,
         }
