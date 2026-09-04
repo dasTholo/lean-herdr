@@ -87,6 +87,60 @@ class FakeProc:
         return " | ".join(" ".join(c) for c in self.calls)
 
 
+@dataclass
+class Clock:
+    """A monotonic clock the test moves itself.
+
+    `agent_start` and `start_agent` tell a refusal from a hang by
+    DURATION, and a test that really slept those seconds is a test
+    nobody runs. Hand `now=clock.now` and `sleep=clock.sleep` in and the
+    seconds pass without any passing.
+    """
+
+    t: float = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> None:
+        self.t += seconds
+
+
+@dataclass
+class ScriptedProc(FakeProc):
+    """FakeProc that also spends TIME and answers a SEQUENCE per prefix.
+
+    Each `script` entry maps an argument prefix to `(cost_s, [reply, ...])`:
+    the replies are handed out one per matching call, the last one
+    repeating -- the same rule test_herdr.StartProc uses for its exit
+    codes. A reply that is already a `Completed` is passed through
+    untouched, so a script can express an EXIT CODE too; anything else
+    goes through FakeProc's two stdout shapes. A prefix the script does
+    not name falls through to FakeProc.
+    """
+
+    clock: Clock | None = None
+    script: dict[tuple[str, ...], tuple[float, list[Any]]] = field(
+        default_factory=dict
+    )
+
+    def __call__(self, cmd: list[str], **kwargs: Any) -> Completed:
+        for prefix, (cost, replies) in self.script.items():
+            if tuple(cmd[1 : 1 + len(prefix)]) != prefix:
+                continue
+            seen = sum(
+                1 for c in self.calls if tuple(c[1 : 1 + len(prefix)]) == prefix
+            )
+            self.calls.append(list(cmd))
+            if self.clock is not None:
+                self.clock.t += cost
+            reply = replies[min(seen, len(replies) - 1)]
+            if isinstance(reply, Completed):
+                return reply
+            return Completed(stdout=self._stdout(reply))
+        return super().__call__(cmd, **kwargs)
+
+
 def which_stub(available: bool) -> Callable[[str], str | None]:
     return lambda _binary: "/usr/bin/fake" if available else None
 

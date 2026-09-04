@@ -37,6 +37,26 @@ NO_PROCESS_RC = -999
 AGENT_START_ATTEMPTS = 5
 AGENT_START_INTERVAL_S = 0.5
 
+#: `agent start --timeout` takes at most this many milliseconds. A larger
+#: value is REFUSED, so a generously configured `ready_timeout_s` would turn
+#: into an instant failure instead of a long wait -- `timeout_ms_for()` caps
+#: it. Measured 2026-09-04 against 0.8.2.
+HERDR_MAX_TIMEOUT_MS = 300_000
+
+#: Above the whole cost of a run of pure refusals -- AGENT_START_ATTEMPTS
+#: answers after 0.0 s plus the sleeps between them -- and far below any
+#: `--timeout` a caller passes. An `agent start` slower than this did not
+#: lose the prompt race: Herdr sat it out to its own `--timeout`, which is
+#: opencode's first-bootstrap hang. Repeating THAT would cost five full
+#: budgets, so the loop below stops at it and `start_agent` reads it to tell
+#: the two failures apart.
+AGENT_START_REFUSAL_S = AGENT_START_ATTEMPTS * AGENT_START_INTERVAL_S + 1.0
+
+
+def timeout_ms_for(seconds: float) -> int:
+    """A budget in seconds as Herdr's `--timeout`, capped at its maximum."""
+    return min(int(seconds * 1000), HERDR_MAX_TIMEOUT_MS)
+
 
 class Herdr:
     """Thin wrapper around the Herdr CLI. Errors become {}, never exceptions.
@@ -160,6 +180,14 @@ class Herdr:
         pane = self._result(data, "pane", "pane_id") or self._result(data, "pane_id")
         return str(pane) if pane else None
 
+    def pane_send_keys(self, pane: str, *keys: str) -> dict[str, Any]:
+        """`herdr pane send-keys <PANE_ID> <KEY>...`.
+
+        The pane id is POSITIONAL here, not `--pane` -- the same quirk
+        `report_metadata` carries. Keys follow it positionally too.
+        """
+        return self.run("pane", "send-keys", pane, *keys)
+
     def agent_start(
         self,
         name: str,
@@ -167,31 +195,49 @@ class Herdr:
         kind: str,
         pane: str,
         agent_args: Sequence[str] = (),
+        timeout_ms: int | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        now: Callable[[], float] = time.monotonic,
     ) -> dict[str, Any]:
         """Start an agent in the pane. Native arguments after `--`.
 
         Herdr rejects multi-line arguments (H2) — role texts come as a file,
         never as argument text.
 
+        `timeout_ms` is Herdr's OWN `--timeout`: it returns only once it has
+        recognised the expected agent and holds it ready for input, 30 s by
+        default. Our subprocess budget is derived from it rather than set
+        beside it — without that, `DEFAULT_TIMEOUT_S` killed every start
+        past 10 s in the middle of Herdr's legitimate wait, and the kill then
+        read as a refusal. `--timeout` goes BEFORE the `--`: behind it, Herdr
+        would hand the flag to the runtime instead of reading it.
+
         Retries a non-zero exit code up to AGENT_START_ATTEMPTS times: the
         pane split a moment ago may not have reached its interactive prompt
         yet, and that refusal is transient — see the constants for the
-        measurement. Returns the reply of the last attempt, `{}` when every
-        one of them was refused; that empty dict is what the callers report
-        `agent_start_failed` on.
+        measurement. It stops early on an attempt that took longer than
+        AGENT_START_REFUSAL_S: that one is not the race but a `--timeout`
+        Herdr sat out, and repeating it would cost five full budgets.
+        Returns the reply of the last attempt, `{}` when every one of them
+        was refused; that empty dict is what the callers report on.
         """
         args = ["agent", "start", name, "--kind", kind, "--pane", pane]
+        if timeout_ms is not None:
+            args += ["--timeout", str(timeout_ms)]
         if agent_args:
             args = [*args, "--", *agent_args]
+        budget = None if timeout_ms is None else timeout_ms / 1000.0 + self.timeout
         reply: dict[str, Any] = {}
         for attempt in range(AGENT_START_ATTEMPTS):
-            reply, code = self._run(*args)
+            started_at = now()
+            reply, code = self._run(*args, timeout=budget)
             if code <= 0:
                 # 0 is the start that worked. A NEGATIVE code is
                 # NO_PROCESS_RC: no binary, an OSError, a timeout. None of
                 # those is the prompt race, and repeating a timeout five
                 # times would cost five full timeouts.
+                return reply
+            if now() - started_at >= AGENT_START_REFUSAL_S:
                 return reply
             if attempt + 1 < AGENT_START_ATTEMPTS:
                 sleep(AGENT_START_INTERVAL_S)

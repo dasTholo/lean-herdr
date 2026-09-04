@@ -7,9 +7,12 @@ import pytest
 from lean_herdr.herdr import (
     AGENT_START_ATTEMPTS,
     AGENT_START_INTERVAL_S,
+    DEFAULT_TIMEOUT_S,
+    HERDR_MAX_TIMEOUT_MS,
     Herdr,
+    timeout_ms_for,
 )
-from tests.doubles import Completed, FakeProc, which_stub
+from tests.doubles import Clock, Completed, FakeProc, ScriptedProc, which_stub
 
 
 @pytest.fixture
@@ -96,6 +99,12 @@ def test_ratio_appears_only_when_set(monkeypatch):
     assert "--ratio" not in fake.calls[0]
     h.pane_split("/repo", ratio=0.25)
     assert fake.calls[1][fake.calls[1].index("--ratio") + 1] == "0.25"
+
+
+def test_pane_send_keys_puts_the_pane_id_first(fake):
+    """The id is positional -- `--pane` here is exit 2."""
+    h(fake).pane_send_keys("w8:p5", "ctrl-c")
+    assert fake.calls == [["herdr", "pane", "send-keys", "w8:p5", "ctrl-c"]]
 
 
 def test_pane_list_filters_by_workspace(fake):
@@ -247,3 +256,79 @@ def test_agent_start_does_not_retry_when_no_process_ran_at_all(monkeypatch):
         "orch", kind="opencode", pane="w8:p5", sleep=naps.append
     ) == {}
     assert len(proc.calls) == 1 and naps == []
+
+
+def test_timeout_ms_for_caps_at_herdrs_own_maximum():
+    """A `ready_timeout_s` beyond Herdr's limit must not become a refusal."""
+    assert timeout_ms_for(45) == 45_000
+    assert timeout_ms_for(1.5) == 1_500
+    assert timeout_ms_for(600) == HERDR_MAX_TIMEOUT_MS
+
+
+def test_the_timeout_is_passed_through_and_becomes_the_subprocess_budget(
+    monkeypatch,
+):
+    """Herdr's own wait, and our budget derived from it -- not beside it."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    seen: dict[str, Any] = {}
+
+    def runner(cmd: list[str], **kwargs: Any) -> Completed:
+        seen["cmd"], seen["budget"] = list(cmd), kwargs["timeout"]
+        return Completed(stdout=json.dumps(STARTED))
+
+    Herdr(runner=runner).agent_start(
+        "orch",
+        kind="opencode",
+        pane="w8:p5",
+        agent_args=["--agent", "orchestrator"],
+        timeout_ms=12_000,
+    )
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--timeout") + 1] == "12000"
+    assert cmd.index("--timeout") < cmd.index("--"), (
+        "behind the `--` Herdr hands the flag to opencode instead of reading it"
+    )
+    assert seen["budget"] == 12.0 + DEFAULT_TIMEOUT_S
+
+
+def test_without_a_timeout_nothing_changes_at_all(monkeypatch):
+    """The callers that pass none keep today's behaviour, byte for byte."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    seen: dict[str, Any] = {}
+
+    def runner(cmd: list[str], **kwargs: Any) -> Completed:
+        seen["cmd"], seen["budget"] = list(cmd), kwargs["timeout"]
+        return Completed(stdout=json.dumps(STARTED))
+
+    Herdr(runner=runner).agent_start("orch", kind="opencode", pane="w8:p5")
+    assert "--timeout" not in seen["cmd"]
+    assert seen["budget"] == DEFAULT_TIMEOUT_S
+
+
+def test_a_start_that_sat_out_its_budget_is_not_repeated(monkeypatch):
+    """The hang is not the prompt race -- five repeats would cost five budgets.
+
+    A refusal answers after 0.0 s (measured); a start Herdr sat out to its
+    own `--timeout` answers after the whole budget, in exactly the same
+    shape. Only the fast one is what AGENT_START_ATTEMPTS exists for.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={("agent", "start"): (12.0, [Completed(returncode=1)])},
+    )
+    naps: list[float] = []
+    assert (
+        Herdr(runner=proc).agent_start(
+            "orch",
+            kind="opencode",
+            pane="w8:p5",
+            timeout_ms=12_000,
+            sleep=naps.append,
+            now=clock.now,
+        )
+        == {}
+    )
+    assert len(proc.calls) == 1, proc.flat()
+    assert naps == []
