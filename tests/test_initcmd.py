@@ -4,7 +4,13 @@ import subprocess
 
 import pytest
 
-from lean_herdr.initcmd import LAYOUT, workspace_init
+from lean_herdr.initcmd import (
+    LAYOUT,
+    _check_allowlist,
+    _check_approvals,
+    _check_plugins,
+    workspace_init,
+)
 from tests.doubles import FakeProc, which_stub
 
 
@@ -169,6 +175,74 @@ def test_a_healthy_machine_warns_about_nothing(monkeypatch, repo):
         ("plugin", "list"): "- lean.herdr (lean-herdr context) enabled\n",
     }
     assert workspace_init(root=repo, runner=FakeProc(replies=replies))["warnings"] == []
+
+
+def test_the_allowlist_check_answers_a_line_only_when_the_name_is_missing(monkeypatch):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    granted = FakeProc(replies={("allow", "--list"): "Extra (additive): lean-herdr"})
+    assert _check_allowlist(granted) is None
+    silent = FakeProc(replies={("allow", "--list"): "Mode: restricted -- 73 command(s)"})
+    line = _check_allowlist(silent)
+    assert line is not None and "lean-ctx allow lean-herdr" in line
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param("not json at all", id="no brace at all"),
+        pytest.param("warning: no hooks\n{oops", id="a brace, but no json"),
+        pytest.param('{"other": 1}', id="json without the key"),
+    ],
+)
+def test_an_unreadable_approvals_reply_is_reported_as_an_unknown_state(monkeypatch, tmp_path, reply):
+    """Never a green verdict over a reply nobody could parse."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    line = _check_approvals(tmp_path, FakeProc(replies={("config", "approvals"): reply}))
+    assert line is not None and "state: None" in line
+
+
+def test_the_approvals_check_parses_from_the_first_brace(monkeypatch, tmp_path):
+    """`_read` concatenates stdout AND stderr, so `wt`'s warning comes first.
+
+    Parsing from byte 0 would make an approved project read as unparseable
+    the moment `wt` has anything to complain about.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    noisy = FakeProc(
+        replies={("config", "approvals"): 'warning: hooks changed\n{"state": "approved"}'}
+    )
+    assert _check_approvals(tmp_path, noisy) is None
+
+
+def test_the_plugin_check_only_fires_on_a_warning_line(monkeypatch):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    clean = FakeProc(replies={("plugin", "list"): "- lean.herdr (context) enabled\n"})
+    assert _check_plugins(clean) is None
+    noisy = FakeProc(replies={("plugin", "list"): "- lean.herdr\n  warning: unknown event\n"})
+    line = _check_plugins(noisy)
+    assert line is not None and "warning:" in line
+
+
+def test_a_machine_without_the_three_binaries_names_every_one_of_them(monkeypatch, repo):
+    quiet(monkeypatch)
+    proc = FakeProc(default="")
+    warnings = workspace_init(root=repo, runner=proc)["warnings"]
+    assert [w.split(" is not on PATH")[0] for w in warnings] == ["herdr", "wt", "lean-ctx"]
+    assert proc.calls == [], "a binary that is not on PATH is never run"
+
+
+@pytest.mark.parametrize(
+    "boom",
+    [
+        pytest.param(OSError("cannot execute"), id="OSError"),
+        pytest.param(subprocess.SubprocessError("gave up"), id="SubprocessError"),
+    ],
+)
+def test_a_check_that_cannot_run_at_all_invents_no_verdict(monkeypatch, repo, boom):
+    """A read-only check must not hold up the call -- nor guess an answer."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    proc = FakeProc(raises=boom, default="")
+    assert workspace_init(root=repo, runner=proc)["warnings"] == []
 
 
 def test_init_never_runs_a_command_that_changes_anything(monkeypatch, repo):

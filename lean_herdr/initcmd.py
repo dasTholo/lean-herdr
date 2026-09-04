@@ -75,8 +75,76 @@ def _read(runner: Any, *cmd: str, cwd: Path | None = None) -> str | None:
     return (proc.stdout or "") + (proc.stderr or "")
 
 
+def _check_allowlist(runner: Any) -> str | None:
+    """`lean-ctx allow --list`. A line when it does not name `lean-herdr`.
+
+    Word boundaries, not a plain substring: the listing prints the config
+    path too, and a project directory called lean-herdr would otherwise
+    read as a granted permission.
+
+    This line can only ever be a hint. `lean-ctx allow --list` prints the
+    additive `Extra` list in full but reduces the base `shell_allowlist`
+    to a COUNT ("74 command(s) permitted"), so an operator who put
+    `lean-herdr` in the base list is indistinguishable here from one who
+    granted it nowhere. Measured 2026-09-04; there is no --format json.
+    Claiming "does not allow" would therefore be a verdict the check
+    cannot reach -- and a false alarm on every run, in every project.
+    """
+    allowlist = _read(runner, "lean-ctx", "allow", "--list")
+    if allowlist is None or re.search(r"\blean-herdr\b", allowlist):
+        return None
+    return (
+        "lean-ctx allow --list does not name `lean-herdr` -- it shows only the "
+        "additive `Extra` list, never the base allowlist, so this is a hint and "
+        "not a verdict. If the base list does not carry it either, an agent under "
+        "shell gating cannot run it: lean-ctx allow lean-herdr"
+    )
+
+
+def _check_approvals(root: Path, runner: Any) -> str | None:
+    """`wt config approvals list`. A line for anything but `approved`.
+
+    An unreadable reply is reported as an unknown state, never as a green
+    one: this check exists because `wt` skips unapproved hooks silently.
+    """
+    approvals = _read(runner, "wt", "config", "approvals", "list", "--format", "json", cwd=root)
+    if approvals is None:
+        return None
+    # `_read` concatenates stdout AND stderr, so the reply may carry a
+    # warning line ahead of the JSON -- parse from the first brace rather
+    # than from the first byte.
+    start = approvals.find("{")
+    try:
+        state = json.loads(approvals[start:])["state"] if start >= 0 else None
+    except (json.JSONDecodeError, KeyError, TypeError):
+        state = None
+    if state == "approved":
+        return None
+    return (
+        f"worktrunk project hooks are not approved (state: {state!r}) -- "
+        "wt skips them SILENTLY and reports success, so the pre-merge "
+        "test gate would not run: wt config approvals add"
+    )
+
+
+def _check_plugins(runner: Any) -> str | None:
+    """`herdr plugin list`. A line when the listing carries a warning."""
+    plugins = _read(runner, "herdr", "plugin", "list")
+    if plugins is None or "warning:" not in plugins:
+        return None
+    return (
+        "herdr plugin list carries a `warning:` line -- "
+        "Herdr does not reject an unknown plugin event, it only warns"
+    )
+
+
 def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
-    """The README checklist as lines. Nothing here changes anything."""
+    """The README checklist as lines. Nothing here changes anything.
+
+    The three foreign checks each live in their own function: they share
+    nothing but the `runner`, and four independent checks in one body sat
+    over the complexity threshold and could only be tested through `init`.
+    """
     found: list[str] = []
     for binary, why in (
         ("herdr", "panes, agents and workspaces"),
@@ -85,49 +153,12 @@ def _warnings(root: Path, *, runner: Any = subprocess.run) -> list[str]:
     ):
         if shutil.which(binary) is None:
             found.append(f"{binary} is not on PATH -- needed for {why}")
-
-    allowlist = _read(runner, "lean-ctx", "allow", "--list")
-    # Word boundaries, not a plain substring: the listing prints the config
-    # path too, and a project directory called lean-herdr would otherwise
-    # read as a granted permission.
-    #
-    # This line can only ever be a hint. `lean-ctx allow --list` prints the
-    # additive `Extra` list in full but reduces the base `shell_allowlist`
-    # to a COUNT ("74 command(s) permitted"), so an operator who put
-    # `lean-herdr` in the base list is indistinguishable here from one who
-    # granted it nowhere. Measured 2026-09-04; there is no --format json.
-    # Claiming "does not allow" would therefore be a verdict the check
-    # cannot reach -- and a false alarm on every run, in every project.
-    if allowlist is not None and not re.search(r"\blean-herdr\b", allowlist):
-        found.append(
-            "lean-ctx allow --list does not name `lean-herdr` -- it shows only the "
-            "additive `Extra` list, never the base allowlist, so this is a hint and "
-            "not a verdict. If the base list does not carry it either, an agent under "
-            "shell gating cannot run it: lean-ctx allow lean-herdr"
-        )
-
-    approvals = _read(runner, "wt", "config", "approvals", "list", "--format", "json", cwd=root)
-    if approvals is not None:
-        # The reply may carry a warning line ahead of the JSON, so parse
-        # from the first brace rather than the first byte.
-        start = approvals.find("{")
-        try:
-            state = json.loads(approvals[start:])["state"] if start >= 0 else None
-        except (json.JSONDecodeError, KeyError, TypeError):
-            state = None
-        if state != "approved":
-            found.append(
-                f"worktrunk project hooks are not approved (state: {state!r}) -- "
-                "wt skips them SILENTLY and reports success, so the pre-merge "
-                "test gate would not run: wt config approvals add"
-            )
-
-    plugins = _read(runner, "herdr", "plugin", "list")
-    if plugins is not None and "warning:" in plugins:
-        found.append(
-            "herdr plugin list carries a `warning:` line -- "
-            "Herdr does not reject an unknown plugin event, it only warns"
-        )
+    checks = (
+        _check_allowlist(runner),
+        _check_approvals(root, runner),
+        _check_plugins(runner),
+    )
+    found.extend(line for line in checks if line is not None)
     return found
 
 
