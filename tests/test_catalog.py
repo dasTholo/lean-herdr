@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from lean_herdr import catalog, llm
+from lean_herdr.bus import BusError
 from lean_herdr.settings import (
     OVERLAY_PATH,
     SETTINGS_PATH,
@@ -420,6 +421,86 @@ def test_thresholds_nobody_clears_leave_the_file_alone(tmp_path):
     )
     assert outcome == {"written": False, "model": None, "reason": "no_candidate"}
     assert path.read_text(encoding="utf-8") == before
+
+
+def test_a_filesystem_that_refuses_is_a_reason_and_not_a_crash(tmp_path):
+    """The one real guard behind "check() never raises", and its only test.
+
+    `workspace up` calls this on a machine we do not control: a read-only
+    checkout, a directory owned by someone else, a full disk. Every one of
+    those is an OSError out of `write_overlay`, and letting it through
+    would turn a price comparison into a failed `up` -- the exact thing
+    the never-blocking rule forbids. Dropping the `except OSError` from
+    `check()` passes every other test in this file.
+    """
+    blocked = tmp_path / ".lean-ctx"
+    blocked.write_text("not a directory", encoding="utf-8")
+
+    outcome = catalog.check(
+        root=tmp_path,
+        settings=ModelsSettings(auto=True),
+        efforts=(),
+        request=FakeRequest(FIXTURE.read_text(encoding="utf-8")),
+    )
+
+    assert outcome["written"] is False
+    assert outcome["reason"] == "write_failed"
+    assert outcome["model"] == "cheap/no-benchmarks", "it says WHICH one it lost"
+
+
+def test_apply_reports_the_failure_it_had(monkeypatch, tmp_path, capsys):
+    """`ok` is the WRITE, not the run. The failure side had no test.
+
+    An `apply` that always reported `ok: true` would tell the operator the
+    overlay is current while the file on disk is whatever it was.
+    """
+    monkeypatch.setattr("lean_herdr.catalog.canonical_root", lambda *a, **kw: tmp_path)
+    monkeypatch.setattr("lean_herdr.catalog.fetch", lambda **kw: [])
+
+    assert catalog.main(["apply"]) == 0
+
+    answer = one_line(capsys)
+    assert answer["ok"] is False, "no candidate is not a successful apply"
+    assert answer["reason"] == "no_candidate"
+    assert answer["written"] is False
+
+
+def test_a_root_that_is_no_repository_is_named_not_swallowed(monkeypatch, capsys):
+    """The `BusError` rung. Without it this falls through to `models_crashed:`.
+
+    `canonical_root()` shells out to git; run outside a repository it says
+    so, and that sentence is more use to the operator than a crash label
+    wrapped around the same words.
+    """
+
+    def no_repo(*_args, **_kwargs):
+        raise BusError("not a git repository")
+
+    monkeypatch.setattr("lean_herdr.catalog.canonical_root", no_repo)
+
+    assert catalog.main(["check"]) == 0
+
+    answer = one_line(capsys)
+    assert answer["ok"] is False
+    assert answer["error"] == "not a git repository", "bare, with no prefix"
+
+
+def test_the_effort_fallbacks_come_from_llm_and_are_not_respelled(
+    monkeypatch, tmp_path, capsys
+):
+    """M3: one definition per rule. Two literals here would drift silently.
+
+    `llm.GENERATE_EFFORT` and `llm.PREREVIEW_EFFORT` are imported, never
+    copied -- so moving them has to move what `models` reports. Spelling
+    them out as `"minimal"`/`"low"` passes every other test in this file.
+    """
+    no_network(monkeypatch, tmp_path)
+    monkeypatch.setattr(llm, "GENERATE_EFFORT", "high")
+    monkeypatch.setattr(llm, "PREREVIEW_EFFORT", "medium")
+
+    assert catalog.main(["check"]) == 0
+
+    assert one_line(capsys)["efforts"] == ["high", "medium"]
 
 
 def no_network(monkeypatch, root):

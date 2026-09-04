@@ -320,11 +320,20 @@ def start_orchestrator(
 def workspace_up(
     *, root: Path | None = None, herdr: Herdr | None = None
 ) -> dict[str, Any]:
-    """Root, config, then the shared core. Never raises.
+    """Root, config, then the shared core.
 
     A missing config is a hard stop, not a fallback to defaults: the
     config is the whole point of this call. The keystroke, which is a
     gesture rather than a call, takes the defaults instead.
+
+    This one DOES raise, and it is the one place in this module that
+    does: an unreadable config leaves through `read_settings`,
+    `settings_for`, `workspace_settings` or `models_settings`, and a root
+    that is no repository through `canonical_root`. `main()` catches both
+    and turns them into `config_error:` -- which is the point. A config
+    the operator cannot read must not be answered with defaults, and
+    `start_orchestrator` below keeps its own never-raises promise
+    unchanged.
     """
     base = root if root is not None else canonical_root()
     path = base / SETTINGS_PATH
