@@ -61,6 +61,7 @@ from lean_herdr.settings import (
     RoleSettings,
     SettingsError,
     llm_settings,
+    model_warnings,
     read_settings,
     settings_for,
 )
@@ -763,29 +764,45 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, Any]
     try:
         args = build_parser().parse_args(argv)
+        # Read once, hand to both modes: the wait mode has to ring the agent
+        # the build mode started, and the name comes from here. SETTINGS_PATH
+        # is RELATIVE -- anchored on anything but the canonical root the file
+        # would silently not be found as soon as `lean-herdr dispatch` runs
+        # from a subdirectory or a worktree.
+        #
+        # BEFORE missing_flags(), and that is new: the file can now SATISFY
+        # --model and --kind, so reading it afterwards would reject a call the
+        # config answers. The price is real and accepted: a broken config value
+        # now reaches the caller as `config_error:` even when the command line
+        # ALSO has a usage error. Of the two that is the bigger one, and the
+        # one that would otherwise stay silent.
+        root = canonical_root()
+        raw = read_settings(root / SETTINGS_PATH)
+        settings = settings_for(args.command, raw)
+        # Validated HERE, in the one consumer that has a reader for the
+        # complaint: a SettingsError from this line leaves main() as
+        # `config_error: <reason>` on stdout. llm.file_settings() deliberately
+        # swallows the same error -- there it would cost a commit -- so without
+        # this call a typo in `[llm]` would be silent everywhere.
+        llm_cfg = llm_settings(raw)
+        if args.command not in LOG_COMMANDS:
+            # Precedence, at ONE place, and only for the role modes:
+            #   kind:  --kind  > [roles.<role>].kind  -> else missing_flags()
+            #   model: --model > [roles.<role>].model -> else missing_flags()
+            # `order`/`answer`/`cancel`/`remember` are left out on purpose:
+            # they REFUSE --kind and --model as stray flags, and a
+            # `[default].kind` would otherwise turn every one of them into a
+            # usage error nobody typed.
+            args.kind = args.kind or settings.kind or None
+            if not args.waiting:
+                # Build mode only. Under --await a --model is itself a stray
+                # flag, so filling it from the file would break a valid wait
+                # call -- with a value the wait mode never even reads.
+                args.model = args.model or settings.model or None
         missing = missing_flags(args)
         if missing:
             result = {"ok": False, "error": f"usage_error: {missing}"}
         else:
-            # Read once, hand to both modes: the wait mode has to ring the
-            # agent the build mode started, and the name comes from here.
-            # SETTINGS_PATH is RELATIVE -- anchored on anything but the
-            # canonical root the file would silently not be found as soon as
-            # lean-herdr dispatch runs from a subdirectory or a worktree.
-            # A SettingsError is caught below and reaches the caller as
-            # `config_error: <reason>` -- an operator's wrong config value is
-            # not a crash.
-            root = canonical_root()
-            raw = read_settings(root / SETTINGS_PATH)
-            settings = settings_for(args.command, raw)
-            # Validated HERE, in the one consumer that has a reader for the
-            # complaint: a SettingsError from this line leaves main() as
-            # `config_error: <reason>` on stdout. llm.file_settings()
-            # deliberately swallows the same error -- there it would cost a
-            # commit -- so without this call a typo in `[llm]` would be
-            # silent everywhere, against settings.py's own promise that a
-            # file which IS there but is wrong never stays silent.
-            llm_cfg = llm_settings(raw)
             sender = args.from_agent or ORCHESTRATOR_AGENT
             if args.command == "order":
                 result = create_order(
@@ -837,6 +854,13 @@ def main(argv: list[str] | None = None) -> int:
                     cwd=root,
                     settings=settings,
                 )
+                # Additive, and only where a reader exists: the orchestrator
+                # reads the reviewer's dispatch line, so that is where a
+                # warning about the reviewer's model gets seen. `ok` is
+                # untouched -- a shared model is a warning, never a refusal.
+                notes = model_warnings(raw) if args.command == "reviewer" else []
+                if notes:
+                    result = {**result, "warnings": notes}
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}
     except SettingsError as exc:

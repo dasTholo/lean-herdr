@@ -575,19 +575,202 @@ def test_a_broken_llm_block_is_a_config_error_too(monkeypatch, tmp_path, capsys)
     assert "effort" in result["error"], result["error"]
 
 
-def test_a_usage_error_still_wins_over_a_broken_config(monkeypatch, tmp_path, capsys):
-    """Ordering must not shift: missing flags are validated BEFORE the config
-    is even loaded, so a broken config never masks a usage error."""
+def test_a_broken_config_wins_over_a_usage_error(monkeypatch, tmp_path, capsys):
+    """Ordering DID shift, and this test is where that is written down.
+
+    The config is read before missing_flags() now, because it can satisfy
+    --model and --kind; reading it later would reject a call the file
+    answers. So a config this process cannot read reaches the caller even
+    when the command line is also wrong. That is the bigger of the two
+    complaints, and the only one that would otherwise be silent -- the
+    usage error is still there the next time the operator types it.
+    """
     root = tmp_path / "repo"
     _write_config(root, '[default]\ndirection = "links"\n')
-    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    monkeypatch.setattr(
+        "lean_herdr.dispatch.canonical_root", lambda *a, **kw: root
+    )
 
-    code = main(["builder", "--kind", "claude"])  # missing --model / --role-file
+    code = main(["builder", "--kind", "claude"])  # also missing --model
 
     assert code == 0
     result = json.loads(capsys.readouterr().out.strip())
     assert result["ok"] is False
-    assert result["error"].startswith("usage_error:"), result["error"]
+    assert result["error"].startswith("config_error:"), result["error"]
+
+
+#: A file that answers both duty flags on its own -- no --kind, no --model
+#: on the command line, and the build still runs.
+BUILDER_CONFIG = '[roles.builder]\nkind = "claude"\nmodel = "sonnet"\n'
+
+#: Everything a builder build needs BESIDE the two flags under test.
+BUILD_ARGS = ["builder", "--role-file", "roles/builder.md"]
+
+#: Same model under both roles -- legal, and exactly what earns the warning.
+SHARED_MODEL_CONFIG = (
+    '[roles.builder]\nkind = "claude"\nmodel = "sonnet"\n'
+    '[roles.reviewer]\nkind = "claude"\nmodel = "sonnet"\n'
+)
+
+
+def _line(argv, root, monkeypatch, capsys):
+    """main(argv) against a config at `root` -- the one JSON line, parsed."""
+    # The modes reached from here that are NOT spied write a real order log.
+    # Kept inside tmp_path the way every other test in this project that
+    # touches the store does -- otherwise it lands in the operator's own
+    # lean-ctx data directory and the next run inherits it.
+    monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(root.parent / "data"))
+    monkeypatch.setattr(
+        "lean_herdr.dispatch.canonical_root", lambda *a, **kw: root
+    )
+    assert main(argv) == 0
+    return json.loads(capsys.readouterr().out.strip())
+
+
+def _spy_dispatch(monkeypatch) -> list[DispatchRequest]:
+    """Catch the request main() builds, and launch nothing while doing it."""
+    seen: list[DispatchRequest] = []
+
+    def spy(request, **_kwargs):
+        seen.append(request)
+        return {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID}
+
+    monkeypatch.setattr("lean_herdr.dispatch.dispatch", spy)
+    monkeypatch.setattr("lean_herdr.dispatch.await_task", spy)
+    return seen
+
+
+def test_the_model_flag_beats_the_file(monkeypatch, tmp_path, capsys):
+    """CLI > file, the precedence settings.py already promises."""
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    seen = _spy_dispatch(monkeypatch)
+
+    _line([*BUILD_ARGS, "--model", "opus"], root, monkeypatch, capsys)
+
+    assert [r.model for r in seen] == ["opus"]
+
+
+def test_the_config_fills_a_missing_model_flag(monkeypatch, tmp_path, capsys):
+    """No --model typed, `[roles.builder].model` set: the value reaches
+    dispatch() in the request, and the call is not a usage error."""
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    seen = _spy_dispatch(monkeypatch)
+
+    got = _line(BUILD_ARGS, root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert [r.model for r in seen] == ["sonnet"]
+
+
+def test_the_kind_flag_beats_the_file(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    seen = _spy_dispatch(monkeypatch)
+
+    _line([*BUILD_ARGS, "--kind", "opencode"], root, monkeypatch, capsys)
+
+    assert [r.kind for r in seen] == ["opencode"]
+
+
+def test_the_config_fills_a_missing_kind_flag(monkeypatch, tmp_path, capsys):
+    """Workers have no built-in kind, so the file is the only other source."""
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    seen = _spy_dispatch(monkeypatch)
+
+    got = _line(BUILD_ARGS, root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert [r.kind for r in seen] == ["claude"]
+
+
+def test_neither_flag_nor_file_is_still_a_usage_error(monkeypatch, tmp_path, capsys):
+    """The duty stays a duty.
+
+    A worker that quietly builds on its runtime's default model costs real
+    money and nobody sees it -- so an unanswered --model is refused, not
+    defaulted.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, '[roles.builder]\nkind = "claude"\n')
+    _no_launch(monkeypatch)
+
+    got = _line(BUILD_ARGS, root, monkeypatch, capsys)
+
+    assert got["ok"] is False
+    assert got["error"] == "usage_error: build mode needs --model", got
+
+
+def test_await_does_not_take_a_model_from_the_file(monkeypatch, tmp_path, capsys):
+    """`--model` is a STRAY flag under --await, so the file must not set it.
+
+    Filling it would turn a valid wait call into
+    `usage_error: --await does not take --model` -- with a value the wait
+    mode never reads in the first place.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+
+    got = _line(
+        ["builder", "--await", "--task-id", "o-1"], root, monkeypatch, capsys
+    )
+
+    assert "usage_error" not in str(got.get("error", "")), got
+
+
+def test_a_log_command_takes_no_kind_from_the_file(monkeypatch, tmp_path, capsys):
+    """`order` refuses --kind as stray, so [default].kind must not reach it.
+
+    Without the LOG_COMMANDS guard a single `[default] kind = "claude"`
+    would break every `order`, `answer`, `cancel` and `remember` call in
+    the project -- with a flag nobody typed.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, '[default]\nkind = "claude"\n')
+
+    got = _line(
+        ["order", "--to", "builder", "--message", "do it"],
+        root, monkeypatch, capsys,
+    )
+
+    assert "does not take --kind" not in str(got.get("error", "")), got
+
+
+def test_a_reviewer_build_carries_the_shared_model_warning(
+    monkeypatch, tmp_path, capsys
+):
+    """One model for two roles is allowed, but never silent.
+
+    The orchestrator reads the REVIEWER's dispatch line, so that is the one
+    line where the warning has a reader. `ok` is untouched.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, SHARED_MODEL_CONFIG)
+    _spy_dispatch(monkeypatch)
+
+    got = _line(
+        ["reviewer", "--role-file", "roles/reviewer.md"], root, monkeypatch, capsys
+    )
+
+    assert got["ok"] is True, got
+    assert len(got["warnings"]) == 1, got
+    assert "blind spots" in got["warnings"][0], got
+
+
+def test_a_builder_build_of_the_same_config_carries_no_warning(
+    monkeypatch, tmp_path, capsys
+):
+    """Same file, no reader: nothing reads the builder's line for this."""
+    root = tmp_path / "repo"
+    _write_config(root, SHARED_MODEL_CONFIG)
+    _spy_dispatch(monkeypatch)
+
+    got = _line(BUILD_ARGS, root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert "warnings" not in got, got
 
 
 def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch):

@@ -414,7 +414,9 @@ BUILD = ["builder", "--kind", "claude", "--model", "sonnet",
         ),
     ],
 )
-def test_a_flag_of_the_other_mode_is_a_usage_error(argv, offender, capsys, monkeypatch):
+def test_a_flag_of_the_other_mode_is_a_usage_error(
+    argv, offender, capsys, monkeypatch, tmp_path
+):
     """argparse takes every flag in every mode -- and the wrong-mode ones then
     vanish without a word.
 
@@ -422,12 +424,20 @@ def test_a_flag_of_the_other_mode_is_a_usage_error(argv, offender, capsys, monke
     in build mode; `--model`, `--role-file` and `--profile` were accepted
     under `--await`. `--timeout-ms 0` bought exactly one ring and an immediate
     `no_reply`. The subprocess guard is part of the contract: a usage error is
-    decided before anything reaches git, Herdr or a pane.
+    decided before anything reaches Herdr or a pane.
+
+    Git is the one exception now, and `canonical_root` is stubbed rather than
+    forbidden because of it: main() reads the config BEFORE missing_flags(),
+    since the file can satisfy --model and --kind, and resolving the repo
+    root for it starts `git rev-parse`. The stub keeps that off the guard
+    without softening what the guard is actually for -- no agent, no pane,
+    no launch past a usage error.
     """
 
     def _forbidden(*args, **kwargs):
         pytest.fail(f"a usage error must never reach a real subprocess: {args!r}")
 
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: tmp_path)
     monkeypatch.setattr("subprocess.run", _forbidden)
     monkeypatch.setattr("subprocess.Popen", _forbidden)
 
