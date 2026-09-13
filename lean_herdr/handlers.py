@@ -242,12 +242,11 @@ def handle_bootstrap(cfg: Config) -> None:
             # the project and the next press comes up warm.
             retry_on_hang=False,
         )
-    # `OSError` beside the two named ones, because `canonical_root()` shells
-    # out to git: with no git on the PATH that is a bare FileNotFoundError
-    # and NOT a BusError. `initcmd.workspace_init` reads the same call the
-    # same way. Left out it escapes to `__main__`'s catch-all, and this one
-    # failure reaches the operator as a stderr line in the plugin log while
-    # every other one here shows a notification.
+    # `canonical_root()` answers a missing, hung or undecodable git with
+    # `GitUnusable`, a BusError, so the first name covers every git failure.
+    # `OSError` stays as the belt on this block's own promise: a failure here
+    # shows a notification, never only a stderr line in the plugin log through
+    # `__main__`'s catch-all.
     except (BusError, SettingsError, OSError) as exc:
         herdr.run("notification", "show", "--message", f"lean-herdr: {exc}")
         return

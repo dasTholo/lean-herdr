@@ -367,13 +367,13 @@ def test_bootstrap_surfaces_a_missing_agent_config_like_every_other_failure(worl
 
 
 def test_bootstrap_without_git_on_the_path_notifies_like_every_other_failure(world, monkeypatch):
-    """`canonical_root()` shells out to git -- no git is a bare OSError.
+    """A raw OSError out of this block still ends in a notification.
 
-    initcmd.py reads that same call the same way and answers it with
-    `init_stopped`. Caught here only as `(BusError, SettingsError)` it
-    escapes to `__main__`'s catch-all instead, and the operator gets a
-    stderr line in the plugin log where every other failure path in this
-    handler shows a notification.
+    `canonical_root()` itself answers a missing git with GitUnusable, a BusError
+    (tests/test_bus_canonical_root.py). The `OSError` beside it stays as the
+    belt, and this test holds it: without it the failure escapes to
+    `__main__`'s catch-all and reaches the operator as a stderr line in the
+    plugin log where every other failure path here shows a notification.
     """
     h_proc, _, tmp_path = world
     monkeypatch.setattr(

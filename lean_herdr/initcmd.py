@@ -26,7 +26,7 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from lean_herdr.bus import BusError, canonical_root
+from lean_herdr.bus import BusError, GitUnusable, canonical_root
 from lean_herdr.settings import (
     OVERLAY_PATH,
     SETTINGS_PATH,
@@ -319,12 +319,12 @@ def workspace_init(
     """
     try:
         base = root if root is not None else canonical_root()
+    except GitUnusable as exc:
+        # BEFORE BusError, whose subclass it is: a git that cannot answer read
+        # as `not_a_git_repo: run git init` sends the operator to the wrong repair.
+        return {"ok": False, "error": f"init_stopped: {exc}"}
     except BusError:
         return {"ok": False, "error": "not_a_git_repo: run `git init` first"}
-    except OSError as exc:
-        # `canonical_root()` shells out to git; with no git on the PATH that
-        # is a FileNotFoundError, which is not a BusError.
-        return {"ok": False, "error": f"init_stopped: {exc}"}
 
     written: list[str] = []
     skipped: list[str] = []

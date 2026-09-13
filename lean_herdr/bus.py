@@ -22,6 +22,17 @@ class BusError(RuntimeError):
     """The bus is unreadable — never silently treat this as success."""
 
 
+class GitUnusable(BusError):
+    """git itself could not answer -- missing, hung, or output that does not decode.
+
+    Not "this is no repository": that stays a plain BusError carrying git's own
+    words. The two need different repairs -- `git init` there, a PATH or a disk
+    here -- and a caller that cannot tell them apart sends the operator to the
+    wrong one. A BusError all the same, so every caller that already names a bus
+    failure names this one too instead of crashing on it.
+    """
+
+
 def canonical_root(cwd: str | Path | None = None) -> Path:
     """Repo root of a checkout, even from inside a linked worktree.
 
@@ -30,15 +41,25 @@ def canonical_root(cwd: str | Path | None = None) -> Path:
     lean-ctx canonicalizes a stdio server to anyway. Every
     `--project-root` value in the project comes from this function — never from
     $PWD, never from a worktree path (B12).
+
+    Raises BusError when git answers that this is no repository, and
+    GitUnusable when git could not be asked at all. Every `main()` with a
+    BusError rung reports both by name.
     """
-    proc = subprocess.run(
-        ["git", "rev-parse", "--git-common-dir"],
-        cwd=str(cwd) if cwd is not None else None,
-        capture_output=True,
-        text=True,
-        timeout=GIT_TIMEOUT_S,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--git-common-dir"],
+            cwd=str(cwd) if cwd is not None else None,
+            capture_output=True,
+            text=True,
+            timeout=GIT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
+        # OSError: no git on the PATH. SubprocessError: TimeoutExpired, a git
+        # that hung. UnicodeDecodeError: `text=True` decodes strictly, and a
+        # non-UTF-8 byte in the path is a ValueError nobody else names.
+        raise GitUnusable(f"git_unusable: {exc}") from exc
     if proc.returncode != 0:
         raise BusError(f"git rev-parse --git-common-dir failed: {proc.stderr.strip()}")
     common = Path(proc.stdout.strip())

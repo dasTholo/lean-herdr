@@ -157,6 +157,30 @@ def test_without_a_git_repo_it_says_so(monkeypatch, tmp_path):
     assert not (tmp_path / "opencode.jsonc").exists(), "it wrote before checking"
 
 
+@pytest.mark.parametrize(
+    "cause",
+    [
+        pytest.param(FileNotFoundError(2, "No such file or directory", "git"), id="git missing"),
+        pytest.param(subprocess.TimeoutExpired(cmd=["git"], timeout=5.0), id="git hung"),
+    ],
+)
+def test_a_git_that_cannot_answer_stops_init_without_asking_for_git_init(
+    monkeypatch, tmp_path, cause
+):
+    """`not_a_git_repo: run git init` is the wrong repair for a missing binary."""
+    quiet(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+
+    def refuse(*_args, **_kwargs):
+        raise cause
+
+    monkeypatch.setattr("lean_herdr.bus.subprocess.run", refuse)
+    answer = workspace_init()
+    assert answer["ok"] is False
+    assert answer["error"].startswith("init_stopped: git_unusable: "), answer["error"]
+    assert not (tmp_path / "opencode.jsonc").exists(), "it wrote before checking"
+
+
 def test_every_missing_precondition_becomes_one_line(monkeypatch, repo):
     monkeypatch.setattr("shutil.which", which_stub(True))
     replies = {

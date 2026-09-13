@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -674,3 +675,20 @@ def test_main_gives_each_failure_its_own_rung(monkeypatch, capsys, raised, expec
     assert workspace.main(["up"]) == 0
     answer = json.loads(capsys.readouterr().out)
     assert answer["ok"] is False and answer["error"] == expected
+
+
+def test_main_names_a_git_that_cannot_answer(monkeypatch, capsys):
+    """Through the real `canonical_root`, not a raised stand-in.
+
+    The rung above has always worked for a BusError. A hung git never was one,
+    and it ended as `workspace_crashed:`.
+    """
+
+    def hang(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["git"], timeout=5.0)
+
+    monkeypatch.setattr("lean_herdr.bus.subprocess.run", hang)
+    assert workspace.main(["up"]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("git_unusable: "), answer["error"]

@@ -343,18 +343,13 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
         base = Path(root) if root is not None else canonical_root(cwd)
         return llm_settings_layered(base)
     except (SettingsError, BusError, OSError, subprocess.SubprocessError, ValueError) as exc:
-        # SubprocessError is NOT redundant beside OSError: canonical_root()
-        # runs git with a timeout, and subprocess.TimeoutExpired descends
-        # from SubprocessError, not from OSError. A hung git would
-        # otherwise walk straight out of the manual `prereview` mode,
-        # which has no blanket except around it.
-        #
-        # ValueError for the same reason one layer out: canonical_root()
-        # (bus.py) reads git with `text=True` and no `errors=`, so a
-        # non-UTF-8 byte in the repository PATH decodes strictly and
-        # raises UnicodeDecodeError. Neither OSError nor SubprocessError
-        # names it, and `prereview` mode would end as a traceback with
-        # exit 1 -- this CLI's word for "the model rejected".
+        # BusError covers every way `canonical_root()` fails: no repository,
+        # and -- as GitUnusable -- a git that is missing, hung, or answers a
+        # path that does not decode. OSError, SubprocessError and ValueError
+        # stay as the belt on this function's own promise: it never raises,
+        # because a raise here aborts the commit worktrunk is in the middle of,
+        # and in `prereview` mode it would end as a traceback with exit 1 --
+        # this CLI's word for "the model rejected".
         print(f"herdr-llm: ignoring the settings file: {exc}", file=sys.stderr)
         return LlmSettings()
 

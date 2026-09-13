@@ -544,6 +544,19 @@ def test_a_root_that_is_no_repository_is_named_not_swallowed(monkeypatch, capsys
     assert answer["error"] == "not a git repository", "bare, with no prefix"
 
 
+def test_a_git_that_cannot_answer_is_named_too(monkeypatch, capsys):
+    """The same rung, reached by a git that is not on the PATH at all."""
+
+    def missing(*_args, **_kwargs):
+        raise FileNotFoundError(2, "No such file or directory", "git")
+
+    monkeypatch.setattr("lean_herdr.bus.subprocess.run", missing)
+    assert catalog.main(["check"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("git_unusable: "), answer["error"]
+
+
 def test_the_effort_fallbacks_come_from_llm_and_are_not_respelled(monkeypatch, tmp_path, capsys):
     """M3: one definition per rule. Two literals here would drift silently.
 

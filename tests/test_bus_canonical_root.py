@@ -42,3 +42,41 @@ def test_canonical_root_without_a_repo_raises(tmp_path: Path):
 
     with pytest.raises(BusError):
         canonical_root(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "cause",
+    [
+        pytest.param(FileNotFoundError(2, "No such file or directory", "git"), id="git missing"),
+        pytest.param(subprocess.TimeoutExpired(cmd=["git"], timeout=5.0), id="git hung"),
+        pytest.param(
+            UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid start byte"), id="undecodable"
+        ),
+    ],
+)
+def test_a_git_that_cannot_answer_is_git_unusable(monkeypatch, tmp_path, cause):
+    """Three ways git fails to answer at all, and each one used to leave raw.
+
+    Raw, they walked past every `main()`'s BusError rung and came out as
+    `workspace_crashed:` or `models_crashed:` -- or, in `init`, next to a
+    `not_a_git_repo` that sends the operator to `git init` for a missing binary.
+    """
+    from lean_herdr.bus import BusError, GitUnusable
+
+    def refuse(*_args, **_kwargs):
+        raise cause
+
+    monkeypatch.setattr(subprocess, "run", refuse)
+    with pytest.raises(GitUnusable, match="^git_unusable: ") as caught:
+        canonical_root(tmp_path)
+    assert isinstance(caught.value, BusError)
+    assert caught.value.__cause__ is cause
+
+
+def test_no_repository_stays_a_plain_bus_error(tmp_path: Path):
+    """git answered, and its answer was "no". That is not git being unusable."""
+    from lean_herdr.bus import BusError, GitUnusable
+
+    with pytest.raises(BusError) as caught:
+        canonical_root(tmp_path)
+    assert not isinstance(caught.value, GitUnusable)
