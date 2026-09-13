@@ -17,7 +17,8 @@
 # [roles.orchestrator]
 # profile = "minimal"
 # kind  = "opencode"   # claude | opencode -- built-in for THIS role only
-# model = ""           # empty: no --model at all
+# model = ""           # empty: no --model on `workspace up` or the keystroke;
+#                      # `dispatch orchestrator` still needs --model or this key
 
 # [roles.builder]
 # direction = "down"

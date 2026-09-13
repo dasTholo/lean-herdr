@@ -290,10 +290,12 @@ edit the project behaves exactly as it does without the file. Precedence is
 **CLI flag > file > built-in default**; `[default]` applies to every role,
 `[roles.<role>]` beats `[default]`.
 
-Four sections: `[default]` and `[roles.<role>]` describe how a pane is
+Five sections: `[default]` and `[roles.<role>]` describe how a pane is
 split, `[llm]` the commit generator and the pre-review judge, and
 `[workspace]` the pane `lean-herdr workspace up` opens for the
-orchestrator — `label` alone, and that one optional.
+orchestrator — `label` alone, and that one optional. `[models]` decides
+whether `workspace up` may keep `[llm].model` current from OpenRouter's
+catalogue by itself; see [Keeping the model current](#keeping-the-model-current).
 
 Which model and which runtime each role gets is configured per role, in
 `[roles.orchestrator]`, `[roles.builder]` and `[roles.reviewer]`:
@@ -310,8 +312,10 @@ Which model and which runtime each role gets is configured per role, in
 `--kind` and `--model` on a `dispatch` call beat the file; with neither,
 `dispatch` refuses to build. A worker quietly running on its runtime's
 default model costs real money and nobody sees it. The orchestrator is the
-one exception: an empty `model` means no `--model` at all, which is what
-the keystroke has always done.
+one exception, and only where it is started: an empty `model` means no
+`--model` at all for `lean-herdr workspace up` and for the keystroke, which
+is what the keystroke has always done. `dispatch orchestrator` is not a
+start and has no such exception — it needs `--model` or a set `model`.
 
 An unknown key, a wrong direction or a `name_template` without `{role}` and
 `{branch}` are errors and are reported — never silently reset to the default.

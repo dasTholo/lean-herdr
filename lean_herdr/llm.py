@@ -378,13 +378,10 @@ def generate(
     is configured. So this function has exactly one contract: text
     out, whatever went wrong.
 
-    Resolution, in this order: the explicit argument (the CLI flag),
-    then the environment, then `[llm]` in the settings file, then the
-    built-in constant. The environment sits ABOVE the file on purpose:
-    it is the grip an operator has inside a running pane, without
-    editing a file that every repository on this machine reads. The
-    effort has no environment level -- a CLI flag and the file are
-    enough, and a third spelling for a four-value enum is clutter.
+    Which model and which effort win is the THE TWO CHAINS block at the
+    top of this module -- the authority, and the only description of the
+    order in here. A copy in this docstring had already lost the overlay
+    level once (M3).
     """
     environ = os.environ if env is None else env
     cfg = file_settings() if settings is None else settings
