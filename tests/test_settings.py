@@ -362,6 +362,38 @@ def test_a_broken_overlay_is_loud_here(tmp_path, text):
         llm_settings_layered(tmp_path)
 
 
+@pytest.mark.parametrize(
+    "text",
+    ["[llm]\nmodel = 5\n", '[llm]\nmodel = "unclosed\n'],
+    ids=["wrong-type", "malformed-toml"],
+)
+def test_a_broken_overlay_is_an_overlay_error_and_still_a_settings_error(tmp_path, text):
+    """Its own class for the one reader that must tell it apart, and a
+    SettingsError for every loud path that already catches one."""
+    from lean_herdr.settings import (
+        OVERLAY_PATH,
+        OverlayError,
+        SettingsError,
+        llm_settings_layered,
+    )
+
+    _write_llm_files(tmp_path, config='[llm]\nmodel = "by/hand"\n', overlay=text)
+    with pytest.raises(OverlayError, match="lean-herdr models apply") as caught:
+        llm_settings_layered(tmp_path)
+    assert isinstance(caught.value, SettingsError)
+    assert str(OVERLAY_PATH) in str(caught.value)
+
+
+def test_a_broken_config_toml_is_not_an_overlay_error(tmp_path):
+    """config.toml is read first: a file broken in both places names the operator's."""
+    from lean_herdr.settings import OverlayError, SettingsError, llm_settings_layered
+
+    _write_llm_files(tmp_path, config="[llm]\nmodel = 5\n", overlay="[llm]\nmodel = 6\n")
+    with pytest.raises(SettingsError) as caught:
+        llm_settings_layered(tmp_path)
+    assert not isinstance(caught.value, OverlayError)
+
+
 def test_an_unknown_workspace_key_does_not_stay_silent():
     with pytest.raises(SettingsError, match="unknown keys"):
         workspace_settings({"workspace": {"labl": "x"}})

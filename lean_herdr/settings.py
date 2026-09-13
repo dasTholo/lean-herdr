@@ -70,6 +70,16 @@ class SettingsError(RuntimeError):
     """
 
 
+class OverlayError(SettingsError):
+    """`models.auto.toml` is unusable -- the file a machine wrote, not the operator.
+
+    A SettingsError, so every loud path that catches one reports this one too.
+    Its own class for the one reader that must tell the two apart:
+    `llm.file_settings()` drops a broken overlay and keeps config.toml, instead
+    of losing both.
+    """
+
+
 @dataclass(frozen=True)
 class RoleSettings:
     direction: str = "right"
@@ -338,6 +348,11 @@ def llm_settings_layered(root: str | Path, data: dict[str, Any] | None = None) -
     level for `model` only. Any other `[llm]` field comes out of config.toml
     or stays "" -- whatever else a hand put into the overlay has no effect.
 
+    A broken OVERLAY raises OverlayError, a SettingsError: every loud caller
+    reports it as before, and `llm.file_settings()` alone can tell it apart and
+    keep config.toml. config.toml is read first, so a file that is broken in
+    both places names the operator's own file.
+
     An empty string in the foreground still means "not set" -- the same
     rule `llm._first()` follows -- so `model = ""` in config.toml lets the
     overlay through instead of blanking it.
@@ -352,8 +367,13 @@ def llm_settings_layered(root: str | Path, data: dict[str, Any] | None = None) -
     exists: exactly the drift the THE TWO CHAINS block exists to prevent.
     """
     base = Path(root)
-    below = llm_settings(read_settings(base / OVERLAY_PATH))
     above = llm_settings(read_settings(base / SETTINGS_PATH) if data is None else data)
+    try:
+        below = llm_settings(read_settings(base / OVERLAY_PATH))
+    except SettingsError as exc:
+        raise OverlayError(
+            f"{OVERLAY_PATH}: {exc} -- `lean-herdr models apply` rewrites it"
+        ) from exc
     # The overlay went through `llm_settings()` WHOLE above: an unknown
     # key, a wrong type or an invalid value is already a SettingsError.
     # Only now is `model` lifted out of it. A valid foreign field is

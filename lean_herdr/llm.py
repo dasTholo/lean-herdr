@@ -34,9 +34,13 @@ from lean_herdr.bus import BusError, canonical_root
 from lean_herdr.openrouter import ENDPOINT, api_key
 from lean_herdr.settings import (
     EFFORTS,
+    SETTINGS_PATH,
     LlmSettings,
+    OverlayError,
     SettingsError,
+    llm_settings,
     llm_settings_layered,
+    read_settings,
 )
 from lean_herdr.worktree import find_worktree
 
@@ -335,13 +339,23 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
     `root` is handed in by callers that resolved it already -- the wait
     mode has it. Without it this asks git once, per process.
 
-    Two files now, one rule: `models.auto.toml` below, `config.toml` above.
-    The error tolerance covers both -- a broken overlay costs the defaults,
-    never the commit.
+    Two files, one rule: `models.auto.toml` below, `config.toml` above. A
+    broken overlay costs the overlay alone -- config.toml still counts, and
+    the reason goes to stderr. A broken config.toml costs the defaults.
+    Neither costs the commit.
     """
     try:
         base = Path(root) if root is not None else canonical_root(cwd)
-        return llm_settings_layered(base)
+        try:
+            return llm_settings_layered(base)
+        except OverlayError as exc:
+            # The machine's file is broken, the operator's may not be. Losing
+            # `[llm].model` and `effort` over a file the daily check wrote would
+            # punish the operator for the machine: drop the overlay, keep
+            # config.toml. A broken config.toml raises again below and costs the
+            # defaults, exactly as before.
+            print(f"herdr-llm: ignoring the overlay: {exc}", file=sys.stderr)
+            return llm_settings(read_settings(base / SETTINGS_PATH))
     except (SettingsError, BusError, OSError, subprocess.SubprocessError, ValueError) as exc:
         # BusError covers every way `canonical_root()` fails: no repository,
         # and -- as GitUnusable -- a git that is missing, hung, or answers a

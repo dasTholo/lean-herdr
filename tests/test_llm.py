@@ -280,7 +280,21 @@ def test_a_broken_overlay_costs_the_defaults_not_the_commit(tmp_path, capsys):
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("[llm]\nmodel = 5\n", encoding="utf-8")
     assert llm.file_settings(tmp_path) == LlmSettings()
-    assert "ignoring the settings file" in capsys.readouterr().err
+    assert "ignoring the overlay" in capsys.readouterr().err
+
+
+def test_a_broken_overlay_costs_the_overlay_and_not_config_toml(tmp_path, capsys):
+    """The machine's file is broken, the operator's is not -- the operator's still counts.
+
+    One `try` around both files used to hand back the defaults here, and the
+    commit ran on the built-in model although config.toml named another.
+    """
+    _write_config(tmp_path, '[llm]\nmodel = "by/hand"\neffort = "low"\n')
+    (tmp_path / OVERLAY_PATH).write_text("[llm]\nmodel = 5\n", encoding="utf-8")
+    assert llm.file_settings(tmp_path) == LlmSettings(model="by/hand", effort="low")
+    err = capsys.readouterr().err
+    assert "ignoring the overlay" in err, err
+    assert str(OVERLAY_PATH) in err, err
 
 
 def test_the_overlay_is_read_under_config_toml(tmp_path):
