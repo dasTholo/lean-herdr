@@ -7,9 +7,9 @@ reason and clears these floors" is a url plus a loop. A tool-calling
 model in front of that would be paying an LLM to choose query parameters
 a flag expresses exactly (spec 1.4).
 
-`llm.py` must NEVER import this module. The commit path runs on the
-system interpreter at every commit in every repository on this machine;
-catalogue code has no business there. The dependency runs the other way
+`llm.py` must NEVER import this module. The commit path starts at every
+commit in every repository on this machine; catalogue code has no business
+on it. The dependency runs the other way
 and only that way: catalog -> openrouter, settings, llm and dispatch --
 the last two for the CLI at the bottom, which reuses their constants and
 their parser rather than growing a third copy.
@@ -214,8 +214,8 @@ def write_overlay(model: str, *, root: Path, stamp: str | None = None) -> Path:
     """Write `models.auto.toml` WHOLE. Returns the path. Raises on a bad slug.
 
     Never edited in place, and that is not a shortcut: the stdlib has no
-    TOML writer, and `tomli_w` is ABSENT on the system interpreter this
-    project's commit path runs on. A file we generate completely, every
+    TOML writer, and the project declares `dependencies = []`, so there is
+    no `tomli_w` to reach for. A file we generate completely, every
     time, needs neither -- and nothing here ever parses one back before
     overwriting it.
 

@@ -122,7 +122,7 @@ def test_a_malformed_store_is_none_not_a_crash(tmp_path):
 def test_openrouter_imports_nothing_from_lean_herdr():
     """The root of its subtree: `llm.py` and `catalog.py` import it, it imports neither.
 
-    `bin/herdr-llm` loads this on the system interpreter at every commit, so anything
+    `lean-herdr llm generate` loads this at every commit, so anything
     it pulled in from the package would ride along. A subprocess, because pytest has
     long since imported the rest of `lean_herdr` into this one -- the pattern of
     `test_importing_handlers_does_not_drag_in_the_workspace_subtree`.

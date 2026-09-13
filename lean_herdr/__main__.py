@@ -1,16 +1,14 @@
-"""Subcommand dispatch for the plugin handlers.
+"""Subcommand dispatch for the plugin handlers: `lean-herdr plugin <sub>`.
 
 A handler never breaks anything: every path ends with exit 0, every exception
 lands on stderr — and thus in `herdr plugin log list --plugin lean.herdr`.
+`python -m lean_herdr <sub>` from a checkout reaches the same `main`.
 """
 
 from __future__ import annotations
 
 import importlib
 import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from lean_herdr.config import Config
 

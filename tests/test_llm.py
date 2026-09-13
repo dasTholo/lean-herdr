@@ -252,8 +252,8 @@ def test_an_undecodable_repo_root_costs_the_defaults_not_the_run(monkeypatch, ca
     `canonical_root()` runs `git rev-parse` with `text=True` and no
     `errors=`, so a non-UTF-8 byte in the repository PATH decodes strictly
     and raises UnicodeDecodeError -- a ValueError, which neither OSError
-    nor SubprocessError names. Uncaught it leaves `bin/herdr-llm
-    prereview` as a traceback and exit 1, and exit 1 is this CLI's word
+    nor SubprocessError names. Uncaught it leaves `lean-herdr llm prereview`
+    as a traceback and exit 1, and exit 1 is this CLI's word
     for "the model rejected".
     """
 
@@ -741,7 +741,7 @@ def test_an_unresolvable_worktree_is_skipped_not_rejected():
 
 
 def test_prereview_itself_refuses_to_judge_without_an_order(no_store):
-    """`bin/herdr-llm prereview` without --order reaches prereview() direct.
+    """`lean-herdr llm prereview` without --order reaches prereview() direct.
 
     prereview_result() has its own no_order guard, but the manual entry
     point does not go through it -- and argparse defaults --order to "".

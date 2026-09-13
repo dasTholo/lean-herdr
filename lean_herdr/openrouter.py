@@ -1,11 +1,12 @@
 """Everything this project knows about OpenRouter: the key, and the one request.
 
-Two consumers, and the split is the point. `llm.py` runs on the SYSTEM
-interpreter -- worktrunk starts `bin/herdr-llm generate` as
-`commit.generation.command` in every repository on this machine, and
-that interpreter has no httpx and no tomli_w. `catalog.py` asks the same
-host for its model list. Both need the base url and the same never-raising
-error profile; only one of them needs a key.
+Two consumers, and the split is the point. `llm.py` starts on every commit:
+worktrunk runs `lean-herdr llm generate` as `commit.generation.command` in
+every repository on this machine, and the project declares
+`dependencies = []` -- so no httpx and no tomli_w, and an import that stays
+small. `catalog.py` asks the same host for its model list. Both need the
+base url and the same never-raising error profile; only one of them needs a
+key.
 
 `api_key()` moved here out of llm.py, where it was Completion knowledge
 by accident. A module is named after what it speaks to.

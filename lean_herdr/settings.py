@@ -308,7 +308,7 @@ def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
 
     Note who catches it, because the two consumers differ on purpose:
     `llm.file_settings()` swallows this and takes the defaults -- it
-    serves `bin/herdr-llm generate`, where a raise would abort the
+    serves `lean-herdr llm generate`, where a raise would abort the
     commit worktrunk is in the middle of. `dispatch.main()` calls this
     function directly and lets it through as `config_error:` -- there
     the orchestrator reads the complaint. Without that second call site

@@ -11,9 +11,9 @@ network.
 `worktree.wt_switch()`, and `runner` still is where a real subprocess
 is left: `wt_diff()`. No test in this repository reaches the network.
 
-Stdlib plus `worktree.find_worktree()`, and no entry in
-herdr-plugin.toml: this is a library and a CLI, not a plugin handler.
-No third-party dependency -- the module starts on every commit in every
+Stdlib plus `worktree.find_worktree()`, reached as `lean-herdr llm` and never
+as a plugin handler. No third-party dependency -- the project declares
+`dependencies = []`, and the module starts on every commit in every
 repository on the machine, so its import cost stays a handful of stdlib
 names.
 """
@@ -325,7 +325,7 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
     """`[llm]` from `<repo root>/.lean-ctx/lean-herdr/config.toml` -- NEVER raises.
 
     Never, and that is the whole reason this wrapper exists next to
-    `settings.llm_settings()`. worktrunk starts `bin/herdr-llm generate`
+    `settings.llm_settings()`. worktrunk starts `lean-herdr llm generate`
     in EVERY repository on the machine, and a failing generation command
     aborts the commit (spec 2.3). A missing file, a directory that is
     not a repository, a broken TOML and a bad value therefore all cost
@@ -354,7 +354,7 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
             # punish the operator for the machine: drop the overlay, keep
             # config.toml. A broken config.toml raises again below and costs the
             # defaults, exactly as before.
-            print(f"herdr-llm: ignoring the overlay: {exc}", file=sys.stderr)
+            print(f"lean-herdr llm: ignoring the overlay: {exc}", file=sys.stderr)
             return llm_settings(read_settings(base / SETTINGS_PATH))
     except (SettingsError, BusError, OSError, subprocess.SubprocessError, ValueError) as exc:
         # BusError covers every way `canonical_root()` fails: no repository,
@@ -364,7 +364,7 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
         # because a raise here aborts the commit worktrunk is in the middle of,
         # and in `prereview` mode it would end as a traceback with exit 1 --
         # this CLI's word for "the model rejected".
-        print(f"herdr-llm: ignoring the settings file: {exc}", file=sys.stderr)
+        print(f"lean-herdr llm: ignoring the settings file: {exc}", file=sys.stderr)
         return LlmSettings()
 
 
@@ -586,7 +586,7 @@ def _positive_seconds(text: str) -> float:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
-        prog="herdr-llm",
+        prog="lean-herdr llm",
         description=(
             "A small model, twice: `generate` writes worktrunk's commit "
             "messages, `prereview` judges a branch diff against its order."
@@ -665,7 +665,7 @@ def main(argv: list[str] | None = None) -> int:
         try:
             if not api_key():
                 print(
-                    f"herdr-llm: no ${openrouter.KEY_ENV} and no opencode key "
+                    f"lean-herdr llm: no ${openrouter.KEY_ENV} and no opencode key "
                     "store -- "
                     "falling back to the file names",
                     file=sys.stderr,
@@ -681,7 +681,7 @@ def main(argv: list[str] | None = None) -> int:
                 timeout_s=args.timeout or GENERATE_TIMEOUT_S,  # 0 is refused
             )
         except Exception as exc:  # noqa: BLE001 -- a failure would abort the commit
-            print(f"herdr-llm: {exc}", file=sys.stderr)
+            print(f"lean-herdr llm: {exc}", file=sys.stderr)
             message = fallback_message(prompt)
         sys.stdout.write(message.rstrip("\n") + "\n")
         return 0
@@ -692,7 +692,7 @@ def main(argv: list[str] | None = None) -> int:
         # point asked. Loud on stderr for the human who mistyped `-C`,
         # but exit 0 -- so exit 1 keeps meaning one thing only, that the
         # model rejected the branch.
-        print(f"herdr-llm: `wt -C {args.path} step diff` failed", file=sys.stderr)
+        print(f"lean-herdr llm: `wt -C {args.path} step diff` failed", file=sys.stderr)
         sys.stdout.write("skipped\ndiff_failed\n")
         return 0
     # No `settings=`: prereview() resolves the file itself, from the

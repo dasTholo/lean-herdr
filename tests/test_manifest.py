@@ -1,7 +1,7 @@
-import ast
 import importlib
 import shutil
 import subprocess
+import sys
 import tomllib
 import zipfile
 from pathlib import Path
@@ -11,18 +11,11 @@ import pytest
 from lean_herdr.templating import LAYOUT
 
 ROOT = Path(__file__).resolve().parents[1]
-MANIFEST = ROOT / "herdr-plugin.toml"
+MANIFEST = ROOT / "lean_herdr" / "plugin" / "herdr-plugin.toml"
 
 #: The one line that turns this package into the `lean-herdr` an operator
 #: and every role prompt actually type.
 ENTRY_POINT = {"lean-herdr": "lean_herdr.cli:main"}
-
-#: The oldest interpreter a bare `python3` on an operator host may turn out to
-#: be. Raised from 3.11 by operator decision on 2026-09-04: the hosts this
-#: plugin runs on carry 3.14, and the workspace-start plan names that floor in
-#: its Global Constraints. The number only ever loosens what `ast.parse`
-#: accepts below -- lowering it again is the strict direction, not the lax one.
-OLDEST_PYTHON = (3, 14)
 
 #: Confirmed via `plugin link` without warning. `layout.updated` does NOT exist.
 VALID_EVENTS = {
@@ -88,48 +81,42 @@ def test_an_unknown_subcommand_is_not_a_crash(capsys):
     assert "unknown subcommand" in capsys.readouterr().err
 
 
-def test_the_package_parses_on_the_python3_the_manifest_may_meet():
-    """Every command in the manifest spawns a bare `python3`.
+def test_every_manifest_command_runs_the_installed_plugin_verb():
+    """The manifest starts no bare `python3` any more -- the snapshot's own binary.
 
-    That interpreter is whatever the host provides, never the pinned one
-    from `uv`. Syntax it cannot parse kills the handler at IMPORT time,
-    before main() can keep its "exit always 0" promise. PEP 758's
-    parenthesis-free `except A, B:` was such a case. ast.parse only
-    parses, it runs nothing.
-
-    `bin/herdr-dispatch` and `bin/herdr-report` used to stand in this list
-    for the same reason and are gone: as the `lean-herdr` entry point the
-    CLIs run under the INSTALLED interpreter. `bin/herdr-llm` stays --
-    worktrunk starts it as a bare `python3` script, not through an entry
-    point. The package glob stays too: `handlers.py` and everything it
-    imports is still reached by a bare `python3`, and that now includes
-    `workspace.py`.
+    A host `python3` had to find the package through the linked checkout and
+    parse it on whatever interpreter the host carried. `lean-herdr plugin <sub>`
+    runs under the interpreter the package was installed with, so the syntax
+    floor is `requires-python` alone. That `<sub>` has a handler is
+    `test_no_handler_without_subcommand`'s job.
     """
-    assert all(e["command"][0] == "python3" for e in manifest()["events"]), (
-        "the floor below only matters as long as the manifest spawns python3"
+    for entry in manifest()["events"] + manifest()["actions"]:
+        assert entry["command"][:2] == ["lean-herdr", "plugin"], entry
+        assert len(entry["command"]) == 3, entry
+
+
+def test_python_m_from_the_checkout_still_reaches_the_handlers():
+    """Without the `sys.path` insert, `python -m lean_herdr` works from the repo root."""
+    proc = subprocess.run(
+        [sys.executable, "-m", "lean_herdr", "does-not-exist"],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
     )
-    sources = [
-        *sorted((ROOT / "lean_herdr").glob("*.py")),
-        ROOT / "bin" / "herdr-llm",
-    ]
-    offenders = []
-    for path in sources:
-        try:
-            ast.parse(path.read_text(encoding="utf-8"), feature_version=OLDEST_PYTHON)
-        except SyntaxError as err:
-            offenders.append(f"{path.relative_to(ROOT)}:{err.lineno}: {err.msg}")
-    floor = ".".join(str(part) for part in OLDEST_PYTHON)
-    assert not offenders, f"needs syntax newer than {floor}:\n" + "\n".join(offenders)
+    assert proc.returncode == 0, proc.stderr
+    assert "unknown subcommand" in proc.stderr
 
 
 def test_the_entry_point_still_points_at_a_callable_main():
     """`lean-herdr <verb>` is the ONLY way in outside this checkout.
 
-    The manifest spawns `python3 -m lean_herdr` for the plugin events, but
-    every role prompt, every worktrunk hook and every operator types
-    `lean-herdr`. That name exists solely because of this one pyproject
-    line -- rename the module or the function and nothing in the tree
-    notices until an installed environment does.
+    The manifest spawns `lean-herdr plugin <sub>`, worktrunk spawns
+    `lean-herdr llm generate`, and every role prompt and every operator types
+    `lean-herdr`. That name exists solely because of this one pyproject line --
+    rename the module or the function and nothing in the tree notices until an
+    installed environment does.
     """
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert project["project"]["scripts"] == ENTRY_POINT
@@ -140,7 +127,7 @@ def test_the_entry_point_still_points_at_a_callable_main():
 
 @pytest.mark.integration
 def test_the_wheel_ships_the_templates(tmp_path):
-    """`init` writes files OUT of the package. A wheel without them is silent.
+    """`init` writes files OUT of the package, and Herdr links the manifest inside it. A wheel without them is silent.
 
     `[tool.hatch.build.targets.wheel]` names the package, not its data, so
     nothing in this tree would notice `lean_herdr/templates/` dropping out
@@ -166,16 +153,25 @@ def test_the_wheel_ships_the_templates(tmp_path):
     with zipfile.ZipFile(wheel) as archive:
         shipped = set(archive.namelist())
     wanted = {f"lean_herdr/templates/{name}" for name in LAYOUT}
+    wanted.add("lean_herdr/plugin/herdr-plugin.toml")
     assert wanted <= shipped, sorted(wanted - shipped)
 
 
 @pytest.mark.integration
 def test_plugin_link_produces_no_warning(tmp_path):
-    """H6: Herdr only warns for unknown events — here the warning becomes fatal."""
+    """H6: Herdr only warns for unknown events — here the warning becomes fatal.
+
+    It re-links the operator's real `lean.herdr` to this checkout's package
+    directory. Run it on purpose, after the plugin was moved to the snapshot --
+    never as part of a gate.
+    """
     if shutil.which("herdr") is None:
         pytest.skip("herdr not installed")
     subprocess.run(
-        ["herdr", "plugin", "link", str(ROOT)], capture_output=True, text=True, check=False
+        ["herdr", "plugin", "link", str(MANIFEST.parent)],
+        capture_output=True,
+        text=True,
+        check=False,
     )
     listing = subprocess.run(
         ["herdr", "plugin", "list"], capture_output=True, text=True, timeout=30, check=False

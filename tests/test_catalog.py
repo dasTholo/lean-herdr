@@ -387,7 +387,7 @@ def test_a_slug_that_would_break_out_of_the_toml_string_raises(tmp_path):
 def test_llm_does_not_import_the_catalogue():
     """Spec section 2, and the one rule a human misses while reading.
 
-    `bin/herdr-llm` runs on the system interpreter at every commit in
+    `lean-herdr llm generate` starts at every commit in
     every repository on this machine. Catalogue code there would be an
     import cost on a path that has no use for it -- and the module reaches
     urllib.parse and datetime that llm.py deliberately does not.

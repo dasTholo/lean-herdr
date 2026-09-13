@@ -1,11 +1,19 @@
-"""One binary, four verbs: `lean-herdr dispatch | models | report | workspace`.
+"""One binary, six verbs: `lean-herdr dispatch | llm | models | plugin | report | workspace`.
 
-A router, nothing more. Every verb hands off to a `main(argv) -> int`
-that already exists and already keeps the house contract: one JSON line
-on stdout, `ok` as the only truth, exit ALWAYS 0. Rebuilding any of that
-here would be a second place for a rule that has one. The one rung this
-file does keep is the one no delegate can reach: the import itself, which
-runs before that delegate's own `except` clauses exist.
+A router, nothing more. Every verb hands off to a `main(argv) -> int` that
+already exists and already keeps its own contract. Four keep the house
+contract: one JSON line on stdout, `ok` as the only truth, exit ALWAYS 0. Two
+do not, on purpose, because nobody reading JSON calls them:
+
+* `llm` is worktrunk's commit generator and the manual pre-review. `generate`
+  writes the message on stdout and exits 0; `prereview` exits 1 on `reject`.
+* `plugin` is Herdr's event and action handler: nothing on stdout, failures
+  on stderr -- the plugin log -- and exit 0.
+
+The one rung this file keeps is the one no delegate can reach: the import
+itself, which runs before that delegate's own `except` clauses exist. For the
+two plain verbs that rung writes NO JSON line -- on `llm generate` it would
+become the commit message.
 
 The verb modules are imported ON THE CALL, not up here. `lean_herdr.
 workspace` reaches `lean_herdr.dispatch` and from there `ordercmd`; a
@@ -26,12 +34,25 @@ import sys
 #: test_cli.py imports every value to keep that impossible.
 VERBS = {
     "dispatch": "lean_herdr.dispatch",
+    "llm": "lean_herdr.llm",
     "models": "lean_herdr.catalog",
+    "plugin": "lean_herdr.__main__",
     "report": "lean_herdr.report",
     "workspace": "lean_herdr.workspace",
 }
 
-USAGE = "usage: lean-herdr {dispatch|models|report|workspace} ...\n"
+#: The two verbs outside the JSON contract, and the exit code an import crash
+#: ends them with. `llm` 1: a broken install is loud at the first commit.
+#: `plugin` 0: a handler never breaks anything.
+PLAIN_VERBS = {"llm": 1, "plugin": 0}
+
+USAGE = (
+    "usage: lean-herdr {dispatch|llm|models|plugin|report|workspace} ...\n"
+    "  dispatch, models, report, workspace: one JSON line on stdout, exit 0\n"
+    "  llm generate: the commit message on stdout, exit 0\n"
+    "  llm prereview: the ruling on stdout, exit 1 on reject\n"
+    "  plugin <sub>: Herdr's handlers -- nothing on stdout, errors on stderr, exit 0\n"
+)
 
 
 def _usage(message: str) -> int:
@@ -57,7 +78,13 @@ def _crashed(verb: str, exc: BaseException) -> int:
     `except` clauses is in scope. The verb is named in the message
     because the traceback it replaces is the only other thing that
     would have said which import died.
+
+    The two plain verbs get a stderr line instead, and their own exit
+    code (PLAIN_VERBS).
     """
+    if verb in PLAIN_VERBS:
+        sys.stderr.write(f"lean-herdr {verb}: cannot run {VERBS[verb]}: {exc}\n")
+        return PLAIN_VERBS[verb]
     line = {"ok": False, "error": f"cli_crashed: {verb}: {exc}"}
     sys.stdout.write(json.dumps(line, ensure_ascii=False) + "\n")
     return 0

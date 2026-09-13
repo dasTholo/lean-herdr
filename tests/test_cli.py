@@ -107,3 +107,25 @@ def test_a_verb_whose_main_raises_is_caught_too(monkeypatch, capsys):
     answer = json.loads(capsys.readouterr().out)
     assert answer["ok"] is False
     assert "the delegate let one through" in answer["error"]
+
+
+def test_llm_prereview_hands_its_exit_code_through(monkeypatch):
+    """Exit 1 is the ruling `reject` -- the one verb whose exit code carries a result."""
+    monkeypatch.setattr("lean_herdr.llm.main", lambda argv: 1 if argv[:1] == ["prereview"] else 0)
+    assert cli.main(["llm", "prereview", "--order", "x"]) == 1
+    assert cli.main(["llm", "generate"]) == 0
+
+
+@pytest.mark.parametrize(("verb", "code"), [("llm", 1), ("plugin", 0)])
+def test_a_plain_verb_that_dies_on_import_writes_nothing_on_stdout(monkeypatch, capsys, verb, code):
+    """On `llm generate` a JSON line on stdout would become the commit message.
+
+    `llm` ends loud, with 1, at the first commit -- like the argparse usage error
+    `llm.main` already lets through. `plugin` ends with 0: a handler never breaks
+    anything, and stderr is the plugin log.
+    """
+    monkeypatch.setitem(cli.VERBS, verb, "lean_herdr.no_such_module")
+    assert cli.main([verb, "generate"]) == code
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err.startswith(f"lean-herdr {verb}: "), err
