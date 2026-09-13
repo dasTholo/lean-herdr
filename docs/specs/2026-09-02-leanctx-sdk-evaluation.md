@@ -8,6 +8,10 @@ Tools umgekehrt (exakter Laufzeit-Pin auf 3.10.1), E-2 bestätigt — und **E-5
 und E-6 sind widerlegt**: beide hingen an der Art der Benutzung, nicht an der
 SDK. Die Befunde unten bleiben als Messung des Standes vom 2026-09-02 gültig;
 die Optionen in Abschnitt 6 sind es nicht mehr.
+**Nachtrag 2026-09-13:** SDK 1.1.0 ist veröffentlicht, ihr Python-Code aber
+identisch mit dem Stand `277d0c7` der Gegenprüfung. E-2 ist am PyPI-Paket
+bestätigt, E-1 präzisiert — der Pin vergleicht nur die Versionszeichenkette —,
+siehe `2026-09-13-lean-herdr-katalog-review-und-sdk-1-1-design.md`, Abschnitt 6.
 **Bezug:** `2026-09-01-lean-herdr-ctx-task-design.md` (Auftragsweg auf `ctx_task`)
 **Anlass:** Thinkery AG hat die `leanctx-sdk` in Version 1.0.0 veröffentlicht
 (<https://github.com/Thinkery-AG/leanctx-sdk>). Frage des Betreibers: hilft sie

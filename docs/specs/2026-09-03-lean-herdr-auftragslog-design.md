@@ -87,7 +87,7 @@ Alle Messungen am 2026-09-03 gegen `lean-ctx 3.10.1` und den SDK-Checkout
 |---|---|
 | `AgentContext` läuft, erreicht `ctx_task` aber nicht | `UnsupportedCapabilityError`, `agent.py:41-45`, `agent.py:483` |
 | Agent Tools verlangen Engine **exakt** `3.10.1` | `agent.py:436`, `SUPPORTED_AGENT_TOOLS_ENGINE_VERSION`; anders als der Workspace-Kern, der nur die Major-Version prüft (E-1) |
-| SDK 1.1.0 ist nicht veröffentlicht | PyPI führt `1.0.0`; `COMPATIBILITY.md`: Engine 3.10.1 *„not yet published"*; GitHub-Release der Engine ist `v3.10.0` |
+| SDK 1.1.0 ist nicht veröffentlicht — *überholt am 2026-09-13: veröffentlicht am 2026-09-06, `src/` unverändert, siehe `2026-09-13-lean-herdr-katalog-review-und-sdk-1-1-design.md`, 6.1* | PyPI führt `1.0.0`; `COMPATIBILITY.md`: Engine 3.10.1 *„not yet published"*; GitHub-Release der Engine ist `v3.10.0` |
 | Fork + `attach_session` aus dem Fremdprozess trägt | `[worker] attach_session OK`, `workspace_completed seq=5` |
 | Quelländerung nach dem Bind scheitert | `attach_session FAIL WorkspaceConflictError` |
 | ein Workspace trägt beliebig viele Aufträge | `lifecycle=active events=12 sessions=4 entries=6` |
@@ -549,6 +549,9 @@ tatsächlich aufruft, lässt sich nur im Durchlauf beweisen. Das war bei
   SDK 1.1.0 und Engine 3.10.1 sind nicht veröffentlicht, und der Betrieb liefe
   auf einem Git-Commit. Die Lizenzfrage (E-9) entfällt bei privater Nutzung,
   trägt hier also nicht.
+  *Nachtrag 2026-09-13:* SDK 1.1.0 und Engine 3.10.1 sind seit 2026-09-06
+  veröffentlicht; dieser Grund entfällt, die übrigen tragen die Entscheidung
+  weiter (`2026-09-13-lean-herdr-katalog-review-und-sdk-1-1-design.md`, 6.2).
 - **Kein Workspace als Kontextspeicher.** Er wäre der dritte neben
   `ctx_knowledge` und `ctx_handoff`, für einen Zweck, den der erste erfüllt.
 - **Kein eigener Wissens-Reaper.** lean-ctx' Lebenszyklus genügt (§7).
