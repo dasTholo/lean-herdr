@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 import lean_herdr
-from lean_herdr.bus import BusError, canonical_root
+from lean_herdr.bus import BusError, GitUnusable, canonical_root
 from lean_herdr.settings import (
     OVERLAY_PATH,
     SETTINGS_PATH,
@@ -486,6 +486,18 @@ def _template_report(root: Path) -> tuple[dict[str, str], list[str]]:
     return templates, state_warnings({**templates, **lock_state}) + unreadable
 
 
+def _unrooted(error: str, runner: Any) -> dict[str, Any]:
+    """The answer without a root: one error, and only what needs no project is asked."""
+    install, warnings = machine_report(None, data={}, overlay_auto=False, runner=runner)
+    return {
+        "ok": False,
+        "errors": [error],
+        "warnings": warnings,
+        "install": install,
+        "templates": {},
+    }
+
+
 def workspace_check(*, root: Path | None = None, runner: Any = subprocess.run) -> dict[str, Any]:
     """Will `up` and `dispatch` run here, and where does it get quietly worse?
 
@@ -495,15 +507,12 @@ def workspace_check(*, root: Path | None = None, runner: Any = subprocess.run) -
     """
     try:
         base = root if root is not None else canonical_root()
+    except GitUnusable as exc:
+        # BEFORE BusError, whose subclass it is: a git that is missing or hung
+        # is not a directory outside a repository, and needs another repair.
+        return _unrooted(f"{exc} -- check that git is installed and on PATH", runner)
     except BusError as exc:
-        install, warnings = machine_report(None, data={}, overlay_auto=False, runner=runner)
-        return {
-            "ok": False,
-            "errors": [f"{exc} -- run this inside a git repository"],
-            "warnings": warnings,
-            "install": install,
-            "templates": {},
-        }
+        return _unrooted(f"{exc} -- run this inside a git repository", runner)
     errors, data, auto = _config_errors(base)
     install, warnings = machine_report(base, data=data, overlay_auto=auto, runner=runner)
     templates, template_lines = _template_report(base)

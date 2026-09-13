@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from lean_herdr import checkcmd
-from lean_herdr.bus import BusError
+from lean_herdr.bus import BusError, GitUnusable
 from lean_herdr.checkcmd import (
     TEMP_IGNORE,
     TEMP_PROBE,
@@ -437,6 +437,20 @@ def test_outside_a_repository_there_is_no_root_and_an_error(monkeypatch, snapsho
     assert "root" not in answer
     assert answer["errors"][0].startswith("git rev-parse --git-common-dir failed")
     assert answer["templates"] == {}
+
+
+def test_a_git_that_cannot_answer_is_not_sent_into_a_repository(monkeypatch, snapshot):
+    """`run this inside a git repository` is the wrong repair for a missing or hung git."""
+
+    def unusable(*_args, **_kwargs):
+        raise GitUnusable("git_unusable: [Errno 2] No such file or directory: 'git'")
+
+    monkeypatch.setattr(checkcmd, "canonical_root", unusable)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    answer = workspace_check()
+    assert answer["ok"] is False
+    assert answer["errors"][0].startswith("git_unusable"), answer["errors"]
+    assert "inside a git repository" not in answer["errors"][0], answer["errors"]
 
 
 def test_a_runner_that_decodes_strictly_does_not_crash_check(monkeypatch, repo, snapshot):
