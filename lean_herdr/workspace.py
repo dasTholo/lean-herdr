@@ -390,9 +390,9 @@ def workspace_up(*, root: Path | None = None, herdr: Herdr | None = None) -> dic
 def build_parser() -> argparse.ArgumentParser:
     p = _Parser(
         prog="lean-herdr workspace",
-        description="Set the project up, or start the orchestrator from its config.",
+        description="Set the project up, check it, or start the orchestrator from its config.",
     )
-    p.add_argument("command", choices=("up", "init"))
+    p.add_argument("command", choices=("up", "init", "check"))
     p.add_argument(
         "--force",
         action="store_true",
@@ -445,6 +445,11 @@ def main(argv: list[str] | None = None) -> int:
             }
         elif args.command == "up":
             result = workspace_up()
+        elif args.command == "check":
+            # Imported on the call, like `initcmd`: `up` needs none of it.
+            from lean_herdr.checkcmd import workspace_check
+
+            result = workspace_check()
         else:
             # Imported on the call, not up top: `up` is what runs on every
             # start, and it needs none of this.

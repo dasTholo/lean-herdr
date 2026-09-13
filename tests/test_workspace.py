@@ -704,6 +704,16 @@ def test_up_refuses_every_init_flag(capsys, flags):
     assert answer["error"] == f"usage_error: up does not take {flags[0]}"
 
 
+def test_main_routes_check_and_refuses_init_flags_there(monkeypatch, capsys):
+    """`workspace_check` is imported ON THE CALL, so the seam is `checkcmd`."""
+    monkeypatch.setattr("lean_herdr.checkcmd.workspace_check", lambda: {"ok": True, "errors": []})
+    assert workspace.main(["check"]) == 0
+    assert json.loads(capsys.readouterr().out) == {"ok": True, "errors": []}
+    assert workspace.main(["check", "--force"]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["error"] == "usage_error: check does not take --force"
+
+
 @pytest.mark.parametrize(
     ("raised", "expected"),
     [

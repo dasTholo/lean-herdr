@@ -6,17 +6,8 @@ import tomllib
 
 import pytest
 
-from lean_herdr.initcmd import (
-    TEMP_IGNORE,
-    TEMP_PROBE,
-    WARM_TIMEOUT_S,
-    _check_allowlist,
-    _check_approvals,
-    _check_overlay_ignored,
-    _check_plugins,
-    _check_temp_ignored,
-    workspace_init,
-)
+from lean_herdr.checkcmd import TEMP_IGNORE
+from lean_herdr.initcmd import WARM_TIMEOUT_S, workspace_init
 from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
 from lean_herdr.templating import DEFAULT_VALUES, LAYOUT, LOCK_PATH, digest
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
@@ -27,6 +18,26 @@ from tests.doubles import Completed, FakeProc, which_stub
 def repo(tmp_path):
     subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, timeout=30)
     return tmp_path
+
+
+#: A snapshot install that shadows nothing. `init` reports the install through
+#: `checkcmd.install_report`, and this suite runs from the repo venv -- which is,
+#: correctly, no snapshot. tests/test_checkcmd.py tests the real thing.
+HEALTHY_INSTALL = {
+    "tool": True,
+    "editable": False,
+    "package": "/snap/lean_herdr",
+    "binary": "/snap/bin/lean-herdr",
+    "plugin": None,
+}
+
+
+@pytest.fixture(autouse=True)
+def snapshot_install(monkeypatch):
+    monkeypatch.setattr(
+        "lean_herdr.checkcmd.install_report",
+        lambda **_kwargs: (dict(HEALTHY_INSTALL), []),
+    )
 
 
 def quiet(monkeypatch):
@@ -215,89 +226,15 @@ def test_a_healthy_machine_warns_about_nothing(monkeypatch, repo):
     replies = {
         ("allow", "--list"): "Extra (additive, via `lean-ctx allow`): lean-herdr",
         ("config", "approvals"): '{"state": "approved"}',
-        ("plugin", "list"): "- lean.herdr (lean-herdr context) enabled\n",
+        ("plugin", "list"): (
+            "- lean.herdr (lean-herdr context) enabled [local:/snap/lean_herdr/plugin]\n"
+        ),
+        ("config", "show"): (
+            '{"user": {"config": {"commit": {"generation": '
+            '{"command": "lean-herdr llm generate"}}}}}'
+        ),
     }
     assert workspace_init(root=repo, runner=FakeProc(replies=replies))["warnings"] == []
-
-
-def test_the_allowlist_check_answers_a_line_only_when_the_name_is_missing(monkeypatch):
-    monkeypatch.setattr("shutil.which", which_stub(True))
-    granted = FakeProc(replies={("allow", "--list"): "Extra (additive): lean-herdr"})
-    assert _check_allowlist(granted) is None
-    silent = FakeProc(replies={("allow", "--list"): "Mode: restricted -- 73 command(s)"})
-    line = _check_allowlist(silent)
-    assert line is not None and "lean-ctx allow lean-herdr" in line
-
-
-@pytest.mark.parametrize(
-    "reply",
-    [
-        pytest.param("not json at all", id="no brace at all"),
-        pytest.param("warning: no hooks\n{oops", id="a brace, but no json"),
-        pytest.param('{"other": 1}', id="json without the key"),
-    ],
-)
-def test_an_unreadable_approvals_reply_is_reported_as_an_unknown_state(
-    monkeypatch, tmp_path, reply
-):
-    """Never a green verdict over a reply nobody could parse."""
-    monkeypatch.setattr("shutil.which", which_stub(True))
-    line = _check_approvals(tmp_path, FakeProc(replies={("config", "approvals"): reply}))
-    assert line is not None and "state: None" in line
-
-
-def test_the_approvals_check_parses_from_the_first_brace(monkeypatch, tmp_path):
-    """`_read` concatenates stdout AND stderr, so `wt`'s warning comes first.
-
-    Parsing from byte 0 would make an approved project read as unparseable
-    the moment `wt` has anything to complain about.
-    """
-    monkeypatch.setattr("shutil.which", which_stub(True))
-    noisy = FakeProc(
-        replies={("config", "approvals"): 'warning: hooks changed\n{"state": "approved"}'}
-    )
-    assert _check_approvals(tmp_path, noisy) is None
-
-
-def test_the_plugin_check_only_fires_on_a_warning_line(monkeypatch):
-    monkeypatch.setattr("shutil.which", which_stub(True))
-    clean = FakeProc(replies={("plugin", "list"): "- lean.herdr (context) enabled\n"})
-    assert _check_plugins(clean) is None
-    noisy = FakeProc(replies={("plugin", "list"): "- lean.herdr\n  warning: unknown event\n"})
-    line = _check_plugins(noisy)
-    assert line is not None and "warning:" in line
-
-
-def test_the_overlay_check_asks_git_rather_than_reading_gitignore(monkeypatch, repo):
-    """The verdict is git's, not ours.
-
-    A rule can sit in a parent directory, in `.git/info/exclude` or in a
-    global excludes file, and a text search over `.gitignore` would raise
-    a false alarm on every one of them.
-    """
-    monkeypatch.setattr("shutil.which", which_stub(True))
-    named = FakeProc(replies={("check-ignore",): f".gitignore:20:{OVERLAY_PATH}\t{OVERLAY_PATH}"})
-    assert _check_overlay_ignored(repo, named) is None
-    silent = FakeProc(replies={("check-ignore",): ""})
-    line = _check_overlay_ignored(repo, silent)
-    assert line is not None and str(OVERLAY_PATH) in line
-
-
-def test_without_git_there_is_no_verdict_on_the_overlay(monkeypatch, repo):
-    """No git at all: no answer, and an unasked question invents none."""
-    monkeypatch.setattr("shutil.which", lambda binary: None if binary == "git" else "/usr/bin/fake")
-    assert _check_overlay_ignored(repo, FakeProc(default="")) is None
-
-
-def test_the_temp_check_asks_git_about_a_probe_name(monkeypatch, repo):
-    """`check-ignore` matches patterns, so the probe needs no file on disk."""
-    monkeypatch.setattr("shutil.which", which_stub(True))
-    named = FakeProc(replies={("check-ignore",): f".gitignore:23:{TEMP_IGNORE}\t{TEMP_PROBE}"})
-    assert _check_temp_ignored(repo, named) is None
-    assert named.called_with("check-ignore", "-v", str(TEMP_PROBE))
-    silent = FakeProc(replies={("check-ignore",): ""})
-    line = _check_temp_ignored(repo, silent)
-    assert line is not None and TEMP_IGNORE in line
 
 
 def test_an_ignored_overlay_alone_still_warns_about_the_temp_files(monkeypatch, repo):
@@ -674,3 +611,12 @@ def test_a_broken_lock_is_lock_malformed_and_nothing_is_written(monkeypatch, rep
     assert answer["error"].endswith("-- fix or delete it")
     assert not (repo / "opencode.jsonc").exists()
     assert (repo / LOCK_PATH).read_text(encoding="utf-8") == "not json"
+
+
+def test_init_names_the_generator_through_the_producer_check_uses(monkeypatch, repo):
+    """`init` holds no warning list of its own: a machine without the generator is
+    named here exactly as `workspace check` names it."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    no_generator = FakeProc(replies={("config", "show"): '{"user": {"config": null}}'})
+    warnings = workspace_init(root=repo, runner=no_generator)["warnings"]
+    assert any("commit.generation.command" in w for w in warnings), warnings

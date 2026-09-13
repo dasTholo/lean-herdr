@@ -1,0 +1,448 @@
+"""`workspace check`: every group of warnings, and the errors that stop `up` and `dispatch`."""
+
+import json
+import subprocess
+from pathlib import Path
+
+import pytest
+
+from lean_herdr import checkcmd
+from lean_herdr.bus import BusError
+from lean_herdr.checkcmd import (
+    TEMP_IGNORE,
+    TEMP_PROBE,
+    _check_allowlist,
+    _check_approvals,
+    _check_generator,
+    _check_overlay_ignored,
+    _check_plugins,
+    _check_temp_ignored,
+    _check_temp_leftovers,
+    _linked_plugin,
+    install_report,
+    workspace_check,
+)
+from lean_herdr.initcmd import workspace_init
+from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
+from lean_herdr.templating import LAYOUT, LOCK_PATH
+from tests.doubles import FakeProc, which_stub
+
+
+@pytest.fixture
+def repo(tmp_path):
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True, timeout=30)
+    return tmp_path
+
+
+def test_the_allowlist_check_answers_a_line_only_when_the_name_is_missing(monkeypatch):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    granted = FakeProc(replies={("allow", "--list"): "Extra (additive): lean-herdr"})
+    assert _check_allowlist(granted) is None
+    silent = FakeProc(replies={("allow", "--list"): "Mode: restricted -- 73 command(s)"})
+    line = _check_allowlist(silent)
+    assert line is not None and "lean-ctx allow lean-herdr" in line
+
+
+@pytest.mark.parametrize(
+    "reply",
+    [
+        pytest.param("not json at all", id="no brace at all"),
+        pytest.param("warning: no hooks\n{oops", id="a brace, but no json"),
+        pytest.param('{"other": 1}', id="json without the key"),
+    ],
+)
+def test_an_unreadable_approvals_reply_is_reported_as_an_unknown_state(
+    monkeypatch, tmp_path, reply
+):
+    """Never a green verdict over a reply nobody could parse."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    line = _check_approvals(tmp_path, FakeProc(replies={("config", "approvals"): reply}))
+    assert line is not None and "state: None" in line
+
+
+def test_the_approvals_check_parses_from_the_first_brace(monkeypatch, tmp_path):
+    """`_read` concatenates stdout AND stderr, so `wt`'s warning comes first.
+
+    Parsing from byte 0 would make an approved project read as unparseable
+    the moment `wt` has anything to complain about.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    noisy = FakeProc(
+        replies={("config", "approvals"): 'warning: hooks changed\n{"state": "approved"}'}
+    )
+    assert _check_approvals(tmp_path, noisy) is None
+
+
+def test_the_plugin_check_only_fires_on_a_warning_line(monkeypatch):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    clean = FakeProc(replies={("plugin", "list"): "- lean.herdr (context) enabled\n"})
+    assert _check_plugins(clean) is None
+    noisy = FakeProc(replies={("plugin", "list"): "- lean.herdr\n  warning: unknown event\n"})
+    line = _check_plugins(noisy)
+    assert line is not None and "warning:" in line
+
+
+def test_the_overlay_check_asks_git_rather_than_reading_gitignore(monkeypatch, repo):
+    """The verdict is git's, not ours.
+
+    A rule can sit in a parent directory, in `.git/info/exclude` or in a
+    global excludes file, and a text search over `.gitignore` would raise
+    a false alarm on every one of them.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    named = FakeProc(replies={("check-ignore",): f".gitignore:20:{OVERLAY_PATH}\t{OVERLAY_PATH}"})
+    assert _check_overlay_ignored(repo, named) is None
+    silent = FakeProc(replies={("check-ignore",): ""})
+    line = _check_overlay_ignored(repo, silent)
+    assert line is not None and str(OVERLAY_PATH) in line
+
+
+def test_without_git_there_is_no_verdict_on_the_overlay(monkeypatch, repo):
+    """No git at all: no answer, and an unasked question invents none."""
+    monkeypatch.setattr("shutil.which", lambda binary: None if binary == "git" else "/usr/bin/fake")
+    assert _check_overlay_ignored(repo, FakeProc(default="")) is None
+
+
+def test_the_temp_check_asks_git_about_a_probe_name(monkeypatch, repo):
+    """`check-ignore` matches patterns, so the probe needs no file on disk."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    named = FakeProc(replies={("check-ignore",): f".gitignore:23:{TEMP_IGNORE}\t{TEMP_PROBE}"})
+    assert _check_temp_ignored(repo, named) is None
+    assert named.called_with("check-ignore", "-v", str(TEMP_PROBE))
+    silent = FakeProc(replies={("check-ignore",): ""})
+    line = _check_temp_ignored(repo, silent)
+    assert line is not None and TEMP_IGNORE in line
+
+
+def wt_show(user=None, system=None) -> str:
+    """wt's own shape (0.77.0), with the stderr line `_read` appends behind the JSON."""
+    shown = {
+        "user": {"config": user, "exists": user is not None, "path": "/home/x/.config/wt.toml"},
+        "system": {"exists": system is not None, "path": "/etc/xdg/worktrunk/config.toml"},
+    }
+    if system is not None:
+        shown["system"]["config"] = system
+    return json.dumps(shown, indent=2) + "\n\n▲ Project config has key list.json-schema\n"
+
+
+def generation(command: str) -> dict:
+    return {"commit": {"generation": {"command": command}}}
+
+
+@pytest.mark.parametrize(
+    ("user", "system", "warned"),
+    [
+        pytest.param(generation("lean-herdr llm generate"), None, False, id="user config"),
+        pytest.param(
+            generation("lean-herdr llm generate --effort low"), None, False, id="flags behind it"
+        ),
+        pytest.param(None, generation("lean-herdr llm generate"), False, id="system config"),
+        pytest.param(
+            generation("/home/x/lean-herdr/bin/herdr-llm generate"),
+            generation("lean-herdr llm generate"),
+            True,
+            id="user before system",
+        ),
+        pytest.param(None, None, True, id="none at all"),
+    ],
+)
+def test_the_generator_is_read_user_before_system(monkeypatch, tmp_path, user, system, warned):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    proc = FakeProc(replies={("config", "show"): wt_show(user, system)})
+    line = _check_generator(tmp_path, proc)
+    assert (line is not None) is warned, line
+    assert proc.called_with("wt", "config", "show", "--format", "json")
+
+
+def test_a_missing_generator_names_the_line_to_add(monkeypatch, tmp_path):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    line = _check_generator(tmp_path, FakeProc(replies={("config", "show"): wt_show()}))
+    assert line is not None and 'command = "lean-herdr llm generate"' in line
+
+
+def test_an_unreadable_wt_answer_is_no_green_verdict(monkeypatch, tmp_path):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    line = _check_generator(tmp_path, FakeProc(replies={("config", "show"): "error: no"}))
+    assert line is not None and "no readable answer" in line
+
+
+def prefix_with(tmp_path: Path, *, receipt: bool = True) -> tuple[Path, Path]:
+    """A prepared tool venv: (prefix, the package's __init__.py inside it)."""
+    prefix = tmp_path / "tools" / "lean-herdr"
+    package = prefix / "lib" / "python3.14" / "site-packages" / "lean_herdr" / "__init__.py"
+    package.parent.mkdir(parents=True)
+    package.write_text("", encoding="utf-8")
+    (prefix / "bin").mkdir()
+    (prefix / "bin" / "lean-herdr").write_text("", encoding="utf-8")
+    if receipt:
+        (prefix / "uv-receipt.toml").write_text("", encoding="utf-8")
+    return prefix, package
+
+
+def report(prefix, package, *, binary, direct_url=None, environ=None):
+    return install_report(
+        prefix=prefix,
+        package=package,
+        which=lambda _name: None if binary is None else str(binary),
+        direct_url=lambda: direct_url,
+        environ=environ or {},
+    )
+
+
+def test_a_snapshot_reached_through_a_symlink_on_path_warns_about_nothing(tmp_path):
+    """`~/.local/bin/lean-herdr` is a symlink into the tool venv -- the correct install."""
+    prefix, package = prefix_with(tmp_path)
+    link = tmp_path / "local-bin" / "lean-herdr"
+    link.parent.mkdir()
+    link.symlink_to(prefix / "bin" / "lean-herdr")
+    install, lines = report(
+        prefix, package, binary=link, direct_url='{"url": "file:///x", "dir_info": {}}'
+    )
+    assert lines == []
+    assert install["tool"] is True
+    assert install["editable"] is False
+    assert install["package"] == str(package.parent.resolve())
+    assert install["binary"] == str((prefix / "bin" / "lean-herdr").resolve())
+
+
+def test_no_receipt_is_no_tool_venv(tmp_path):
+    prefix, package = prefix_with(tmp_path, receipt=False)
+    install, lines = report(prefix, package, binary=prefix / "bin" / "lean-herdr")
+    assert install["tool"] is False
+    assert any("uv-receipt.toml" in line for line in lines), lines
+
+
+def test_an_editable_install_is_named(tmp_path):
+    prefix, package = prefix_with(tmp_path)
+    install, lines = report(
+        prefix,
+        package,
+        binary=prefix / "bin" / "lean-herdr",
+        direct_url='{"url": "file:///home/x/lean-herdr", "dir_info": {"editable": true}}',
+    )
+    assert install["editable"] is True
+    assert any("editable" in line for line in lines), lines
+
+
+def test_a_package_outside_the_prefix_names_pythonpath_when_it_is_set(tmp_path):
+    prefix, _ = prefix_with(tmp_path)
+    fake = tmp_path / "elsewhere" / "lean_herdr" / "__init__.py"
+    fake.parent.mkdir(parents=True)
+    fake.write_text("", encoding="utf-8")
+    _, lines = report(
+        prefix,
+        fake,
+        binary=prefix / "bin" / "lean-herdr",
+        environ={"PYTHONPATH": str(tmp_path / "elsewhere")},
+    )
+    assert any("PYTHONPATH=" in line for line in lines), lines
+
+
+def test_a_binary_outside_the_prefix_is_a_shadowing_venv(tmp_path):
+    prefix, package = prefix_with(tmp_path)
+    venv = tmp_path / "repo" / ".venv" / "bin" / "lean-herdr"
+    venv.parent.mkdir(parents=True)
+    venv.write_text("", encoding="utf-8")
+    _, lines = report(prefix, package, binary=venv)
+    assert any("outside" in line and ".venv" in line for line in lines), lines
+
+
+def test_no_binary_on_path_is_named(tmp_path):
+    prefix, package = prefix_with(tmp_path)
+    _, lines = report(prefix, package, binary=None)
+    assert any("not on PATH" in line for line in lines), lines
+
+
+def test_the_plugin_link_is_read_from_the_local_marker(monkeypatch, tmp_path):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    expected = tmp_path / "lean_herdr" / "plugin"
+    good = FakeProc(
+        replies={
+            ("plugin", "list"): (
+                f"1 plugin installed:\n- lean.herdr (lean-herdr context) enabled [local:{expected}]\n"
+            )
+        }
+    )
+    assert _linked_plugin(good, expected) == (str(expected), None)
+    assert good.called_with("herdr", "plugin", "list", "--plugin", "lean.herdr")
+    checkout = FakeProc(
+        replies={("plugin", "list"): "- lean.herdr (context) enabled [local:/home/x/lean-herdr]\n"}
+    )
+    linked, line = _linked_plugin(checkout, expected)
+    assert linked == "/home/x/lean-herdr"
+    assert line is not None and f"herdr plugin link {expected}" in line
+
+
+def test_without_herdr_there_is_no_plugin_verdict(monkeypatch, tmp_path):
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    assert _linked_plugin(FakeProc(), tmp_path) == (None, None)
+
+
+def test_temp_files_left_behind_are_named(tmp_path):
+    assert _check_temp_leftovers(tmp_path) is None
+    folder = tmp_path / OVERLAY_PATH.parent
+    folder.mkdir(parents=True)
+    (folder / ".tmp-models.auto.toml.k3j9x_ab").write_text("half", encoding="utf-8")
+    line = _check_temp_leftovers(tmp_path)
+    assert line is not None and ".tmp-models.auto.toml.k3j9x_ab" in line
+
+
+#: A snapshot install that shadows nothing -- this suite runs from the repo venv,
+#: which is, correctly, no snapshot.
+HEALTHY = {
+    "tool": True,
+    "editable": False,
+    "package": "/snap/lean_herdr",
+    "binary": "/snap/bin/lean-herdr",
+    "plugin": None,
+}
+
+
+@pytest.fixture
+def snapshot(monkeypatch):
+    monkeypatch.setattr(checkcmd, "install_report", lambda **_kwargs: (dict(HEALTHY), []))
+
+
+def healthy_machine() -> FakeProc:
+    return FakeProc(
+        replies={
+            ("allow", "--list"): "Extra (additive, via `lean-ctx allow`): lean-herdr",
+            ("config", "approvals"): '{"state": "approved"}',
+            ("config", "show"): wt_show(generation("lean-herdr llm generate")),
+            ("plugin", "list"): "- lean.herdr (context) enabled [local:/snap/lean_herdr/plugin]\n",
+            ("check-ignore",): ".gitignore:1:rule\tpath",
+        }
+    )
+
+
+def initialised(monkeypatch, repo):
+    """`init` on a machine without binaries, then every binary back on the PATH."""
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    assert workspace_init(root=repo)["ok"] is True
+    monkeypatch.setattr("shutil.which", which_stub(True))
+
+
+def test_an_initialised_project_on_a_healthy_machine_is_ok_and_all_current(
+    monkeypatch, repo, snapshot
+):
+    initialised(monkeypatch, repo)
+    answer = workspace_check(root=repo, runner=healthy_machine())
+    assert answer["ok"] is True, answer
+    assert answer["errors"] == []
+    assert answer["warnings"] == []
+    assert answer["root"] == str(repo)
+    assert answer["templates"] == {relative: "current" for relative in LAYOUT.values()}
+    assert answer["install"]["plugin"] == "/snap/lean_herdr/plugin"
+
+
+def test_check_changes_nothing_and_runs_nothing_that_writes(monkeypatch, repo, snapshot):
+    """No start, no write, no fetch, no warm-up -- and no gesture that belongs to a human."""
+    initialised(monkeypatch, repo)
+
+    def files() -> dict:
+        return {p: p.read_bytes() for p in repo.rglob("*") if p.is_file() and ".git" not in p.parts}
+
+    before = files()
+    proc = healthy_machine()
+    workspace_check(root=repo, runner=proc)
+    assert files() == before
+    for forbidden in (
+        ("allow", "lean-herdr"),
+        ("approvals", "add"),
+        ("plugin", "link"),
+        ("opencode",),
+    ):
+        assert not proc.called_with(*forbidden), proc.flat()
+
+
+def test_outside_a_repository_there_is_no_root_and_an_error(monkeypatch, snapshot):
+    def no_repo(*_args, **_kwargs):
+        raise BusError("git rev-parse --git-common-dir failed: not a git repository")
+
+    monkeypatch.setattr(checkcmd, "canonical_root", no_repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    answer = workspace_check()
+    assert answer["ok"] is False
+    assert "root" not in answer
+    assert answer["errors"][0].startswith("git rev-parse --git-common-dir failed")
+    assert answer["templates"] == {}
+
+
+def test_a_project_init_never_touched_is_not_initialised(monkeypatch, repo, snapshot):
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    answer = workspace_check(root=repo)
+    assert answer["ok"] is False
+    assert any(e.startswith("not_initialised:") for e in answer["errors"]), answer["errors"]
+    assert any(e.startswith("no_agent_config:") for e in answer["errors"]), answer["errors"]
+    assert answer["templates"] == {relative: "missing" for relative in LAYOUT.values()}
+
+
+@pytest.mark.parametrize(
+    ("config", "overlay", "names"),
+    [
+        pytest.param(
+            '[roles.builder]\ndirection = "links"\n', None, "direction", id="a role table"
+        ),
+        pytest.param('[llm]\neffort = "enormous"\n', None, "effort", id="the llm table"),
+        pytest.param(None, "[llm]\nmodel = 5\n", "lean-herdr models apply", id="the overlay"),
+    ],
+)
+def test_what_stops_up_or_dispatch_is_an_error(monkeypatch, repo, snapshot, config, overlay, names):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    if config is not None:
+        (repo / SETTINGS_PATH).write_text(config, encoding="utf-8")
+    if overlay is not None:
+        (repo / OVERLAY_PATH).write_text(overlay, encoding="utf-8")
+    answer = workspace_check(root=repo)
+    assert answer["ok"] is False
+    assert any(e.startswith("config_error:") and names in e for e in answer["errors"]), answer
+
+
+def test_a_broken_lock_guesses_no_state(monkeypatch, repo, snapshot):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / LOCK_PATH).write_text("not json", encoding="utf-8")
+    answer = workspace_check(root=repo)
+    assert answer["templates"] == {}
+    assert any(w.startswith("lock_malformed:") for w in answer["warnings"]), answer["warnings"]
+
+
+def test_an_outdated_template_names_init_update(monkeypatch, repo, snapshot):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    lock = repo / LOCK_PATH
+    lock.write_text(
+        lock.read_text(encoding="utf-8").replace("uv run pytest", "cargo test"), encoding="utf-8"
+    )
+    answer = workspace_check(root=repo)
+    assert answer["templates"][".config/wt.toml"] == "outdated"
+    assert any(
+        w.startswith(".config/wt.toml is outdated") and "init --update" in w
+        for w in answer["warnings"]
+    ), answer["warnings"]
+
+
+@pytest.mark.parametrize("auto", [False, True], ids=["auto-off", "auto-on"])
+def test_only_the_overlay_ignored_names_the_temp_line_whatever_auto_says(
+    monkeypatch, repo, snapshot, auto
+):
+    """One verdict per path: the overlay's rule covers the overlay and nothing else.
+
+    With `auto` on both checks run -- and a single `check-ignore` over both paths
+    would answer as soon as the overlay is covered.
+    """
+    initialised(monkeypatch, repo)
+    if auto:
+        (repo / SETTINGS_PATH).write_text("[models]\nauto = true\n", encoding="utf-8")
+    proc = FakeProc(
+        replies={
+            ("check-ignore", "-v", str(OVERLAY_PATH)): (
+                f".gitignore:22:{OVERLAY_PATH}\t{OVERLAY_PATH}"
+            )
+        },
+        default="",
+    )
+    answer = workspace_check(root=repo, runner=proc)
+    assert any(TEMP_IGNORE in w for w in answer["warnings"]), answer["warnings"]
+    assert not any(f"does not ignore {OVERLAY_PATH}" in w for w in answer["warnings"])

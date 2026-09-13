@@ -9,28 +9,26 @@ stranger's `opencode.jsonc` or `.claude/settings.json` flattened in
 silence would be the most expensive mistake this tool could make. Skipped
 files are named in the result, so nobody has to guess what happened.
 
-The second: preconditions are REPORTED, never repaired. Every foreign
-command here only READS -- `lean-ctx allow --list`, `wt config approvals
-list --format json`, `herdr plugin list`. `init` runs no `lean-ctx allow`
-and no `wt config approvals add`: granting a machine-wide permission is a
-gesture that belongs to the human at the keyboard. The ONE exception is
-the warm-up (`_warm_opencode`), and it stays inside the rule's intent: it
-changes nothing on the machine, only opencode's own cache for this
-project, and it is aborted on purpose.
+The second: preconditions are REPORTED, never repaired. The warnings come
+out of `checkcmd.machine_report`, the producer `workspace check` uses too,
+and every foreign command it runs only READS. `init` runs no `lean-ctx
+allow`, no `wt config approvals add` and no `herdr plugin link`: granting a
+machine-wide permission is a gesture that belongs to the human at the
+keyboard. The ONE exception is the warm-up (`_warm_opencode`), and it stays
+inside the rule's intent: it changes nothing on the machine, only opencode's
+own cache for this project, and it is aborted on purpose.
 """
 
 from __future__ import annotations
 
-import json
-import re
 import shutil
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from lean_herdr.bus import BusError, GitUnusable, canonical_root
+from lean_herdr.checkcmd import machine_report
 from lean_herdr.settings import (
-    OVERLAY_PATH,
     SETTINGS_PATH,
     SettingsError,
     model_warnings,
@@ -53,9 +51,6 @@ from lean_herdr.templating import (
 )
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 
-#: A read-only check must not hold up the whole call.
-CHECK_TIMEOUT_S = 10.0
-
 #: The warm-up, and the one number it turns on. opencode's FIRST bootstrap
 #: in a project that carries a project plugin hangs -- and the plugin this
 #: very command writes is such a plugin. A bootstrap that got far enough
@@ -66,186 +61,6 @@ CHECK_TIMEOUT_S = 10.0
 #: NOT `--pure`: that switch skips external plugins, i.e. exactly the step
 #: that has to be warmed. Measured 3 of 3 still hanging afterwards.
 WARM_TIMEOUT_S = 8.0
-
-
-def _read(runner: Any, *cmd: str, cwd: Path | None = None) -> str | None:
-    """One read-only foreign command. None when it cannot run at all.
-
-    stdout AND stderr, because `wt` writes its warnings to stderr and a
-    check that ignored them would report a green state over a complaint.
-    """
-    if shutil.which(cmd[0]) is None:
-        return None
-    try:
-        proc = runner(
-            list(cmd),
-            capture_output=True,
-            text=True,
-            timeout=CHECK_TIMEOUT_S,
-            cwd=None if cwd is None else str(cwd),
-            check=False,
-        )
-    except OSError, subprocess.SubprocessError:
-        return None
-    return (proc.stdout or "") + (proc.stderr or "")
-
-
-def _check_allowlist(runner: Any) -> str | None:
-    """`lean-ctx allow --list`. A line when it does not name `lean-herdr`.
-
-    Word boundaries, not a plain substring: the listing prints the config
-    path too, and a project directory called lean-herdr would otherwise
-    read as a granted permission.
-
-    This line can only ever be a hint. `lean-ctx allow --list` prints the
-    additive `Extra` list in full but reduces the base `shell_allowlist`
-    to a COUNT ("74 command(s) permitted"), so an operator who put
-    `lean-herdr` in the base list is indistinguishable here from one who
-    granted it nowhere. Measured 2026-09-04; there is no --format json.
-    Claiming "does not allow" would therefore be a verdict the check
-    cannot reach -- and a false alarm on every run, in every project.
-    """
-    allowlist = _read(runner, "lean-ctx", "allow", "--list")
-    if allowlist is None or re.search(r"\blean-herdr\b", allowlist):
-        return None
-    return (
-        "lean-ctx allow --list does not name `lean-herdr` -- it shows only the "
-        "additive `Extra` list, never the base allowlist, so this is a hint and "
-        "not a verdict. If the base list does not carry it either, an agent under "
-        "shell gating cannot run it: lean-ctx allow lean-herdr"
-    )
-
-
-def _check_approvals(root: Path, runner: Any) -> str | None:
-    """`wt config approvals list`. A line for anything but `approved`.
-
-    An unreadable reply is reported as an unknown state, never as a green
-    one: this check exists because `wt` skips unapproved hooks silently.
-    """
-    approvals = _read(runner, "wt", "config", "approvals", "list", "--format", "json", cwd=root)
-    if approvals is None:
-        return None
-    # `_read` concatenates stdout AND stderr, so the reply may carry a
-    # warning line ahead of the JSON -- parse from the first brace rather
-    # than from the first byte.
-    start = approvals.find("{")
-    try:
-        state = json.loads(approvals[start:])["state"] if start >= 0 else None
-    except json.JSONDecodeError, KeyError, TypeError:
-        state = None
-    if state == "approved":
-        return None
-    return (
-        f"worktrunk project hooks are not approved (state: {state!r}) -- "
-        "wt skips them SILENTLY and reports success, so the pre-merge "
-        "test gate would not run: wt config approvals add"
-    )
-
-
-def _check_plugins(runner: Any) -> str | None:
-    """`herdr plugin list`. A line when the listing carries a warning."""
-    plugins = _read(runner, "herdr", "plugin", "list")
-    if plugins is None or "warning:" not in plugins:
-        return None
-    return (
-        "herdr plugin list carries a `warning:` line -- "
-        "Herdr does not reject an unknown plugin event, it only warns"
-    )
-
-
-def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
-    """`[models].auto` is on and git does not ignore the overlay.
-
-    `git check-ignore` is asked rather than `.gitignore` read, because the
-    answer is git's and not ours: a rule can sit in a parent directory, in
-    `.git/info/exclude` or in a global excludes file, and a text search
-    would raise a false alarm on every one of them.
-
-    `init` does NOT append the line itself. A `.gitignore` belongs to the
-    project, and this module writes only its own files -- the operator
-    gets the exact line and decides.
-    """
-    answer = _read(runner, "git", "check-ignore", "-v", str(OVERLAY_PATH), cwd=root)
-    if answer is None or answer.strip():
-        # None: no git at all, so no verdict. Non-empty: git named the
-        # rule that covers it, which is exactly what we wanted.
-        return None
-    return (
-        f"[models].auto is on and git does not ignore {OVERLAY_PATH} -- "
-        "it is machine-local and must not be shared. Add to .gitignore: "
-        f"{OVERLAY_PATH}"
-    )
-
-
-#: The ignore line the temp files of the whole-file writers under
-#: `.lean-ctx/lean-herdr/` need. Their names change on every run, so no
-#: line naming one of them could ever cover the next.
-TEMP_IGNORE = ".lean-ctx/lean-herdr/.tmp-*"
-
-#: One name such a writer could draw. `git check-ignore` matches patterns and
-#: needs no file on disk, so this probe stands for every name `mkstemp` picks.
-TEMP_PROBE = OVERLAY_PATH.parent / ".tmp-models.auto.toml.probe"
-
-
-def _check_temp_ignored(root: Path, runner: Any) -> str | None:
-    """git does not ignore the writers' temp files. Asked always, never behind `auto`.
-
-    Its own call, never one shared with `_check_overlay_ignored`: a single
-    `check-ignore` over both paths answers non-empty as soon as ONE of them
-    is covered -- and a rule for the overlay alone would then pass for both.
-    """
-    answer = _read(runner, "git", "check-ignore", "-v", str(TEMP_PROBE), cwd=root)
-    if answer is None or answer.strip():
-        return None
-    return (
-        f"git does not ignore {TEMP_IGNORE} -- a writer killed mid-run leaves a "
-        "temp file there that would show up in git status. Add to .gitignore: "
-        f"{TEMP_IGNORE}"
-    )
-
-
-def _warnings(
-    root: Path, *, data: dict[str, Any], overlay_auto: bool, runner: Any = subprocess.run
-) -> list[str]:
-    """The README checklist as lines. Nothing here changes anything.
-
-    The three foreign checks each live in their own function: they share
-    nothing but the `runner`, and four independent checks in one body sat
-    over the complexity threshold and could only be tested through `init`.
-
-    `data` is the settings file, already read. The config-derived warnings
-    come out of `settings`, never out of a second reading here -- one
-    producer per rule (M3), and `dispatch` reads the very same one for the
-    reviewer's build line.
-
-    `overlay_auto` is `[models].auto`, validated by the caller inside the
-    guard that keeps the written/skipped report. Read here instead, a typo
-    in `[models]` raised past that guard and took the report with it.
-    """
-    found: list[str] = []
-    for binary, why in (
-        ("herdr", "panes, agents and workspaces"),
-        ("wt", "one worktree per branch, merge and cleanup"),
-        ("lean-ctx", "agent bus, project memory, tool profiles"),
-    ):
-        if shutil.which(binary) is None:
-            found.append(f"{binary} is not on PATH -- needed for {why}")
-    checks = (
-        _check_allowlist(runner),
-        _check_approvals(root, runner),
-        _check_plugins(runner),
-        # Guarded by the config, unlike its three neighbours: without
-        # `[models].auto` no overlay is ever written, and a rule for a file
-        # that cannot exist would be noise in every project that never
-        # switched the feature on.
-        _check_overlay_ignored(root, runner) if overlay_auto else None,
-        # NOT guarded by `auto`: the template lock is written in every
-        # project, and so is its temp file.
-        _check_temp_ignored(root, runner),
-    )
-    found.extend(line for line in checks if line is not None)
-    found.extend(model_warnings(data))
-    return found
 
 
 def _warm_opencode(root: Path, *, runner: Any) -> bool:
@@ -436,11 +251,8 @@ def workspace_init(
         # Without a readable config nobody can say whether `auto` is on,
         # so the overlay's ignore rule is not checked either.
         data, kind, overlay_auto = {}, "", False
-    warnings = (
-        _warnings(base, data=data, overlay_auto=overlay_auto, runner=runner)
-        + state_warnings(templates)
-        + warnings
-    )
+    _install, found = machine_report(base, data=data, overlay_auto=overlay_auto, runner=runner)
+    warnings = found + state_warnings(templates) + warnings
     warmed = _warm_opencode(base, runner=runner) if kind == "opencode" else False
     return {
         "ok": True,
