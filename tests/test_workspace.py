@@ -662,18 +662,25 @@ def test_main_answers_a_bad_command_with_one_json_line(capsys):
     assert answer["ok"] is False and answer["error"].startswith("usage_error:")
 
 
-def test_main_routes_init_and_hands_force_on(monkeypatch, capsys):
+def test_main_routes_init_and_hands_every_flag_on(monkeypatch, capsys):
     """`workspace_init` is imported ON THE CALL, so the seam is `initcmd`."""
-    seen: list[bool] = []
+    seen: list[dict[str, object]] = []
     monkeypatch.setattr(
         "lean_herdr.initcmd.workspace_init",
-        lambda *, force: (seen.append(force), {"ok": True, "written": []})[1],
+        lambda **kwargs: (seen.append(kwargs), {"ok": True, "written": []})[1],
     )
     assert workspace.main(["init"]) == 0
     assert workspace.main(["init", "--force"]) == 0
-    assert seen == [False, True]
+    assert (
+        workspace.main(["init", "--update", "--test", "cargo test", "--lint", "cargo clippy"]) == 0
+    )
+    assert seen == [
+        {"force": False, "update": False, "test": None, "lint": None},
+        {"force": True, "update": False, "test": None, "lint": None},
+        {"force": False, "update": True, "test": "cargo test", "lint": "cargo clippy"},
+    ]
     lines = capsys.readouterr().out.strip().splitlines()
-    assert len(lines) == 2 and all(json.loads(line)["ok"] for line in lines)
+    assert len(lines) == 3 and all(json.loads(line)["ok"] for line in lines)
 
 
 def test_up_refuses_force_rather_than_ignoring_it(capsys):
@@ -682,6 +689,19 @@ def test_up_refuses_force_rather_than_ignoring_it(capsys):
     answer = json.loads(capsys.readouterr().out)
     assert answer["ok"] is False
     assert answer["error"] == "usage_error: up does not take --force"
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [["--update"], ["--test", "cargo test"], ["--lint", "cargo clippy"]],
+    ids=["update", "test", "lint"],
+)
+def test_up_refuses_every_init_flag(capsys, flags):
+    """Swallowed, an init flag on `up` would look like it did something."""
+    assert workspace.main(["up", *flags]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["ok"] is False
+    assert answer["error"] == f"usage_error: up does not take {flags[0]}"
 
 
 @pytest.mark.parametrize(

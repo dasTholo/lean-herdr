@@ -11,11 +11,20 @@ that are filled by hand, so `VALUE_RE` keeps out every character that would
 need escaping there or mean something to a shell: a quote, a backslash, `*`,
 `:`, `$`, a newline, `;`, `&`, `|`. How far a prefix opens the gate is the
 operator's call.
+
+The lock, `templates.lock.json`, records what `init` wrote: the resolved
+values and a sha256 per file. Against it and a fresh rendering every target
+has one of seven states (`file_state`), and `init --update` rewrites only the
+files nobody touched since.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
+import os
 import re
+import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 
@@ -73,3 +82,142 @@ def render(name: str, values: Mapping[str, str]) -> bytes:
     if _LEFTOVER in text:
         raise ValueError(f"{name}: a `{_LEFTOVER}...}}}}` token is left after rendering")
     return text.encode("utf-8")
+
+
+#: Versioned, like the role prompts: it travels in the branch, and the next
+#: `init --update` -- anybody's -- needs the record of what init wrote.
+LOCK_PATH = Path(".lean-ctx") / "lean-herdr" / "templates.lock.json"
+
+_SHA256_RE = re.compile(r"[0-9a-f]{64}\Z")
+
+#: state -> the next step `state_warnings` names. `current` and `edited` are
+#: absent on purpose: nothing to do, and a hand edit is intent.
+_NEXT_STEP = {
+    "missing": "`lean-herdr workspace init --update` writes it",
+    "outdated": "nobody edited it since init wrote it: `lean-herdr workspace init --update`",
+    "unknown": "no lock entry and not what init would write -- compare it with the template by hand",
+    "diverged": "edited here AND changed in the package -- compare it with the template by hand",
+    "blocked": "it or one of its parent directories is a symlink, and init never writes through one",
+}
+
+
+class LockError(ValueError):
+    """`templates.lock.json` is there and unusable. The message starts with the path."""
+
+
+def digest(data: bytes) -> str:
+    """The sha256 the lock records, as hex."""
+    return hashlib.sha256(data).hexdigest()
+
+
+def resolve_values(
+    locked: Mapping[str, str], *, test: str | None = None, lint: str | None = None
+) -> dict[str, str]:
+    """Flag > lock > default, per key -- the one resolution `init` and `check` share."""
+    given = {"test": test, "lint": lint}
+    return {
+        key: given[key] or locked.get(key) or default for key, default in DEFAULT_VALUES.items()
+    }
+
+
+def read_lock(root: Path) -> dict[str, dict[str, str]]:
+    """The lock as `{"values": {...}, "files": {...}}`. Missing: both empty.
+
+    Broken is a LockError, never a guess: not JSON, not that shape, a value
+    `VALUE_RE` refuses, or a file key outside LAYOUT. A state computed from a
+    record nobody can read would be the silent wrong answer the lock exists
+    to prevent.
+    """
+    path = Path(root) / LOCK_PATH
+    try:
+        raw = path.read_bytes()
+    except FileNotFoundError:
+        return {"values": {}, "files": {}}
+    except OSError as exc:
+        raise LockError(f"{path}: unreadable: {exc}") from exc
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise LockError(f"{path}: not JSON: {exc}") from exc
+    if not isinstance(data, dict) or set(data) != {"values", "files"}:
+        raise LockError(f"{path}: expected exactly the keys `values` and `files`")
+    values, files = data["values"], data["files"]
+    if not isinstance(values, dict) or not isinstance(files, dict):
+        raise LockError(f"{path}: `values` and `files` must be objects")
+    for key, value in values.items():
+        if key not in DEFAULT_VALUES or not isinstance(value, str) or not VALUE_RE.match(value):
+            raise LockError(f"{path}: values.{key} = {value!r} is not a usable command")
+    targets = set(LAYOUT.values())
+    for key, entry in files.items():
+        if key not in targets or not isinstance(entry, str) or not _SHA256_RE.match(entry):
+            raise LockError(f"{path}: files.{key} is no template target with a sha256")
+    return {"values": dict(values), "files": dict(files)}
+
+
+def write_lock(root: Path, *, values: Mapping[str, str], files: Mapping[str, str]) -> Path:
+    """The whole lock, through a temp file of this writer's own, then `os.replace`.
+
+    Inline, like `catalog.write_overlay` -- no shared helper. WHOLE is the
+    file, not the content: the caller hands every entry it did not write back
+    in unchanged. Keys sorted, indent 2, a trailing newline, so a diff in the
+    branch shows one line per changed file. `mkstemp` creates 0600, and git
+    records no mode but the executable bit.
+    """
+    path = Path(root) / LOCK_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    text = json.dumps({"files": dict(files), "values": dict(values)}, indent=2, sort_keys=True)
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=f".tmp-{path.name}.")
+    tmp = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text + "\n")
+        os.replace(tmp, path)
+    except OSError:
+        # Only OUR temp file, for the reason `write_overlay` gives.
+        tmp.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def file_state(root: Path, relative: str, *, rendered: bytes, locked: str | None) -> str:
+    """One target's state, checked in this order.
+
+    D is the file, L the lock entry, P the rendered template.
+    `blocked` -- a symlink on the way or at the target (the rules of
+    `initcmd._place`); `missing`; `current` D = P; `unknown` no L;
+    `outdated` D = L != P; `edited` D != L = P; `diverged` D != L, L != P.
+
+    Raises OSError for a target that is there and cannot be read -- a
+    directory in its place, a regular file where a parent directory belongs.
+    `init` stops on it with its report so far; `check` names it.
+    """
+    base = Path(root)
+    parent = base
+    for part in Path(relative).parts[:-1]:
+        parent = parent / part
+        if parent.is_symlink():
+            return "blocked"
+    target = base / relative
+    if target.is_symlink():
+        return "blocked"
+    try:
+        on_disk = digest(target.read_bytes())
+    except FileNotFoundError:
+        return "missing"
+    produced = digest(rendered)
+    if on_disk == produced:
+        return "current"
+    if locked is None:
+        return "unknown"
+    if on_disk == locked:
+        return "outdated"
+    return "edited" if locked == produced else "diverged"
+
+
+def state_warnings(templates: Mapping[str, str]) -> list[str]:
+    """One line per template that needs a gesture or a hand, sorted by path."""
+    return [
+        f"{relative} is {state}: {_NEXT_STEP[state]}"
+        for relative, state in sorted(templates.items())
+        if state in _NEXT_STEP
+    ]

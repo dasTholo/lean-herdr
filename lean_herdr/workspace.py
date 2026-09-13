@@ -398,7 +398,33 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="init: overwrite files that are already there",
     )
+    p.add_argument(
+        "--update",
+        action="store_true",
+        help="init: also rewrite files nobody edited since init wrote them",
+    )
+    p.add_argument(
+        "--test",
+        default=None,
+        help="init: the pre-merge test command, and the builder's permission for it",
+    )
+    p.add_argument(
+        "--lint",
+        default=None,
+        help="init: the pre-merge lint command, and the builder's permission for it",
+    )
     return p
+
+
+def _init_flags(args: argparse.Namespace) -> str:
+    """The init-only flags that were given, as one phrase. Empty: none."""
+    given = (
+        ("--force", args.force),
+        ("--update", args.update),
+        ("--test", args.test),
+        ("--lint", args.lint),
+    )
+    return " and ".join(flag for flag, value in given if value)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -411,20 +437,22 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, Any]
     try:
         args = build_parser().parse_args(argv)
-        if args.command == "up":
-            if args.force:
-                result = {
-                    "ok": False,
-                    "error": "usage_error: up does not take --force",
-                }
-            else:
-                result = workspace_up()
+        stray = _init_flags(args)
+        if args.command != "init" and stray:
+            result = {
+                "ok": False,
+                "error": f"usage_error: {args.command} does not take {stray}",
+            }
+        elif args.command == "up":
+            result = workspace_up()
         else:
             # Imported on the call, not up top: `up` is what runs on every
             # start, and it needs none of this.
             from lean_herdr.initcmd import workspace_init
 
-            result = workspace_init(force=args.force)
+            result = workspace_init(
+                force=args.force, update=args.update, test=args.test, lint=args.lint
+            )
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}
     except SettingsError as exc:

@@ -1,5 +1,6 @@
 """`init` in a stranger's project: writes, skips, warns -- never repairs."""
 
+import json
 import subprocess
 import tomllib
 
@@ -17,7 +18,7 @@ from lean_herdr.initcmd import (
     workspace_init,
 )
 from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
-from lean_herdr.templating import DEFAULT_VALUES, LAYOUT
+from lean_herdr.templating import DEFAULT_VALUES, LAYOUT, LOCK_PATH, digest
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 from tests.doubles import Completed, FakeProc, which_stub
 
@@ -551,3 +552,125 @@ def test_a_warm_up_that_cannot_run_at_all_is_not_reported_as_success(monkeypatch
     answer = workspace_init(root=repo, runner=runner)
     assert answer["ok"] is True
     assert answer["warmed"] is False
+
+
+def _lock(repo) -> dict:
+    return json.loads((repo / LOCK_PATH).read_text(encoding="utf-8"))
+
+
+def test_init_locks_every_file_it_wrote(monkeypatch, repo):
+    quiet(monkeypatch)
+    answer = workspace_init(root=repo)
+    assert answer["values"] == DEFAULT_VALUES
+    assert answer["templates"] == {relative: "current" for relative in LAYOUT.values()}
+    lock = _lock(repo)
+    assert lock["values"] == DEFAULT_VALUES
+    assert lock["files"] == {
+        relative: digest((repo / relative).read_bytes()) for relative in LAYOUT.values()
+    }
+
+
+def test_a_value_given_once_is_kept_by_the_lock(monkeypatch, repo):
+    quiet(monkeypatch)
+    workspace_init(root=repo, test="cargo test", lint="cargo clippy")
+    answer = workspace_init(root=repo)
+    assert answer["values"] == {"test": "cargo test", "lint": "cargo clippy"}
+    assert answer["written"] == []
+
+
+def test_init_without_a_flag_locks_a_current_file_it_did_not_write(monkeypatch, repo):
+    """Older projects get their lock without a single file overwritten."""
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    (repo / LOCK_PATH).unlink()
+    answer = workspace_init(root=repo)
+    assert answer["written"] == []
+    assert set(_lock(repo)["files"]) == set(LAYOUT.values())
+
+
+def test_a_changed_value_leaves_an_untouched_file_outdated_until_update(monkeypatch, repo):
+    """Without --update nothing is overwritten -- and the entry stays, or the next
+    --update could no longer tell the untouched file from an edited one."""
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    before = _lock(repo)["files"][".config/wt.toml"]
+    answer = workspace_init(root=repo, test="cargo test")
+    assert answer["templates"][".config/wt.toml"] == "outdated"
+    assert ".config/wt.toml" in answer["skipped"]
+    assert _lock(repo)["files"][".config/wt.toml"] == before
+    assert any(w.startswith(".config/wt.toml is outdated") for w in answer["warnings"])
+
+    updated = workspace_init(root=repo, update=True)
+    assert ".config/wt.toml" in updated["written"]
+    assert updated["templates"][".config/wt.toml"] == "current"
+    gate = tomllib.loads((repo / ".config" / "wt.toml").read_text(encoding="utf-8"))
+    assert gate["pre-merge"]["test"] == "cargo test"
+
+
+def test_update_leaves_a_hand_edit_and_says_why(monkeypatch, repo):
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    settings = repo / ".claude" / "settings.json"
+    settings.write_text(
+        settings.read_text(encoding="utf-8").replace("git add", "git add -p"), encoding="utf-8"
+    )
+    entry = _lock(repo)["files"][".claude/settings.json"]
+    answer = workspace_init(root=repo, update=True, test="cargo test")
+    assert ".claude/settings.json" in answer["skipped"]
+    assert answer["templates"][".claude/settings.json"] == "diverged"
+    assert "git add -p" in settings.read_text(encoding="utf-8")
+    assert _lock(repo)["files"][".claude/settings.json"] == entry
+    assert any(w.startswith(".claude/settings.json is diverged") for w in answer["warnings"])
+
+
+def test_an_edit_on_its_own_is_intent_and_no_warning(monkeypatch, repo):
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    (repo / "opencode.jsonc").write_text("{}", encoding="utf-8")
+    answer = workspace_init(root=repo, update=True)
+    assert answer["templates"]["opencode.jsonc"] == "edited"
+    assert "opencode.jsonc" in answer["skipped"]
+    assert not any(w.startswith("opencode.jsonc") for w in answer["warnings"])
+
+
+def test_force_writes_everything_and_locks_it(monkeypatch, repo):
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    (repo / "opencode.jsonc").write_text("{}", encoding="utf-8")
+    answer = workspace_init(root=repo, force=True, lint="cargo clippy")
+    assert answer["written"] == sorted(LAYOUT.values())
+    lock = _lock(repo)
+    assert lock["values"]["lint"] == "cargo clippy"
+    assert lock["files"]["opencode.jsonc"] == digest((repo / "opencode.jsonc").read_bytes())
+
+
+def test_force_and_update_together_is_a_usage_error(monkeypatch, repo):
+    quiet(monkeypatch)
+    answer = workspace_init(root=repo, force=True, update=True)
+    assert answer == {"ok": False, "error": "usage_error: --force and --update exclude each other"}
+    assert not (repo / "opencode.jsonc").exists()
+
+
+@pytest.mark.parametrize(
+    "value",
+    ['uv run "x"', "pytest*", "a:b", "$HOME/x", "a\nb"],
+    ids=["quote", "star", "colon", "dollar", "newline"],
+)
+def test_a_flag_value_that_would_break_out_is_a_usage_error(monkeypatch, repo, value):
+    quiet(monkeypatch)
+    answer = workspace_init(root=repo, test=value)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("usage_error: --test "), answer["error"]
+    assert not (repo / "opencode.jsonc").exists()
+
+
+def test_a_broken_lock_is_lock_malformed_and_nothing_is_written(monkeypatch, repo):
+    quiet(monkeypatch)
+    (repo / LOCK_PATH).parent.mkdir(parents=True)
+    (repo / LOCK_PATH).write_text("not json", encoding="utf-8")
+    answer = workspace_init(root=repo)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("lock_malformed: ")
+    assert answer["error"].endswith("-- fix or delete it")
+    assert not (repo / "opencode.jsonc").exists()
+    assert (repo / LOCK_PATH).read_text(encoding="utf-8") == "not json"

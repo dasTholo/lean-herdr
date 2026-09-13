@@ -2,7 +2,9 @@
 
 Two rules run through everything here.
 
-The first: an existing file is NEVER overwritten without --force. A
+The first: an existing file is NEVER overwritten without --force -- or
+without --update, and then only when the lock proves nobody touched it
+since init wrote it. A
 stranger's `opencode.jsonc` or `.claude/settings.json` flattened in
 silence would be the most expensive mistake this tool could make. Skipped
 files are named in the result, so nobody has to guess what happened.
@@ -37,7 +39,18 @@ from lean_herdr.settings import (
     settings_for,
     workspace_settings,
 )
-from lean_herdr.templating import DEFAULT_VALUES, LAYOUT, render
+from lean_herdr.templating import (
+    LAYOUT,
+    VALUE_RE,
+    LockError,
+    digest,
+    file_state,
+    read_lock,
+    render,
+    resolve_values,
+    state_warnings,
+    write_lock,
+)
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 
 #: A read-only check must not hold up the whole call.
@@ -311,9 +324,12 @@ def workspace_init(
     *,
     root: Path | None = None,
     force: bool = False,
+    update: bool = False,
+    test: str | None = None,
+    lint: str | None = None,
     runner: Any = subprocess.run,
 ) -> dict[str, Any]:
-    """Write the templates into this project. Never raises.
+    """Write the templates into this project, and lock what landed. Never raises.
 
     No git repository: a hard stop with a named next step. `init` does not
     run `git init` itself -- that is a gesture belonging to the human.
@@ -323,7 +339,26 @@ def workspace_init(
     write -- ends the run early with `init_stopped` and the report so far.
     Letting the exception through would take the written/skipped list with
     it, and nobody could then say which files already landed.
+
+    Three modes. Without a flag only `missing` files are written. `--update`
+    also rewrites `outdated` ones -- untouched since init wrote them, so no
+    hand edit is lost. `--force` writes everything but through a symlinked
+    parent. The lock records the resolved values and, per file, the sha256 of
+    what this run wrote or found `current`; every other entry stays as it
+    was, or a later `--update` could no longer tell an untouched file from an
+    edited one.
     """
+    if force and update:
+        return {"ok": False, "error": "usage_error: --force and --update exclude each other"}
+    for flag, value in (("--test", test), ("--lint", lint)):
+        if value is not None and not VALUE_RE.match(value):
+            return {
+                "ok": False,
+                "error": (
+                    f"usage_error: {flag} {value!r} -- letters, digits, spaces and "
+                    "._/=+,@- only, starting with a letter or digit, no trailing space"
+                ),
+            }
     try:
         base = root if root is not None else canonical_root()
     except GitUnusable as exc:
@@ -333,12 +368,33 @@ def workspace_init(
     except BusError:
         return {"ok": False, "error": "not_a_git_repo: run `git init` first"}
 
+    try:
+        lock = read_lock(base)
+    except LockError as exc:
+        return {
+            "ok": False,
+            "error": f"lock_malformed: {exc} -- fix or delete it",
+            "root": str(base),
+        }
+    values = resolve_values(lock["values"], test=test, lint=lint)
+    files = dict(lock["files"])
     written: list[str] = []
     skipped: list[str] = []
+    templates: dict[str, str] = {}
     try:
         for name, relative in LAYOUT.items():
-            landed = _place(base, relative, render(name, DEFAULT_VALUES), force=force)
-            (written if landed else skipped).append(relative)
+            data = render(name, values)
+            state = file_state(base, relative, rendered=data, locked=files.get(relative))
+            wanted = force or state == "missing" or (update and state == "outdated")
+            if wanted and _place(base, relative, data, force=force or update):
+                written.append(relative)
+                state = "current"
+            else:
+                skipped.append(relative)
+            if state == "current":
+                files[relative] = digest(data)
+            templates[relative] = state
+        write_lock(base, values=values, files=files)
     except OSError as exc:
         return {
             "ok": False,
@@ -380,13 +436,19 @@ def workspace_init(
         # Without a readable config nobody can say whether `auto` is on,
         # so the overlay's ignore rule is not checked either.
         data, kind, overlay_auto = {}, "", False
-    warnings = _warnings(base, data=data, overlay_auto=overlay_auto, runner=runner) + warnings
+    warnings = (
+        _warnings(base, data=data, overlay_auto=overlay_auto, runner=runner)
+        + state_warnings(templates)
+        + warnings
+    )
     warmed = _warm_opencode(base, runner=runner) if kind == "opencode" else False
     return {
         "ok": True,
         "root": str(base),
         "written": sorted(written),
         "skipped": sorted(skipped),
+        "values": values,
+        "templates": templates,
         "warmed": warmed,
         "warnings": warnings,
     }
