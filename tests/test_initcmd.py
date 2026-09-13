@@ -452,6 +452,23 @@ def test_a_broken_worker_block_costs_the_warm_up_and_not_the_report(monkeypatch,
     assert any("direction='links'" in w for w in answer["warnings"])
 
 
+def test_a_broken_models_block_costs_the_warm_up_and_not_the_report(monkeypatch, repo):
+    """`[models]` is the table `_warnings` acts on, and nobody validated it first.
+
+    `auto = 1` passes `settings_for` and `model_warnings` untouched and used to
+    raise out of `_warnings` -- after the files were written, so `main()` answered
+    with a bare `config_error:` and the written/skipped report was gone.
+    """
+    quiet(monkeypatch)
+    (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
+    (repo / SETTINGS_PATH).write_text("[models]\nauto = 1\n", encoding="utf-8")
+    answer = workspace_init(root=repo)
+    assert answer["ok"] is True
+    assert answer["written"], "the report must survive"
+    assert answer["warmed"] is False
+    assert any(w.startswith("no warm-up: ") and "models.auto" in w for w in answer["warnings"])
+
+
 def test_a_warm_up_that_cannot_run_at_all_is_not_reported_as_success(monkeypatch, repo):
     """`_warm_opencode`'s own except branch: a spawn failure is not warmed,
     but `init` still finishes and reports it rather than crashing with it.

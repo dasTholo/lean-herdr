@@ -187,7 +187,9 @@ def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
     )
 
 
-def _warnings(root: Path, *, data: dict[str, Any], runner: Any = subprocess.run) -> list[str]:
+def _warnings(
+    root: Path, *, data: dict[str, Any], overlay_auto: bool, runner: Any = subprocess.run
+) -> list[str]:
     """The README checklist as lines. Nothing here changes anything.
 
     The three foreign checks each live in their own function: they share
@@ -198,6 +200,10 @@ def _warnings(root: Path, *, data: dict[str, Any], runner: Any = subprocess.run)
     come out of `settings`, never out of a second reading here -- one
     producer per rule (M3), and `dispatch` reads the very same one for the
     reviewer's build line.
+
+    `overlay_auto` is `[models].auto`, validated by the caller inside the
+    guard that keeps the written/skipped report. Read here instead, a typo
+    in `[models]` raised past that guard and took the report with it.
     """
     found: list[str] = []
     for binary, why in (
@@ -215,7 +221,7 @@ def _warnings(root: Path, *, data: dict[str, Any], runner: Any = subprocess.run)
         # `[models].auto` no overlay is ever written, and a rule for a file
         # that cannot exist would be noise in every project that never
         # switched the feature on.
-        _check_overlay_ignored(root, runner) if models_settings(data).auto else None,
+        _check_overlay_ignored(root, runner) if overlay_auto else None,
     )
     found.extend(line for line in checks if line is not None)
     found.extend(model_warnings(data))
@@ -354,13 +360,20 @@ def workspace_init(
         # already-parsed tables and touch nothing.
         model_warnings(data)
         workspace_settings(data)
+        # `[models]` is read here too, because `_warnings` acts on it: `auto`
+        # decides whether the overlay's ignore rule is checked at all. Read
+        # inside the guard and handed on as a plain bool -- a typo in it
+        # costs the warm-up and that one check, never the report.
+        overlay_auto = models_settings(data).auto
     except SettingsError as exc:
         # A config we cannot read is not a reason to fail `init` -- the files
         # are already written. It only means we cannot tell whether opencode
         # is the runtime here, so the warm-up is skipped and said so.
         warnings.append(f"no warm-up: {exc}")
-        data, kind = {}, ""
-    warnings = _warnings(base, data=data, runner=runner) + warnings
+        # Without a readable config nobody can say whether `auto` is on,
+        # so the overlay's ignore rule is not checked either.
+        data, kind, overlay_auto = {}, "", False
+    warnings = _warnings(base, data=data, overlay_auto=overlay_auto, runner=runner) + warnings
     warmed = _warm_opencode(base, runner=runner) if kind == "opencode" else False
     return {
         "ok": True,
