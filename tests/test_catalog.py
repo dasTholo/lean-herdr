@@ -317,21 +317,59 @@ def test_a_second_call_overwrites_the_file_whole(tmp_path):
 def test_a_failed_replace_leaves_the_old_overlay_and_no_temp_file(monkeypatch, tmp_path):
     """The overlay is never half-written, and a failed attempt leaves nothing behind.
 
-    `.gitignore` names `models.auto.toml` exactly. A `.tmp-` file left beside it
-    would show up in the operator's `git status` -- which is why `write_overlay`
-    removes it, where `orderlog.append` does not have to.
+    A `.tmp-` file left beside the overlay shows up in `git status` wherever
+    `.lean-ctx/lean-herdr/.tmp-*` is not ignored -- which is why `write_overlay`
+    removes its own, where `orderlog.append` does not have to.
     """
     path = catalog.write_overlay("good/all-clear", root=tmp_path)
     before = path.read_text(encoding="utf-8")
 
-    def refuse(self, target):
+    def refuse(src, dst):
         raise OSError("the disk said no")
 
-    monkeypatch.setattr(type(path), "replace", refuse)
+    monkeypatch.setattr("lean_herdr.catalog.os.replace", refuse)
     with pytest.raises(OSError, match="the disk said no"):
         catalog.write_overlay("mid/small-context", root=tmp_path)
     assert path.read_text(encoding="utf-8") == before
     assert list(path.parent.glob(".tmp-*")) == []
+
+
+def test_every_writer_takes_a_temp_name_of_its_own(monkeypatch, tmp_path):
+    """Two writers, two temp files -- no shared inode for their bytes to mix in.
+
+    Deterministic, no timing: the swap is refused, so each call stops right where
+    a second, concurrent writer would have met the first one's file.
+    """
+    seen: list[str] = []
+
+    def refuse(src, dst):
+        seen.append(Path(src).name)
+        raise OSError("stop before the swap")
+
+    monkeypatch.setattr("lean_herdr.catalog.os.replace", refuse)
+    for model in ("good/all-clear", "mid/small-context"):
+        with pytest.raises(OSError, match="stop before the swap"):
+            catalog.write_overlay(model, root=tmp_path)
+    assert len(seen) == 2 and seen[0] != seen[1], seen
+    assert all(name.startswith(".tmp-models.auto.toml.") for name in seen), seen
+    assert list((tmp_path / OVERLAY_PATH).parent.glob(".tmp-*")) == []
+
+
+def test_a_failing_writer_removes_its_own_temp_file_and_no_other(monkeypatch, tmp_path):
+    """S4: a writer that fails used to delete the temp file a second writer had written."""
+    folder = (tmp_path / OVERLAY_PATH).parent
+    folder.mkdir(parents=True)
+    foreign = folder / ".tmp-models.auto.toml.x"
+    foreign.write_text("another writer's half", encoding="utf-8")
+
+    def refuse(src, dst):
+        raise OSError("the disk said no")
+
+    monkeypatch.setattr("lean_herdr.catalog.os.replace", refuse)
+    with pytest.raises(OSError, match="the disk said no"):
+        catalog.write_overlay("good/all-clear", root=tmp_path)
+    assert foreign.read_text(encoding="utf-8") == "another writer's half"
+    assert sorted(p.name for p in folder.glob(".tmp-*")) == [foreign.name]
 
 
 def test_a_slug_that_would_break_out_of_the_toml_string_raises(tmp_path):

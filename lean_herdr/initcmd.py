@@ -187,6 +187,33 @@ def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
     )
 
 
+#: The ignore line the temp files of the whole-file writers under
+#: `.lean-ctx/lean-herdr/` need. Their names change on every run, so no
+#: line naming one of them could ever cover the next.
+TEMP_IGNORE = ".lean-ctx/lean-herdr/.tmp-*"
+
+#: One name such a writer could draw. `git check-ignore` matches patterns and
+#: needs no file on disk, so this probe stands for every name `mkstemp` picks.
+TEMP_PROBE = OVERLAY_PATH.parent / ".tmp-models.auto.toml.probe"
+
+
+def _check_temp_ignored(root: Path, runner: Any) -> str | None:
+    """git does not ignore the writers' temp files. Asked always, never behind `auto`.
+
+    Its own call, never one shared with `_check_overlay_ignored`: a single
+    `check-ignore` over both paths answers non-empty as soon as ONE of them
+    is covered -- and a rule for the overlay alone would then pass for both.
+    """
+    answer = _read(runner, "git", "check-ignore", "-v", str(TEMP_PROBE), cwd=root)
+    if answer is None or answer.strip():
+        return None
+    return (
+        f"git does not ignore {TEMP_IGNORE} -- a writer killed mid-run leaves a "
+        "temp file there that would show up in git status. Add to .gitignore: "
+        f"{TEMP_IGNORE}"
+    )
+
+
 def _warnings(
     root: Path, *, data: dict[str, Any], overlay_auto: bool, runner: Any = subprocess.run
 ) -> list[str]:
@@ -222,6 +249,9 @@ def _warnings(
         # that cannot exist would be noise in every project that never
         # switched the feature on.
         _check_overlay_ignored(root, runner) if overlay_auto else None,
+        # NOT guarded by `auto`: the template lock is written in every
+        # project, and so is its temp file.
+        _check_temp_ignored(root, runner),
     )
     found.extend(line for line in checks if line is not None)
     found.extend(model_warnings(data))

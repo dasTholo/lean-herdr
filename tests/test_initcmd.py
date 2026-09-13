@@ -6,11 +6,14 @@ import pytest
 
 from lean_herdr.initcmd import (
     LAYOUT,
+    TEMP_IGNORE,
+    TEMP_PROBE,
     WARM_TIMEOUT_S,
     _check_allowlist,
     _check_approvals,
     _check_overlay_ignored,
     _check_plugins,
+    _check_temp_ignored,
     workspace_init,
 )
 from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
@@ -274,6 +277,36 @@ def test_without_git_there_is_no_verdict_on_the_overlay(monkeypatch, repo):
     assert _check_overlay_ignored(repo, FakeProc(default="")) is None
 
 
+def test_the_temp_check_asks_git_about_a_probe_name(monkeypatch, repo):
+    """`check-ignore` matches patterns, so the probe needs no file on disk."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    named = FakeProc(replies={("check-ignore",): f".gitignore:23:{TEMP_IGNORE}\t{TEMP_PROBE}"})
+    assert _check_temp_ignored(repo, named) is None
+    assert named.called_with("check-ignore", "-v", str(TEMP_PROBE))
+    silent = FakeProc(replies={("check-ignore",): ""})
+    line = _check_temp_ignored(repo, silent)
+    assert line is not None and TEMP_IGNORE in line
+
+
+def test_an_ignored_overlay_alone_still_warns_about_the_temp_files(monkeypatch, repo):
+    """One verdict per path, and the temp one even with `auto` off.
+
+    A single `check-ignore` over both paths answers as soon as ONE is covered --
+    and a rule for the overlay alone, this repository's state, would pass for both.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    only_the_overlay = FakeProc(
+        replies={
+            ("check-ignore", "-v", str(OVERLAY_PATH)): (
+                f".gitignore:22:{OVERLAY_PATH}\t{OVERLAY_PATH}"
+            )
+        },
+        default="",
+    )
+    warnings = workspace_init(root=repo, runner=only_the_overlay)["warnings"]
+    assert any(TEMP_IGNORE in w for w in warnings), warnings
+
+
 def test_the_gitignore_warning_only_appears_when_auto_is_on(monkeypatch, repo):
     """Guarded by the config, unlike its three neighbours.
 
@@ -290,7 +323,7 @@ def test_the_gitignore_warning_only_appears_when_auto_is_on(monkeypatch, repo):
 
     (repo / SETTINGS_PATH).write_text("[models]\nauto = false\n", encoding="utf-8")
     off = workspace_init(root=repo, runner=proc)["warnings"]
-    assert not any("does not ignore" in w for w in off)
+    assert not any(str(OVERLAY_PATH) in w for w in off)
 
     (repo / SETTINGS_PATH).write_text("[models]\nauto = true\n", encoding="utf-8")
     on = workspace_init(root=repo, runner=proc)["warnings"]
