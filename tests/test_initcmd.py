@@ -116,6 +116,8 @@ def test_a_symlinked_parent_directory_is_not_written_through(monkeypatch, repo, 
     answer = workspace_init(root=repo)
     assert list(outside.iterdir()) == [], "init wrote past the project root"
     assert ".claude/settings.json" in answer["skipped"]
+    assert answer["templates"][".claude/settings.json"] == "blocked"
+    assert any(w.startswith(".claude/settings.json is blocked: ") for w in answer["warnings"])
 
 
 def test_force_does_not_write_through_a_symlinked_parent_either(monkeypatch, repo, tmp_path):
@@ -613,11 +615,37 @@ def test_update_leaves_a_hand_edit_and_says_why(monkeypatch, repo):
 def test_an_edit_on_its_own_is_intent_and_no_warning(monkeypatch, repo):
     quiet(monkeypatch)
     workspace_init(root=repo)
+    entry = _lock(repo)["files"]["opencode.jsonc"]
     (repo / "opencode.jsonc").write_text("{}", encoding="utf-8")
     answer = workspace_init(root=repo, update=True)
     assert answer["templates"]["opencode.jsonc"] == "edited"
     assert "opencode.jsonc" in answer["skipped"]
     assert not any(w.startswith("opencode.jsonc") for w in answer["warnings"])
+    assert (repo / "opencode.jsonc").read_text(encoding="utf-8") == "{}"
+    assert _lock(repo)["files"]["opencode.jsonc"] == entry
+
+
+def test_update_leaves_an_unknown_file_alone_and_says_so(monkeypatch, repo):
+    """No lock entry and not what init would write: nobody can tell whose edit it is."""
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    (repo / LOCK_PATH).unlink()
+    (repo / "opencode.jsonc").write_text("{}", encoding="utf-8")
+    answer = workspace_init(root=repo, update=True)
+    assert "opencode.jsonc" in answer["skipped"]
+    assert answer["templates"]["opencode.jsonc"] == "unknown"
+    assert (repo / "opencode.jsonc").read_text(encoding="utf-8") == "{}"
+    assert any(w.startswith("opencode.jsonc is unknown: ") for w in answer["warnings"])
+
+
+def test_the_install_lines_reach_the_warnings(monkeypatch, repo):
+    """`init` hands the install report on through `machine_report`, not a list of its own."""
+    quiet(monkeypatch)
+    monkeypatch.setattr(
+        "lean_herdr.checkcmd.install_report",
+        lambda **_kwargs: (dict(HEALTHY_INSTALL), ["SENTINEL"]),
+    )
+    assert "SENTINEL" in workspace_init(root=repo)["warnings"]
 
 
 def test_force_writes_everything_and_locks_it(monkeypatch, repo):

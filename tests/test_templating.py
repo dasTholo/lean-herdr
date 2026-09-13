@@ -167,6 +167,19 @@ def test_the_lock_reads_back_what_was_written_and_diffs_line_by_line(tmp_path):
     assert list(path.parent.glob(".tmp-*")) == []
 
 
+def test_a_failed_replace_leaves_no_temp_file(monkeypatch, tmp_path):
+    """The writer's own temp file goes with the failure -- or it shows up in git status."""
+
+    def boom(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(templating.os, "replace", boom)
+    with pytest.raises(OSError, match="disk full"):
+        write_lock(tmp_path, values=DEFAULT_VALUES, files={})
+    assert list((tmp_path / LOCK_PATH).parent.glob(".tmp-*")) == []
+    assert not (tmp_path / LOCK_PATH).exists()
+
+
 @pytest.mark.parametrize(
     "text",
     [

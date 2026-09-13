@@ -475,6 +475,13 @@ def test_outside_a_repository_there_is_no_root_and_an_error(monkeypatch, snapsho
     assert answer["templates"] == {}
 
 
+def test_the_install_lines_reach_the_warnings(monkeypatch, repo):
+    """`check` hands the install report on through `machine_report`."""
+    monkeypatch.setattr(checkcmd, "install_report", lambda **_kwargs: (dict(HEALTHY), ["SENTINEL"]))
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    assert "SENTINEL" in workspace_check(root=repo)["warnings"]
+
+
 def test_a_git_that_cannot_answer_is_not_sent_into_a_repository(monkeypatch, snapshot):
     """`run this inside a git repository` is the wrong repair for a missing or hung git."""
 
