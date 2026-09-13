@@ -28,6 +28,18 @@ def test_the_profile_follows_the_role():
     assert settings_for("reviewer").profile == "standard"
 
 
+def test_every_allowed_role_key_has_a_type():
+    """`ALLOWED` comes from the RoleSettings fields, `_TYPES` is written by hand.
+
+    `_check_types` lets a key through on `ALLOWED` and then indexes `_TYPES[key]`:
+    a field added to the dataclass and forgotten in the table is not a SettingsError
+    but a KeyError, where every caller expects a SettingsError.
+    """
+    from lean_herdr import settings
+
+    assert set(settings._TYPES) == settings.ALLOWED
+
+
 def test_default_overlays_the_builtin_and_roles_overlays_default():
     data = {
         "default": {"direction": "down", "ratio": 0.4},

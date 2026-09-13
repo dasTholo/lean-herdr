@@ -10,6 +10,7 @@ import pytest
 from lean_herdr import workspace
 from lean_herdr.bus import BusError
 from lean_herdr.herdr import FIRST_START_TIMEOUT_MS, Herdr
+from lean_herdr.llm import GENERATE_EFFORT, PREREVIEW_EFFORT
 from lean_herdr.settings import SETTINGS_PATH, SettingsError, WorkspaceSettings
 from tests.doubles import (
     FakeProc,
@@ -555,6 +556,37 @@ def test_up_with_auto_on_carries_the_catalogue_answer(monkeypatch, tmp_path):
         "model": "cheap/one",
         "reason": "written",
     }
+
+
+@pytest.mark.parametrize(
+    ("llm_block", "expected"),
+    [
+        ('\n[llm]\neffort = "high"\nprereview_effort = "medium"\n', ("high", "medium")),
+        ("", (GENERATE_EFFORT, PREREVIEW_EFFORT)),
+    ],
+    ids=["both levels from [llm]", "both levels from llm.py"],
+)
+def test_up_hands_the_catalogue_both_effort_levels_in_order(
+    monkeypatch, tmp_path, llm_block, expected
+):
+    """One `[llm].model` serves two jobs, so the check has to know both efforts.
+
+    The generator's first, the judge's second. The two values in `[llm]` differ on
+    purpose: two equal ones would let a swap in `workspace_up` pass. The fallback
+    row takes the constants from llm.py, the way `up` does.
+    """
+    _write_config(tmp_path, AUTO_ON + llm_block)
+    herdr, _ = herdr_with(monkeypatch, {})
+    seen: dict[str, object] = {}
+
+    def checked(**kwargs):
+        seen.update(kwargs)
+        return {"written": False, "model": None, "reason": "fresh"}
+
+    monkeypatch.setattr(workspace, "start_orchestrator", lambda **kw: {"ok": True})
+    monkeypatch.setattr("lean_herdr.catalog.check", checked)
+    workspace.workspace_up(root=tmp_path, herdr=herdr)
+    assert seen["efforts"] == expected
 
 
 def test_a_catalogue_that_did_not_answer_is_not_a_failed_up(monkeypatch, tmp_path):
