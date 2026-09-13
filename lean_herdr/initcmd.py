@@ -135,6 +135,38 @@ def _place(root: Path, relative: str, data: bytes, *, force: bool) -> bool:
     return True
 
 
+def _lay_templates(
+    base: Path, values: dict[str, str], files: dict[str, str], *, force: bool, update: bool
+) -> tuple[list[str], list[str], dict[str, str], dict[str, str], OSError | None]:
+    """Render, judge and place every template: (written, skipped, templates, files, stopped).
+
+    `files` comes back as a new dict -- a fresh digest for every file that
+    ended `current`, every other entry as it was. `stopped` is the OSError a
+    hostile or half-built tree raised mid-loop, None otherwise; the lists
+    then hold what happened up to that file, so the caller keeps its report.
+    """
+    written: list[str] = []
+    skipped: list[str] = []
+    templates: dict[str, str] = {}
+    entries = dict(files)
+    try:
+        for name, relative in LAYOUT.items():
+            data = render(name, values)
+            state = file_state(base, relative, rendered=data, locked=entries.get(relative))
+            wanted = force or state == "missing" or (update and state == "outdated")
+            if wanted and _place(base, relative, data, force=force or update):
+                written.append(relative)
+                state = "current"
+            else:
+                skipped.append(relative)
+            if state == "current":
+                entries[relative] = digest(data)
+            templates[relative] = state
+    except OSError as exc:
+        return written, skipped, templates, entries, exc
+    return written, skipped, templates, entries, None
+
+
 def workspace_init(
     *,
     root: Path | None = None,
@@ -192,28 +224,18 @@ def workspace_init(
             "root": str(base),
         }
     values = resolve_values(lock["values"], test=test, lint=lint)
-    files = dict(lock["files"])
-    written: list[str] = []
-    skipped: list[str] = []
-    templates: dict[str, str] = {}
-    try:
-        for name, relative in LAYOUT.items():
-            data = render(name, values)
-            state = file_state(base, relative, rendered=data, locked=files.get(relative))
-            wanted = force or state == "missing" or (update and state == "outdated")
-            if wanted and _place(base, relative, data, force=force or update):
-                written.append(relative)
-                state = "current"
-            else:
-                skipped.append(relative)
-            if state == "current":
-                files[relative] = digest(data)
-            templates[relative] = state
-        write_lock(base, values=values, files=files)
-    except OSError as exc:
+    written, skipped, templates, files, stopped = _lay_templates(
+        base, values, lock["files"], force=force, update=update
+    )
+    if stopped is None:
+        try:
+            write_lock(base, values=values, files=files)
+        except OSError as exc:
+            stopped = exc
+    if stopped is not None:
         return {
             "ok": False,
-            "error": f"init_stopped: {exc}",
+            "error": f"init_stopped: {stopped}",
             "root": str(base),
             "written": sorted(written),
             "skipped": sorted(skipped),
