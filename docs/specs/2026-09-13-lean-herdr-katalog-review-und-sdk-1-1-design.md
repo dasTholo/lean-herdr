@@ -1,6 +1,7 @@
 # lean-herdr: Review-Fixes des Katalog-Branches, SDK 1.1.0 neu bewertet — Design v1.0
 
-**Stand:** 2026-09-13 · **Status:** entworfen, nicht implementiert
+**Stand:** 2026-09-13 · **Status:** Teil A entworfen, nicht implementiert · Teil B
+abgeschlossen (Messung hier, Nachträge in den alten Specs mit `6dfb9a9`)
 **Anlass:** Der Plan `2026-09-04-lean-herdr-rollenmodelle-und-katalog.lmd.md` ist mit
 9/9 Tasks durch (`448b336..b25dd98`, 705 Tests grün). Das Final-Review über den
 ganzen Branch endete mit offenen Punkten, und keiner davon ist behoben. Parallel
@@ -238,7 +239,7 @@ gh release list -R yvgude/lean-ctx -L 4
 gh release list -R Thinkery-AG/leanctx-sdk -L 4
 uv venv --python 3.14 sdk114
 uv pip install --python sdk114/bin/python 'thinkery-leanctx-sdk[agent]==1.1.0'
-sdk114/bin/python probe_sdk114.py
+sdk114/bin/python probe_sdk114.py   # venv NICHT aktivieren: sonst findet which() das lean-ctx des Wheels
 ```
 
 `probe_sdk114.py`:
@@ -294,7 +295,8 @@ ctx_knowledge UnsupportedCapabilityError Engine did not negotiate capability: ct
 
 ## 7. Nachträge in den alten Specs
 
-Die Befunde dort bleiben stehen, wie beim Nachtrag vom 2026-09-03:
+Beide sind mit dem Commit dieses Specs (`6dfb9a9`) eingetragen — ein Plan hat hier
+nichts mehr zu tun. Die Befunde dort bleiben stehen, wie beim Nachtrag vom 2026-09-03:
 
 - `2026-09-02-leanctx-sdk-evaluation.md`: eine Statuszeile unter dem Kopf, mit
   Verweis auf Abschnitt 6.
