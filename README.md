@@ -13,11 +13,11 @@ Herdr installs no toolchains — these things must be present:
 
 | What | What for | Installation |
 |---|---|---|
-| `lean-herdr` (this project) | one binary, three verbs: dispatch, report, workspace | `uv tool install --editable .` |
+| `lean-herdr` (this project) | one binary, six verbs: dispatch, llm, models, plugin, report, workspace | `uv tool install --reinstall "lean-herdr @ git+file:///home/tholo/Scripts/lean-herdr@main"` — a snapshot of `main`, see [Updating](#updating) |
 | `herdr` >= 0.8.0 (measured on 0.8.2 in this tree) | panes, agents, workspaces | see the Herdr project |
 | `lean-ctx` >= 3.10.1 | agent bus, project memory, tool profiles | `cargo install lean-ctx` |
 | `uv` | development: test runner and dev dependencies | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-| `python3` | runtime of the plugin handlers | your distribution |
+| `python3` | runs the Claude-Code hooks of the policy adapter | your distribution |
 | `worktrunk` (`wt`) >= 0.75.0 | one worktree per branch, merge, cleanup | `cargo install worktrunk` |
 | Herdr plugin `devashish2203/herdr-worktrunk` | binds worktrees to workspaces; needs `fzf` and `jq` | `herdr plugin install devashish2203/herdr-worktrunk` |
 | `opencode` >= 1.18.25 | orchestrator and reviewer | see the opencode project |
@@ -53,7 +53,7 @@ orchestrator's `wt step squash` then carries into `main`.
     stage = "none"          # shared by step commit, step squash AND merge
 
     [commit.generation]
-    command = "/home/you/Scripts/lean-herdr/bin/herdr-llm generate"
+    command = "lean-herdr llm generate"
 
 `stage` sits under `[commit]`, not at the top level — a bare `stage = "none"`
 is reported as *"User config has unknown field stage (will be ignored)"* and
@@ -63,18 +63,17 @@ for you in **every** repository. The direction is the safe one — they commit
 what you staged and never more — but it is a habit change everywhere, not
 just here.
 
-**The path is absolute, never `bin/herdr-llm`.** That file governs every
-repository on the machine; a relative path would run into `sh: not found`
-(exit 127) everywhere else, and a failing generation command is fatal, not a
-silent fallback — it would break `wt step commit` and `wt merge` in all your
-other projects. The generator is repo-agnostic: it only formats what
-worktrunk hands it on stdin, so one absolute path serves every repository
-sensibly.
+`lean-herdr` resolves on the PATH of every repository -- the installed
+snapshot, never this checkout -- and a failing generation command is fatal,
+not a silent fallback: it would break `wt step commit` and `wt merge` in all
+your other projects. The generator is repo-agnostic: it only formats what
+worktrunk hands it on stdin. `lean-herdr workspace check` says whether the
+effective command is this one.
 
 worktrunk also knows `[projects."<id>"]` blocks. Whether
 `commit.generation.command` is allowed inside one is untested; if it were, the
 generator could be scoped to this repository instead of the whole machine.
-The absolute path works either way and stays the recommendation.
+The machine-wide line works either way and stays the recommendation.
 
 The key is read from `$OPENROUTER_API_KEY`, else from opencode's own store at
 `~/.local/share/opencode/auth.json`. With neither, commits fall back to file
@@ -90,7 +89,7 @@ in `models.auto.toml` beside it, which beats the built-in; `--effort` beats
 `[llm].effort`, which beats the built-in `minimal`. The pre-review judge has
 keys of its own — see the work-order section. `models.auto.toml` is what
 `lean-herdr models` writes, and it loses to every line an operator wrote by
-hand. Either file broken or absent costs the defaults, never the commit.
+hand. A broken `models.auto.toml` costs the overlay alone, a broken `config.toml` the defaults -- neither costs the commit.
 
 **The new attack surface, named:** the builder may now run a command that
 sends the contents of its worktree to a third-party service. That was already
@@ -166,7 +165,7 @@ raise the commit generator's bill on every single commit.
 
 The same judgement by hand, without creating an order:
 
-    bin/herdr-llm prereview -C <worktree> --order "<what it was supposed to do>"
+    lean-herdr llm prereview -C <worktree> --order "<what it was supposed to do>"
 
 Exit 1 on a rejection, and on nothing else -- 0 on `pass` and on `skipped`,
 including the `skipped` a failure of its own machinery produces. Leave
@@ -183,10 +182,13 @@ model that can reason and clears the floors you set.
     lean-herdr models apply    # write it
 
 `apply` writes `.lean-ctx/lean-herdr/models.auto.toml`, which loses to
-`[llm]` in `config.toml`: an explicit `model` there survives every check.
-The file is machine-local -- add it to `.gitignore`:
+`[llm]` in `config.toml`: an explicit `model` there survives every check,
+and `apply` rewrites a broken overlay. The file is machine-local, and so are
+the temp files its writer and the template lock's writer leave after a hard
+kill -- add both lines to `.gitignore`:
 
     .lean-ctx/lean-herdr/models.auto.toml
+    .lean-ctx/lean-herdr/.tmp-*
 
 With `[models].auto = true`, `lean-herdr workspace up` does the same by
 itself, at most once every `max_age_h`, after the orchestrator is already
@@ -198,9 +200,12 @@ missing evidence is not a pass.
 
 ## What else ships here
 
-- `herdr-plugin.toml` — the Herdr plugin: it shows the lean-ctx context per
-  pane and workspace, carries it across server restarts, and offers the
-  one-keystroke orchestrator bootstrap. Register it with `herdr plugin link`.
+- `lean_herdr/plugin/herdr-plugin.toml` — the Herdr plugin: it shows the
+  lean-ctx context per pane and workspace, carries it across server restarts,
+  and offers the one-keystroke orchestrator bootstrap. It ships inside the
+  package, so code and manifest come out of one snapshot. Link the installed
+  copy, `herdr plugin link <tool-venv>/lib/python3.14/site-packages/lean_herdr/plugin`
+  -- `lean-herdr workspace check` prints the exact path.
 - `.opencode/plugins/lean-ctx-policy.js` — the policy adapter that runs the
   Claude-Code hooks inside opencode, so both agent runtimes obey the same
   tool discipline. It searches the project's own `.claude/hooks` first,
@@ -222,6 +227,29 @@ It writes eight files -- the config and the three role prompts under
 owners look for them. An existing file is skipped and named in the result;
 `--force` overwrites. It needs a git repository and does not create one.
 
+Three of the eight carry this project's own commands: `.config/wt.toml` runs
+them as the pre-merge gate, and `.claude/settings.json` and `opencode.jsonc`
+let the builder run the same two first. Name them on the first run:
+
+    lean-herdr workspace init --test "cargo test" --lint "cargo clippy"
+
+Without the flags the gate is `uv run pytest` and `uv run ruff check`. A value
+is a whole command of letters, digits, spaces and `._/=+,@-`; how far it opens
+the builder's gate is your call.
+
+`init` records what it wrote in `.lean-ctx/lean-herdr/templates.lock.json` --
+commit it, like the role prompts. With it, `lean-herdr workspace init --update`
+rewrites only the files nobody edited since, and leaves a hand edit where it
+is, naming it. `--force` and `--update` exclude each other. The lock's writer
+needs the ignore line for its temp file:
+
+    .lean-ctx/lean-herdr/.tmp-*
+
+`lean-herdr workspace check` answers, without starting or writing anything,
+whether `up` and `dispatch` will run here and what gets quietly worse: the
+config, each template's state, the install, the plugin link, the commit
+generator and the ignore rules.
+
 It also spends one aborted opencode bootstrap in the project, up to eight
 seconds. opencode's first bootstrap in a project that carries a project
 plugin hangs -- and one of the eight files is such a plugin. The aborted
@@ -236,11 +264,26 @@ What it does NOT do is repair your machine. The three lean-ctx approvals,
 the worktrunk hook approval and the Herdr plugin registration are reported
 as `warnings` and stay yours to grant.
 
-Two of the eight carry this project's own answers and are meant to be
-edited: `.config/wt.toml` pins the pre-merge gate to `uv run pytest -q`,
-and `.claude/settings.json` allows `Bash(uv run pytest:*)`. In a project
-that is not Python, both are wrong on the first merge -- and a pre-merge
-gate that fails is the one that aborts the merge, so you find out early.
+## Updating
+
+`lean-herdr` on the PATH is a snapshot of `main`, not this checkout. After a
+merge, take the new snapshot on purpose -- nothing reinstalls itself:
+
+    uv tool install --reinstall "lean-herdr @ git+file:///home/tholo/Scripts/lean-herdr@main"
+    lean-herdr workspace check
+
+Then, in every project that uses it:
+
+    lean-herdr workspace init --update
+
+If that rewrote `.config/wt.toml`, the changed gate command needs a fresh
+`wt config approvals add` -- until then worktrunk skips it silently.
+
+`workspace check` also names what shadows the snapshot: an activated venv
+whose `bin/` comes first on the PATH -- this repository's own `.venv`
+included -- and a `PYTHONPATH` that puts another `lean_herdr` ahead of the
+installed one. A reinstall on a new Python minor version moves the package
+path; `check` then prints the new `herdr plugin link` line.
 
 ## Bootstrap
 
@@ -324,5 +367,10 @@ An unknown key, a wrong direction or a `name_template` without `{role}` and
 
     uv sync --dev
     uv run pytest -q
+    uv run ruff check
+
+`uv run lean-herdr …` runs this checkout; the bare `lean-herdr` is the
+installed snapshot. `uv run lean-herdr workspace check` therefore warns that
+there is no tool venv and that the install is editable -- correctly.
 
 Tests with `-m integration` need real binaries and do not run in CI.

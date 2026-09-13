@@ -85,5 +85,16 @@ def test_readme_names_every_runtime_dependency():
         "lean-herdr dispatch order",
         "lean-herdr report",
         "ORCHESTRATOR = orch",
+        # One snapshot for every project: the generator worktrunk runs, the one
+        # command that says whether it all fits, and the gesture that updates it.
+        "lean-herdr llm generate",
+        "lean-herdr workspace check",
+        "--reinstall",
     ):
         assert requirement in text, f"README does not name {requirement!r}"
+
+
+def test_readme_no_longer_names_the_old_generator_script():
+    """`bin/herdr-llm` is gone; a README line naming it sends the operator nowhere."""
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert "bin/herdr-llm" not in text

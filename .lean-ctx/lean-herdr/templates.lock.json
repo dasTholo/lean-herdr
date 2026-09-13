@@ -2,7 +2,7 @@
   "files": {
     ".claude/settings.json": "d5f12f3b6e591a0131feca8ad4b8c4ed6da5c244be441b404d8ba8b4dc01582a",
     ".config/wt.toml": "106f44990549fd06a4d88e6d100f691eaa6c155ab513e458ece75a1ccf2c5e7e",
-    ".lean-ctx/lean-herdr/config.toml": "7222974f1f0b1567d555c30ca59d99d6e480e6568786875879efb457e21e1e7f",
+    ".lean-ctx/lean-herdr/config.toml": "4d8066d7ef476704d99b909b5f1b586519aef5e6e302cf8b69ee0e204f25e4c1",
     ".lean-ctx/lean-herdr/roles/builder.md": "5c874f24d204d7b3b31f4d43e81112db4a9e637dbf107e6d8d43dcf296ff3e53",
     ".lean-ctx/lean-herdr/roles/orchestrator.md": "17c46abeb154c0b0076f66fed8acc1be6ba34ac230046ee48e6c1d2af0c46ca6",
     ".lean-ctx/lean-herdr/roles/reviewer.md": "d2ec2c76e005a39d5e1422f11fd62ff1c1d0accfbfd52967c2f8946ff35bceed",

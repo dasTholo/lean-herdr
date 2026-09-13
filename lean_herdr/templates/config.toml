@@ -34,7 +34,7 @@
 
 # [llm]
 # Read by lean_herdr/llm.py alone: the commit generator worktrunk calls
-# through bin/herdr-llm, and the pre-review judge behind --prereview.
+# through lean-herdr llm generate, and the pre-review judge behind --prereview.
 # They are two different jobs -- the generator formats a diffstat, the
 # judge reads code -- so they get separate keys, and the judge inherits
 # only where a line below says so.

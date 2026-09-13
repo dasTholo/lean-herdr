@@ -20,3 +20,6 @@ dist/
 
 # machine-local, written by `lean-herdr models` -- never shared
 .lean-ctx/lean-herdr/models.auto.toml
+
+# temp files of the overlay and template-lock writers, left only by a hard kill
+.lean-ctx/lean-herdr/.tmp-*
