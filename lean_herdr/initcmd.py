@@ -263,7 +263,7 @@ def workspace_init(
         kind = settings_for("orchestrator", data).kind
         # `settings_for("orchestrator", ...)` reads two tables of four. The
         # other two are read anyway -- `[roles.builder]`/`[roles.reviewer]`
-        # by `model_warnings` inside `_warnings` below, `[workspace]` by the
+        # by `model_warnings` inside `machine_report` below, `[workspace]` by the
         # `up` and keystroke routes that run against this same file next.
         # Validating them HERE is what keeps the promise the except branch
         # makes: a config we cannot read costs the warm-up, not the
@@ -273,7 +273,7 @@ def workspace_init(
         # already-parsed tables and touch nothing.
         model_warnings(data)
         workspace_settings(data)
-        # `[models]` is read here too, because `_warnings` acts on it: `auto`
+        # `[models]` is read here too, because `machine_report` acts on it: `auto`
         # decides whether the overlay's ignore rule is checked at all. Read
         # inside the guard and handed on as a plain bool -- a typo in it
         # costs the warm-up and that one check, never the report.

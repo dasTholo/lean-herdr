@@ -303,7 +303,7 @@ def test_the_gitignore_warning_only_appears_when_auto_is_on(monkeypatch, repo):
     switched the feature on.
 
     The config is written BEFORE the run and the run gets no `--force`,
-    so `_place` skips it and the file `_warnings` reads is this one.
+    so `_place` skips it and the config `machine_report` is handed is this one.
     """
     monkeypatch.setattr("shutil.which", which_stub(True))
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
@@ -492,7 +492,7 @@ def test_a_malformed_config_skips_the_warm_up_and_says_why(monkeypatch, repo):
 def test_a_broken_worker_block_costs_the_warm_up_and_not_the_report(monkeypatch, repo):
     """`[roles.orchestrator]` alone is not the whole config `init` reads.
 
-    `_warnings` hands `data` on to `settings.model_warnings`, which reads
+    `machine_report` hands `data` on to `settings.model_warnings`, which reads
     `[roles.builder]` and `[roles.reviewer]` -- tables
     `settings_for("orchestrator", ...)` never validates. Before the guard,
     a broken worker block raised out of `workspace_init` AFTER the files
@@ -511,10 +511,10 @@ def test_a_broken_worker_block_costs_the_warm_up_and_not_the_report(monkeypatch,
 
 
 def test_a_broken_models_block_costs_the_warm_up_and_not_the_report(monkeypatch, repo):
-    """`[models]` is the table `_warnings` acts on, and nobody validated it first.
+    """`[models]` is the table `machine_report` acts on, and nobody validated it first.
 
     `auto = 1` passes `settings_for` and `model_warnings` untouched and used to
-    raise out of `_warnings` -- after the files were written, so `main()` answered
+    raise out of `machine_report` -- after the files were written, so `main()` answered
     with a bare `config_error:` and the written/skipped report was gone.
     """
     quiet(monkeypatch)
