@@ -481,8 +481,8 @@ def test_main_reads_config_toml_exactly_once_per_call(monkeypatch, tmp_path, cap
     constraint is about the count, and `dispatch.main()`'s own comment
     names a test as its guard -- so one has to actually count.
 
-    The overlay is a SECOND file and is expected: `llm_settings_layered`
-    reads it beside config.toml. This counts config.toml alone.
+    The overlay is a SECOND file, and only the wait mode reads it -- the one
+    mode whose judge uses the model it names. Both counts are held here.
     """
     root = tmp_path / "repo"
     _write_config(root, BUILDER_CONFIG)
@@ -500,7 +500,13 @@ def test_main_reads_config_toml_exactly_once_per_call(monkeypatch, tmp_path, cap
     _line([*BUILD_ARGS, "--model", "opus"], root, monkeypatch, capsys)
 
     assert reads.count("config.toml") == 1, reads
-    assert reads.count("models.auto.toml") == 1, reads
+    assert reads.count("models.auto.toml") == 0, "the build mode has no use for it"
+
+    reads.clear()
+    _line(["builder", "--await", "--task-id", "T1"], root, monkeypatch, capsys)
+
+    assert reads.count("config.toml") == 1, reads
+    assert reads.count("models.auto.toml") == 1, "the wait mode reads it for the judge"
 
 
 def _no_launch(monkeypatch):
@@ -594,7 +600,7 @@ def test_a_broken_llm_block_is_a_config_error_too(monkeypatch, tmp_path, capsys)
 
 
 def test_a_broken_overlay_is_a_config_error_too(monkeypatch, tmp_path, capsys):
-    """`models.auto.toml` is read here through the SAME function as in
+    """`models.auto.toml` is read in the wait mode through the SAME function as in
     llm.file_settings() -- and here, unlike there, it has a reader.
 
     The generator swallows a broken overlay, because a machine-written file
@@ -607,9 +613,7 @@ def test_a_broken_overlay_is_a_config_error_too(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
     _no_launch(monkeypatch)
 
-    code = main(
-        ["builder", "--kind", "claude", "--model", "sonnet", "--role-file", "roles/builder.md"]
-    )
+    code = main(["builder", "--kind", "claude", "--await", "--task-id", "T1"])
 
     assert code == 0
     lines = capsys.readouterr().out.strip().splitlines()
@@ -618,6 +622,7 @@ def test_a_broken_overlay_is_a_config_error_too(monkeypatch, tmp_path, capsys):
     assert result["ok"] is False
     assert result["error"].startswith("config_error:"), result["error"]
     assert "effort" in result["error"], result["error"]
+    assert "lean-herdr models apply" in result["error"], result["error"]
 
 
 def test_the_overlay_reaches_dispatch_under_config_toml(monkeypatch, tmp_path):
@@ -645,6 +650,27 @@ def test_the_overlay_reaches_dispatch_under_config_toml(monkeypatch, tmp_path):
 
     assert seen[0].model == "auto/pick"
     assert seen[0].prereview_model == "by/hand"
+
+
+@pytest.mark.parametrize(
+    ("argv", "seam"),
+    [
+        (["order", "--to", "builder-feat", "--message", "build it"], "create_order"),
+        (["answer", "--task-id", "o-1", "--message", "yes"], "answer_order"),
+        (["cancel", "--task-id", "o-1", "--message", "no longer"], "cancel_order"),
+    ],
+    ids=["order", "answer", "cancel"],
+)
+def test_the_log_commands_do_not_read_the_overlay(monkeypatch, tmp_path, capsys, argv, seam):
+    """They write into the log and never ask a model, so the overlay has nothing to say.
+
+    Reading it anyway turned a broken machine-written file into a refused order.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    (root / OVERLAY_PATH).write_text("[llm]\nmodel = 5\n", encoding="utf-8")
+    monkeypatch.setattr(f"lean_herdr.dispatch.{seam}", lambda *a, **kw: {"ok": True})
+    assert _line(argv, root, monkeypatch, capsys) == {"ok": True}
 
 
 def test_a_broken_config_wins_over_a_usage_error(monkeypatch, tmp_path, capsys):

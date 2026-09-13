@@ -34,7 +34,7 @@ from lean_herdr.settings import (
     SETTINGS_PATH,
     SettingsError,
     WorkspaceSettings,
-    llm_settings_layered,
+    llm_settings,
     load_jsonc,
     models_settings,
     read_settings,
@@ -322,12 +322,16 @@ def workspace_up(*, root: Path | None = None, herdr: Herdr | None = None) -> dic
 
     This one DOES raise, and it is the one place in this module that
     does: an unreadable config leaves through `read_settings`,
-    `settings_for`, `workspace_settings` or `models_settings`, and a root
-    that is no repository through `canonical_root`. `main()` catches both
-    and turns them into `config_error:` -- which is the point. A config
-    the operator cannot read must not be answered with defaults, and
-    `start_orchestrator` below keeps its own never-raises promise
-    unchanged.
+    `settings_for`, `models_settings`, `llm_settings` or
+    `workspace_settings`, and a root that is no repository through
+    `canonical_root`. Every one of them runs BEFORE `start_orchestrator`;
+    after the start nothing raises (`check()` never does), so a started
+    orchestrator's pane and agent id always reach the caller. `main()`
+    turns the raise into `config_error:` -- a config the operator cannot
+    read must not be answered with defaults.
+
+    The overlay is not read here at all. It carries `model` alone, and
+    `up` needs only the two efforts out of `[llm]`.
     """
     base = root if root is not None else canonical_root()
     path = base / SETTINGS_PATH
@@ -342,6 +346,10 @@ def workspace_up(*, root: Path | None = None, herdr: Herdr | None = None) -> dic
     # silent, which is this module's whole promise. workspace.main() turns
     # a SettingsError from here into `config_error:`.
     models = models_settings(data)
+    # `[llm]` likewise, and for the same reason -- and BEFORE the start: read
+    # after it, a raise would throw away the pane and agent id of an
+    # orchestrator that is already running.
+    llm_cfg = llm_settings(data)
     result = start_orchestrator(
         herdr=herdr if herdr is not None else Herdr(),
         root=base,
@@ -366,7 +374,6 @@ def workspace_up(*, root: Path | None = None, herdr: Herdr | None = None) -> dic
     from lean_herdr.catalog import check
     from lean_herdr.llm import GENERATE_EFFORT, PREREVIEW_EFFORT
 
-    llm_cfg = llm_settings_layered(base, data)
     return {
         **result,
         "models": check(

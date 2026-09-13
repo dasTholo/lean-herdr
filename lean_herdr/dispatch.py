@@ -60,6 +60,7 @@ from lean_herdr.settings import (
     LlmSettings,
     RoleSettings,
     SettingsError,
+    llm_settings,
     llm_settings_layered,
     model_warnings,
     read_settings,
@@ -755,19 +756,21 @@ def main(argv: list[str] | None = None) -> int:
         root = canonical_root()
         raw = read_settings(root / SETTINGS_PATH)
         settings = settings_for(args.command, raw)
-        # Validated HERE, in the one consumer that has a reader for the
-        # complaint: a SettingsError from this line leaves main() as
-        # `config_error: <reason>` on stdout. llm.file_settings() deliberately
-        # swallows the same error -- there it would cost a commit -- so without
-        # this call a typo in `[llm]` would be silent everywhere.
+        # `[llm]` is validated for EVERY command, in the one consumer that has a
+        # reader for the complaint: a SettingsError here leaves main() as
+        # `config_error: <reason>`. llm.file_settings() swallows the same error
+        # -- there it would cost a commit -- so without this a typo in `[llm]`
+        # would be silent everywhere.
         #
-        # The SAME layering llm.file_settings() applies, out of the same
-        # function. Read the overlay in only one of the two and the commit
-        # generator and the pre-review judge would run on different models
-        # as soon as one exists. `raw` is handed in so config.toml is still
-        # read exactly once (test_main_reads_config_toml_exactly_once_per_call
-        # counts it; its neighbour only compares what the two modes see).
-        llm_cfg = llm_settings_layered(root, raw)
+        # The overlay only where it is USED: the wait mode hands `llm_cfg` to the
+        # pre-review judge, and there it takes the SAME layering
+        # llm.file_settings() applies, out of the same function -- otherwise the
+        # commit generator and the judge would run on different models. The build
+        # mode and the log commands never read a model out of `[llm]`, so a broken
+        # overlay must not cost them a dispatch. `raw` is handed in either way, so
+        # config.toml is still read exactly once
+        # (test_main_reads_config_toml_exactly_once_per_call counts both files).
+        llm_cfg = llm_settings_layered(root, raw) if args.waiting else llm_settings(raw)
         if args.command not in LOG_COMMANDS:
             # Precedence, at ONE place, and only for the role modes:
             #   kind:  --kind  > [roles.<role>].kind  -> else missing_flags()

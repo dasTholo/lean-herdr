@@ -626,6 +626,47 @@ def test_main_apply_writes_the_overlay_regardless_of_auto(monkeypatch, tmp_path,
     assert llm_settings(read_settings(tmp_path / OVERLAY_PATH)).model == (answer["model"])
 
 
+def _broken_overlay(root: Path) -> Path:
+    path = root / OVERLAY_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[llm]\nmodel = 5\n", encoding="utf-8")
+    return path
+
+
+def test_apply_rewrites_a_broken_overlay_instead_of_refusing_it(monkeypatch, tmp_path, capsys):
+    """`apply` exists to write this file. Refusing to run over it left no way back."""
+    no_network(monkeypatch, tmp_path)
+    overlay = _broken_overlay(tmp_path)
+    assert catalog.main(["apply"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is True
+    assert answer["reason"] == "written"
+    assert llm_settings(read_settings(overlay)).model == answer["model"]
+
+
+def test_list_does_not_read_the_overlay(monkeypatch, tmp_path, capsys):
+    no_network(monkeypatch, tmp_path)
+    _broken_overlay(tmp_path)
+    assert catalog.main(["list"]) == 0
+    assert one_line(capsys)["ok"] is True
+
+
+def test_check_stays_loud_about_a_broken_overlay_and_fetches_nothing(monkeypatch, tmp_path, capsys):
+    """`current` is the one answer that needs the overlay -- and a broken one is named."""
+    no_network(monkeypatch, tmp_path)
+    _broken_overlay(tmp_path)
+
+    def no_fetch(**_kwargs):
+        raise AssertionError("a broken overlay must cost no request")
+
+    monkeypatch.setattr("lean_herdr.catalog.fetch", no_fetch)
+    assert catalog.main(["check"]) == 0
+    answer = one_line(capsys)
+    assert answer["ok"] is False
+    assert answer["error"].startswith("config_error:"), answer["error"]
+    assert "lean-herdr models apply" in answer["error"], answer["error"]
+
+
 def test_main_answers_a_bad_command_with_one_json_line(capsys):
     """Exit 2 plus a line on stderr would reach the caller as no output.
 

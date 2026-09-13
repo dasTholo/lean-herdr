@@ -12,7 +12,7 @@ from lean_herdr import workspace
 from lean_herdr.bus import BusError
 from lean_herdr.herdr import FIRST_START_TIMEOUT_MS, Herdr
 from lean_herdr.llm import GENERATE_EFFORT, PREREVIEW_EFFORT
-from lean_herdr.settings import SETTINGS_PATH, SettingsError, WorkspaceSettings
+from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH, SettingsError, WorkspaceSettings
 from tests.doubles import (
     FakeProc,
     agent_started,
@@ -615,6 +615,44 @@ def test_a_broken_models_block_is_read_even_with_auto_off(monkeypatch, tmp_path)
     herdr, _ = herdr_with(monkeypatch, {})
     monkeypatch.setattr(workspace, "start_orchestrator", lambda **kw: {"ok": True})
     with pytest.raises(SettingsError, match="max_age_h"):
+        workspace.workspace_up(root=tmp_path, herdr=herdr)
+
+
+def test_a_broken_overlay_does_not_cost_the_started_orchestrator(monkeypatch, tmp_path):
+    """Read after the start, the overlay threw away a running orchestrator's names.
+
+    `up` reads no overlay at all now: it carries `model` alone, and `up` needs the
+    two efforts, which live in config.toml.
+    """
+    _write_config(tmp_path, AUTO_ON)
+    (tmp_path / OVERLAY_PATH).write_text("[llm]\nmodel = 5\n", encoding="utf-8")
+    herdr, _ = herdr_with(monkeypatch, {})
+    monkeypatch.setattr(
+        workspace,
+        "start_orchestrator",
+        lambda **kw: {"ok": True, "pane": "w3:p9", "agent_id": "mcp-42"},
+    )
+    monkeypatch.setattr(
+        "lean_herdr.catalog.check",
+        lambda **kw: {"written": True, "model": "cheap/one", "reason": "written"},
+    )
+    answer = workspace.workspace_up(root=tmp_path, herdr=herdr)
+    assert answer["ok"] is True
+    assert answer["pane"] == "w3:p9"
+    assert answer["agent_id"] == "mcp-42"
+    assert answer["models"]["reason"] == "written"
+
+
+def test_a_typo_in_llm_stops_up_before_anything_starts(monkeypatch, tmp_path):
+    """`[llm]` is validated like `[models]`: always, and ahead of the start."""
+    _write_config(tmp_path, CONFIG + '\n[llm]\neffort = "enormous"\n')
+    herdr, _ = herdr_with(monkeypatch, {})
+
+    def boom(**kwargs):
+        raise AssertionError("a broken [llm] must stop `up` before the start")
+
+    monkeypatch.setattr(workspace, "start_orchestrator", boom)
+    with pytest.raises(SettingsError, match="effort"):
         workspace.workspace_up(root=tmp_path, herdr=herdr)
 
 

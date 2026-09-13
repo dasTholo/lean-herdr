@@ -37,6 +37,7 @@ from lean_herdr.settings import (
     SETTINGS_PATH,
     ModelsSettings,
     SettingsError,
+    llm_settings,
     llm_settings_layered,
     models_settings,
     read_settings,
@@ -353,14 +354,18 @@ def main(argv: list[str] | None = None) -> int:
         root = canonical_root()
         data = read_settings(root / SETTINGS_PATH)
         cfg = models_settings(data)
-        llm_cfg = llm_settings_layered(root, data)
+        # `[llm]` of config.toml alone: the efforts are all `list` and `apply`
+        # need, and the overlay carries `model` and nothing else. `apply`
+        # therefore overwrites a broken overlay -- and heals it -- instead of
+        # refusing to run over the very file it exists to write.
+        own = llm_settings(data)
         # BOTH resolved levels, because the one key the overlay writes
         # serves both jobs. The fallbacks are llm.py's constants, and they
         # are imported rather than respelled -- a second spelling would
         # drift the day one of them changes (M3).
         efforts = (
-            llm_cfg.effort or llm.GENERATE_EFFORT,
-            llm_cfg.prereview_effort or llm.PREREVIEW_EFFORT,
+            own.effort or llm.GENERATE_EFFORT,
+            own.prereview_effort or llm.PREREVIEW_EFFORT,
         )
         if args.command == "list":
             models = fetch(requires=cfg.requires)
@@ -384,6 +389,10 @@ def main(argv: list[str] | None = None) -> int:
                     ],
                 }
         elif args.command == "check":
+            # `current` is the one answer that needs the overlay, and the one
+            # place it stays loud: an OverlayError is a SettingsError. Read
+            # BEFORE the fetch, so a broken file costs no request.
+            current = llm_settings_layered(root, data).model or llm.DEFAULT_MODEL
             models = fetch(requires=cfg.requires)
             if models is None:
                 result = {"ok": False, "error": "no_catalog"}
@@ -393,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
                     "ok": winner is not None,
                     "model": None if winner is None else winner.get("id"),
                     "efforts": list(efforts),
-                    "current": llm_cfg.model or llm.DEFAULT_MODEL,
+                    "current": current,
                 }
         else:
             outcome = check(root=root, settings=cfg, efforts=efforts, force=True)
