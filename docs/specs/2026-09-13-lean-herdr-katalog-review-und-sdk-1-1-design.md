@@ -12,7 +12,8 @@ ob das an früheren Entscheidungen etwas ändert.
 **Betrifft:** Teil A — `lean_herdr/initcmd.py`, `lean_herdr/catalog.py`,
 `lean_herdr/settings.py`, `lean_herdr/llm.py` (nur Docstring), `README.md`,
 `lean_herdr/templates/config.toml`, `.lean-ctx/lean-herdr/config.toml`,
-`tests/fixtures/openrouter-models.sample.json`, Tests. Teil B — nur `docs/specs/`.
+`tests/fixtures/openrouter-models.sample.json`, Tests; vorab ein Format-Commit über
+`lean_herdr/` und `tests/`. Teil B und die Nachträge — nur `docs/specs/`.
 
 ---
 
@@ -36,11 +37,11 @@ nicht unter „offen".
 | 3 — `fetch()` ohne Gürtel um den `request`-Seam | `catalog.py:88`: `request(...)` ohne `try`; `complete()` hat ihn (`llm.py:252-275`) |
 | 4 — README zählt vier Abschnitte | `README.md:293` „Four sections", `[models]` fehlt |
 | 5 — leeres Orchestrator-`model` falsch beschrieben | `README.md:312-314` und der Template-Kommentar `config.toml:20`; wahr nur für `workspace.py:272`. `dispatch` macht `""` zu `None` (`dispatch.py:814`), `missing_flags()` lehnt ab |
-| 6 — `generate()`-Docstring ohne Overlay-Stufe | `llm.py:383-385` nennt vier Stufen; der Kettenblock `llm.py:55-65` nennt fünf |
+| 6 — `generate()`-Docstring ohne Overlay-Stufe | `llm.py:383-385` nennt vier Stufen; der Kettenblock `llm.py:50-67` nennt fünf (`generate()`-Modellkette `:58-59`) |
 | 9 — Modell ohne `supported_efforts` ungetestet | der Code verwirft es (`catalog.py:160-162`), die Fixture hat keinen solchen Eintrag |
 | 10 — „`openrouter.py` importiert nichts aus `lean_herdr`" hat keinen Test | das Gegenstück für `llm.py` existiert (`test_llm_does_not_import_the_catalogue`) |
 | 11 — Zwei-Effort-Regel auf `workspace up` ungetestet | `workspace.py:381-384` reicht beide Stufen an `check()` |
-| 13 — die Overlay-Grenze hält nur der Schreiber | `settings.py:381-385` übernimmt **jedes** `[llm]`-Feld aus dem Overlay |
+| 13 — die Overlay-Grenze hält nur der Schreiber | `settings.py:381-385` übernimmt **jedes** `[llm]`-Feld aus dem Overlay; der Kettenblock `llm.py:50-67` kennt das Overlay nur als Stufe für `model`, drei Tests (`tests/test_settings.py:266`, `tests/test_llm.py:273`, `tests/test_dispatch.py:638`) verlangen das Gegenteil |
 | 14 — `_TYPES` und `ALLOWED` können auseinanderlaufen | `settings.py:113` leitet `ALLOWED` aus den Feldern ab, `:160` indiziert `_TYPES[key]` |
 
 Randbedingungen, die die Fixes formen:
@@ -58,6 +59,25 @@ Jeder Fix steht an seiner Quelle, inline, nach einem Rezept, das das Projekt sch
 hat. Kein gemeinsamer Helfer: er würde `orderlog` (Hash-Kette) und den Commit-Pfad
 in `llm.py` anfassen, und die beiden Schreibmuster sind verschieden — Bytes unter
 Hash-Namen gegen Text an festem Pfad.
+
+### 3.0 Vorab — ein Format-Commit ohne Verhaltensänderung
+
+Das Gate der Plan-Rezepte formatiert seit `e775af7` wieder vor Lint und Tests
+(`@reformat {{ paths }}`). Ohne Vorlauf mischte jede Task Fix und Formatierung:
+`ruff format --check` meldet 48 von 94 Dateien, darunter alle zehn, die Teil A
+anfasst.
+
+- Der erste Commit formatiert `lean_herdr/` und `tests/` (45 Dateien) und sonst
+  nichts. Nachweis: `ruff check` sauber, volle Testsuite grün, kein Test inhaltlich
+  geändert.
+- `docs/` bleibt ausgenommen: diese ruff-Version formatiert auch Python-Codeblöcke
+  in Markdown und schriebe die Mess-Skripte um, die in drei Specs als Beleg stehen.
+  `bin/herdr-llm` fasst ruff ohne Dateiendung nicht an.
+- `except (A, B):` wird dabei zu `except A, B:` (PEP 758, erst ab Python 3.14
+  gültig). Auf dem Commit-Pfad ist das sicher: `/usr/bin/python3` und das `python3`
+  im PATH sind 3.14.7, und 3.14 ist der Syntax-Boden des Projekts.
+- Erst danach folgen die Fixes. Das Gate ändert an den formatierten Dateien nichts
+  mehr, und jeder Fix-Commit zeigt nur den Fix.
 
 ### 3.1 Befund 1 — der `init`-Report überlebt einen `[models]`-Fehler
 
@@ -97,12 +117,17 @@ gibt `fetch()` selbst. `check()` macht aus `None` wie heute `no_catalog`.
 
 - `llm_settings_layered` nimmt aus dem Overlay nur `model`; jedes andere
   `[llm]`-Feld kommt allein aus `config.toml` oder bleibt `""`.
-- Das Overlay wird weiter streng gelesen: ein unbekannter Schlüssel oder ein
-  falscher Typ bleibt `SettingsError`.
-- Ein **bekanntes** fremdes Feld (`effort`, `prereview_model`, …) wird ignoriert,
-  nicht abgelehnt. Abgelehnt würde `dispatch` mit `config_error:` an einer Datei
-  scheitern, die der Betreiber nie geschrieben hat — genau die Folge, die 3.2
-  verhindert.
+- Das Overlay läuft weiter vollständig durch `llm_settings()`: ein unbekannter
+  Schlüssel, ein falscher Typ **oder ein ungültiger Wert** in einem bekannten Feld
+  (etwa `effort = "enormous"`) bleibt `SettingsError`. Erst danach wird `.model`
+  übernommen.
+- Ein **gültiges** fremdes Feld (`effort = "low"`, `prereview_model = …`) wird
+  ignoriert, nicht abgelehnt. Abgelehnt würde `dispatch` mit `config_error:` an
+  einer Datei scheitern, die nichts Falsches sagt, sondern nur nichts mehr bewirkt.
+- Das bringt den Leser in Einklang mit dem Kettenblock `llm.py:50-67`, der das
+  Overlay nur als Stufe für `model` kennt (`:59`, `:64`), mit dem Schreiber, dem
+  README (`:89`, `:159`) und dem Template (`config.toml:43`, `:50`). Der Katalog-Spec
+  sagte „Feld für Feld" (`:455`) und hat dazu einen Nachtrag (Abschnitt 7).
 - Der Schreiber bleibt, wie er ist: er schreibt nur `model` (`catalog.py:222-227`).
 
 ## 4. Teil A — Doku
@@ -117,7 +142,7 @@ gibt `fetch()` selbst. `check()` macht aus `None` wie heute `no_catalog`.
   `--model` oder ein gesetztes `model`. Template und `.lean-ctx/lean-herdr/config.toml`
   ändern sich byte-gleich.
 - **Befund 6:** der `generate()`-Docstring zählt die Stufen nicht mehr auf, er
-  verweist auf den Kettenblock `llm.py:55-65` (M3). Die achte Beschreibung der Kette
+  verweist auf den Kettenblock `llm.py:50-67` (M3). Die achte Beschreibung der Kette
   entfällt, statt korrigiert zu werden.
 
 ## 5. Teil A — Tests
@@ -132,11 +157,31 @@ widerlegt, wie im Final-Review.
 | 1 | `workspace_init` mit `[models]` `auto = 1` liefert `ok`, `written` und die `no warm-up:`-Warnung | heute `SettingsError` |
 | 2 | `Path.replace` wirft `OSError`: das alte Overlay ist unverändert, keine `.tmp-*`-Datei liegt daneben | heute ist die Datei schon überschrieben |
 | 3 | `request` wirft `OSError` bzw. `ValueError`: `fetch()` → `None`, `check()` → `no_catalog` | heute fliegt die Exception |
-| 13 | Overlay mit `model`, `effort` und `prereview_model`, `config.toml` ohne sie: nur `model` kommt an | heute kommen alle drei an |
+| 13 | Overlay mit `model`, `effort` und `prereview_model`, `config.toml` ohne sie: nur `model` kommt an; dazu drei bestehende Tests umschreiben (siehe unten) | heute kommen alle drei an |
 | 9 | siehe unten | Listen-Prüfung `catalog.py:161-162` entfernt |
 | 10 | ein Subprozess importiert `lean_herdr.openrouter`; aus `lean_herdr` stehen nur `lean_herdr` und `lean_herdr.openrouter` in `sys.modules` — Muster aus `test_importing_handlers_does_not_drag_in_the_workspace_subtree` | ein `from lean_herdr.settings import …` in `openrouter.py` |
-| 11 | `workspace up` mit `auto = true`, `catalog.check` ersetzt: `efforts` trägt beide aufgelösten Stufen — einmal aus `[llm]`, einmal aus `GENERATE_EFFORT`/`PREREVIEW_EFFORT` | eine der beiden Stufen in `workspace.py:381-384` gestrichen |
+| 11 | `workspace up` mit `auto = true`, `catalog.check` ersetzt nach dem Muster `checked(**kwargs)` aus `test_up_with_auto_on_carries_the_catalogue_answer` (`tests/test_workspace.py:535`): `efforts` trägt beide aufgelösten Stufen — einmal aus `[llm]` mit zwei verschiedenen Werten (`effort = "high"`, `prereview_effort = "medium"`, damit auch eine Vertauschung auffällt), einmal aus `GENERATE_EFFORT`/`PREREVIEW_EFFORT` | eine der beiden Stufen in `workspace.py:381-384` gestrichen oder vertauscht |
 | 14 | `set(settings._TYPES) == settings.ALLOWED` | ein `_TYPES`-Eintrag entfernt |
+
+**Befund 13 — drei bestehende Tests verlangen heute das Gegenteil.** Sie werden mit
+dem Fix umgeschrieben, nicht gelöscht; ihr eigentlicher Zweck bleibt:
+
+- `test_config_toml_beats_the_overlay_field_by_field` (`tests/test_settings.py:266`):
+  das Overlay trägt `model`, `prereview_model`, `effort` und `prereview_effort`.
+  Künftig kommt davon nur `model` an, und nur, wo `config.toml` schweigt. Sein
+  Docstring spricht von „the three the check filled in"; der gebaute Check füllt
+  einen Schlüssel.
+- `test_the_overlay_is_read_under_config_toml` (`tests/test_llm.py:273`) und
+  `test_the_overlay_reaches_dispatch_under_config_toml` (`tests/test_dispatch.py:638`):
+  beide beweisen, dass ihr Verbraucher das Overlay liest. Den Beweis führt künftig
+  `model` aus dem Overlay unter einem `config.toml` ohne `model`, statt
+  `prereview_model`.
+
+Ohne Änderung grün bleiben `test_a_broken_overlay_is_a_config_error_too`
+(`tests/test_dispatch.py:610`: ein ungültiges `effort` im Overlay bleibt
+`config_error:`, siehe 3.4), `test_a_broken_overlay_costs_the_defaults_not_the_commit`
+(`tests/test_llm.py:260`) und die übrigen Overlay-Tests in `tests/test_settings.py`,
+die nur `model` oder kaputtes TOML schreiben.
 
 **Befund 9 — ein fünfter Fixture-Eintrag.** `mid/no-effort-list` kommt an Position 3
 der Fixture, zwischen `cheap/no-minimal-effort` und `mid/small-context`:
@@ -163,7 +208,8 @@ jeden Test, der die Fixture liest:
 
 - Mit `efforts=()` gewinnt in jedem Fall ein Eintrag davor (`cheap/no-benchmarks`
   oder `cheap/no-minimal-effort`). Einen Test mit leerem `efforts` und einer
-  Index-Untergrenze zwischen 41 und 58 gibt es nicht.
+  Index-Untergrenze, unter der der neue Eintrag gewänne — `coding_index` in
+  (38.5, 56] oder `intelligence_index` in (41, 58] —, gibt es nicht.
 - Mit gesetzten `efforts` fällt der neue Eintrag ohne Liste heraus. Die Fälle
   „no benchmarks block, and no minimal effort" und „index, effort and context
   together" der Parametrisierung sowie
@@ -179,6 +225,11 @@ jeden Test, der die Fixture liest:
 Dazu ein benannter Test als widerlegbares Paar: mit `min_coding_index=50.0` gewinnt
 bei `efforts=("minimal",)` `mid/small-context`, bei `efforts=()` `mid/no-effort-list`.
 Der zweite Fall beweist, dass allein die fehlende Liste den Eintrag aussortiert.
+
+Unter der Mutation aus der Tabelle (Listen-Prüfung `catalog.py:161-162` entfernt)
+wirft `level not in None` einen `TypeError`: der Paar-Test scheitert mit einem
+Fehler, nicht mit einer falschen Wahl. Das zählt als widerlegt; der Plan nennt
+diese Fehlerform, damit niemand sie für einen kaputten Test hält.
 
 ## 6. Teil B — SDK 1.1.0, neu bewertet
 
@@ -295,14 +346,18 @@ ctx_knowledge UnsupportedCapabilityError Engine did not negotiate capability: ct
 
 ## 7. Nachträge in den alten Specs
 
-Beide sind mit dem Commit dieses Specs (`6dfb9a9`) eingetragen — ein Plan hat hier
-nichts mehr zu tun. Die Befunde dort bleiben stehen, wie beim Nachtrag vom 2026-09-03:
+Alle drei sind eingetragen, die ersten beiden mit dem Commit dieses Specs
+(`6dfb9a9`), der dritte mit seiner Überarbeitung — ein Plan hat hier nichts mehr zu
+tun. Die Befunde dort bleiben stehen, wie beim Nachtrag vom 2026-09-03:
 
 - `2026-09-02-leanctx-sdk-evaluation.md`: eine Statuszeile unter dem Kopf, mit
   Verweis auf Abschnitt 6.
 - `2026-09-03-lean-herdr-auftragslog-design.md`: ein Hinweis an der §3-Zeile „SDK
   1.1.0 ist nicht veröffentlicht" und am §11-Punkt „Kein Einsatz der
   `leanctx-sdk`", jeweils mit Verweis auf 6.2.
+- `2026-09-04-lean-herdr-rollenmodelle-und-katalog-design.md`: ein Nachtrag an
+  „Feld für Feld" (`:455`), mit Verweis auf 3.4 — eingetragen mit der
+  Überarbeitung dieses Specs nach dem Spec-Review.
 
 ## 8. Was dieser Entwurf NICHT tut
 
@@ -315,3 +370,4 @@ nichts mehr zu tun. Die Befunde dort bleiben stehen, wie beim Nachtrag vom 2026-
 - **Kein Komplexitäts-Refactor.** `_clears` liegt mit cc=26 über der Schwelle; keiner
   der Fixes berührt es, also bleibt es. `dispatch.py`, das größte Modul, wird nicht
   angefasst.
+- **Kein Formatieren von `docs/`** (3.0): die Mess-Skripte in den Specs sind Belege.

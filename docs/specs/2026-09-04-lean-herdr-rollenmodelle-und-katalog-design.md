@@ -454,6 +454,10 @@ def llm_settings_layered(root) -> LlmSettings   # Overlay unten, config.toml dar
 
 Sie liest erst `models.auto.toml`, dann `config.toml` darüber, Feld für Feld, und
 ein leerer String im Vordergrund gilt weiter als „nicht gesetzt".
+*Nachtrag 2026-09-13:* „Feld für Feld" gilt nur noch für `model`. Das Overlay
+liefert keinen anderen Schlüssel mehr — so, wie es der Kettenblock
+(`llm.py:50-67`), der Schreiber, das README und das Template schon beschreiben;
+siehe `2026-09-13-lean-herdr-katalog-review-und-sdk-1-1-design.md`, 3.4.
 
 Beide Aufrufer müssen sie nehmen — `llm.file_settings()` **und**
 `dispatch.main()`. Läse nur einer das Overlay, benutzten Commit-Generator und
