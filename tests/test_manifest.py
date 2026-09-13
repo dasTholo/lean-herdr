@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from lean_herdr.initcmd import LAYOUT
+from lean_herdr.templating import LAYOUT
 
 ROOT = Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "herdr-plugin.toml"

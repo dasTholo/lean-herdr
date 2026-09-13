@@ -55,10 +55,11 @@ def test_reviewer_may_write_nothing_and_no_wt():
     assert set(bash) >= {"*", "git diff*", "git log*"}
 
 
-def test_wt_toml_has_the_pre_merge_gate_and_a_fixed_schema():
+def test_wt_toml_has_the_pre_merge_gate_with_test_and_lint():
     cfg = tomllib.loads((ROOT / ".config" / "wt.toml").read_text(encoding="utf-8"))
     assert cfg["pre-merge"]["test"].startswith("uv run pytest")
-    assert cfg["list"]["json-schema"] == 1
+    assert cfg["pre-merge"]["lint"].startswith("uv run ruff check")
+    assert "list" not in cfg, "wt ignores list.json-schema in a project config"
 
 
 def test_readme_names_every_runtime_dependency():

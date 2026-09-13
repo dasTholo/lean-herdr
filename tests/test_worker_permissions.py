@@ -19,9 +19,14 @@ import pytest
 
 from lean_herdr.report import SUBCOMMANDS
 from lean_herdr.settings import load_jsonc
+from lean_herdr.templating import LAYOUT, render
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ("builder", "reviewer")
+
+#: Another project's gate. The permission files are rendered with these too, so
+#: a render that shifted a line fails here even where this repo's copy passes.
+FOREIGN = {"test": "cargo test", "lint": "cargo clippy"}
 
 #: The builder's own gate. .lean-ctx/lean-herdr/roles/builder.md prescribes TDD and commits via
 #: `wt step commit --stage none`, and `bash: {"*": "deny"}` plus the report
@@ -30,7 +35,7 @@ WORKERS = ("builder", "reviewer")
 #: wider: `wt step commit *`, not `wt *`, and not `wt step *`.
 BUILDER_TOOLING = (
     "uv run pytest*",
-    "uv run ruff*",
+    "uv run ruff check*",
     "git add*",
     "git commit*",
     "git diff*",
@@ -55,17 +60,33 @@ def claude_key(command: str) -> str:
     )
 
 
-def opencode() -> dict:
+def opencode(root: Path = ROOT) -> dict:
     """opencode.jsonc, parsed by the stripper lean_herdr/settings.py owns.
 
     Not a second one: that stripper already handles `//` inside string
     literals, and two of them would drift. It is total, so the assertion
     is what turns a broken repo file into a sentence instead of a KeyError.
     """
-    cfg = load_jsonc(ROOT / "opencode.jsonc")
-    assert cfg.found, f"no opencode.jsonc at {ROOT}"
+    cfg = load_jsonc(root / "opencode.jsonc")
+    assert cfg.found, f"no opencode.jsonc at {root}"
     assert not cfg.error, cfg.error
     return cfg.data
+
+
+@pytest.fixture(scope="module")
+def foreign_root(tmp_path_factory) -> Path:
+    """opencode.jsonc and .claude/settings.json, rendered with FOREIGN."""
+    root = tmp_path_factory.mktemp("foreign")
+    for name in ("opencode.jsonc", "settings.json"):
+        target = root / LAYOUT[name]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(render(name, FOREIGN))
+    return root
+
+
+@pytest.fixture(params=["repo", "foreign"])
+def gate_root(request, foreign_root) -> Path:
+    return ROOT if request.param == "repo" else foreign_root
 
 
 @pytest.mark.parametrize("role", WORKERS)
@@ -81,7 +102,7 @@ def test_every_worker_may_run_every_report_subcommand(role):
         assert allowed.get(opencode_key(command)) == "allow", f"{role} cannot run `{command}`"
 
 
-def test_the_permission_is_never_a_bare_wildcard():
+def test_the_permission_is_never_a_bare_wildcard(gate_root):
     """One binary means the gate is the ONLY separation left.
 
     Before this, `herdr-dispatch` and `herdr-report` were two programs,
@@ -90,14 +111,14 @@ def test_the_permission_is_never_a_bare_wildcard():
     own verb -- `order`, `answer`, `cancel` and `remember` included.
     """
     for role in WORKERS:
-        allowed = opencode()["agent"][role]["permission"]["bash"]
+        allowed = opencode(gate_root)["agent"][role]["permission"]["bash"]
         for wildcard in ("lean-herdr *", "lean-herdr*", "lean-herdr report *"):
             assert wildcard not in allowed, f"{role}: {wildcard} is too wide"
-    for entry in claude_allow():
+    for entry in claude_allow(gate_root):
         assert entry not in ("Bash(lean-herdr:*)", "Bash(lean-herdr)"), entry
 
 
-def test_no_worker_gate_ever_names_the_dispatch_verb():
+def test_no_worker_gate_ever_names_the_dispatch_verb(gate_root):
     """The verb that belongs to the orchestrator, and to nobody else.
 
     `dispatch order` writes work orders and `dispatch answer` closes an
@@ -105,10 +126,10 @@ def test_no_worker_gate_ever_names_the_dispatch_verb():
     an order under the sender the other workers trust.
     """
     for role in WORKERS:
-        allowed = opencode()["agent"][role]["permission"]["bash"]
+        allowed = opencode(gate_root)["agent"][role]["permission"]["bash"]
         offenders = [key for key in allowed if "dispatch" in key]
         assert not offenders, f"{role} may run the dispatch verb: {offenders}"
-    offenders = [key for key in claude_allow() if "dispatch" in key]
+    offenders = [key for key in claude_allow(gate_root) if "dispatch" in key]
     assert not offenders, f".claude/settings.json: {offenders}"
 
 
@@ -119,8 +140,8 @@ def test_the_repo_ships_the_claude_permissions_too():
         assert claude_key(command) in allow, f"Claude Code cannot run `{command}`"
 
 
-def claude_allow() -> list[str]:
-    return json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))[
+def claude_allow(root: Path = ROOT) -> list[str]:
+    return json.loads((root / ".claude" / "settings.json").read_text(encoding="utf-8"))[
         "permissions"
     ]["allow"]
 
@@ -162,9 +183,9 @@ def test_the_builder_may_run_the_gate_its_role_text_demands():
         assert allowed.get(pattern) == "allow", f"the builder cannot run `{pattern}`"
 
 
-def test_the_builders_gate_is_not_a_blank_cheque():
+def test_the_builders_gate_is_not_a_blank_cheque(gate_root):
     """`nothing more` is half the operator's decision -- pin that half too."""
-    allowed = opencode()["agent"]["builder"]["permission"]["bash"]
+    allowed = opencode(gate_root)["agent"]["builder"]["permission"]["bash"]
     for forbidden in (
         "git push*",
         "git *",
@@ -188,19 +209,23 @@ def test_the_claude_builder_may_commit_through_worktrunk():
 
 
 #: The Claude harness spells the same grant differently, so the two files
-#: cannot share one list. These three are the ones `.lean-ctx/lean-herdr/roles/builder.md` makes
-#: mandatory: stage, test, commit. `wt step commit --stage none` commits the
-#: INDEX, so without `git add` the commit is empty and the role text cannot
-#: be followed at all -- and an agent told to do TDD has to run a test.
+#: cannot share one list. `git add` and `wt step commit` are the ones
+#: `.lean-ctx/lean-herdr/roles/builder.md` makes mandatory -- `wt step commit
+#: --stage none` commits the INDEX, so without `git add` the commit is empty.
+#: The test and the lint command are the pre-merge gate's own: the gate checks
+#: lint since the operator decision of 2026-09-13, so every builder must be
+#: able to run it first.
 #:
-#: The two harnesses are deliberately NOT at parity: opencode also grants the
-#: builder `uv run ruff*`, `git commit*`, `git diff*` and `git status*`, which
-#: the Claude side does not (operator decision, 2026-09-03). Nothing in
-#: `.lean-ctx/lean-herdr/roles/builder.md` makes those mandatory -- `wt step commit` replaces
-#: `git commit`, and the rest are conveniences -- so the narrower gate stands.
+#: The two harnesses are still NOT at parity: opencode also grants the builder
+#: `git commit*`, `git diff*` and `git status*`, which the Claude side does not
+#: (operator decision, 2026-09-03). Nothing in
+#: `.lean-ctx/lean-herdr/roles/builder.md` makes those mandatory -- `wt step
+#: commit` replaces `git commit`, and the rest are conveniences -- so the
+#: narrower gate stands.
 CLAUDE_BUILDER_TOOLING = (
     "Bash(git add:*)",
     "Bash(uv run pytest:*)",
+    "Bash(uv run ruff check:*)",
     "Bash(wt step commit:*)",
 )
 
@@ -218,9 +243,9 @@ def test_the_claude_builder_may_do_what_its_role_text_prescribes():
         assert pattern in allow, f"the Claude builder cannot run `{pattern}`"
 
 
-def test_the_claude_builders_gate_is_not_a_blank_cheque():
+def test_the_claude_builders_gate_is_not_a_blank_cheque(gate_root):
     """The other half of the operator's decision, pinned on this side too."""
-    allow = claude_allow()
+    allow = claude_allow(gate_root)
     for forbidden in (
         "Bash(git:*)",
         "Bash(git push:*)",
@@ -232,9 +257,9 @@ def test_the_claude_builders_gate_is_not_a_blank_cheque():
         assert forbidden not in allow, f"{forbidden} widens the builder's gate"
 
 
-def test_no_permission_file_hands_out_worktrunk_wholesale():
+def test_no_permission_file_hands_out_worktrunk_wholesale(gate_root):
     """`wt *` on a worker is the whole tool, merge and push included."""
-    for entry in claude_allow():
+    for entry in claude_allow(gate_root):
         assert entry not in ("Bash(wt:*)", "Bash(wt step:*)"), entry
 
 

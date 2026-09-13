@@ -1,11 +1,11 @@
 """`init` in a stranger's project: writes, skips, warns -- never repairs."""
 
 import subprocess
+import tomllib
 
 import pytest
 
 from lean_herdr.initcmd import (
-    LAYOUT,
     TEMP_IGNORE,
     TEMP_PROBE,
     WARM_TIMEOUT_S,
@@ -17,6 +17,7 @@ from lean_herdr.initcmd import (
     workspace_init,
 )
 from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
+from lean_herdr.templating import DEFAULT_VALUES, LAYOUT
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 from tests.doubles import Completed, FakeProc, which_stub
 
@@ -48,6 +49,16 @@ def test_a_second_run_writes_nothing(monkeypatch, repo):
     answer = workspace_init(root=repo)
     assert answer["written"] == []
     assert answer["skipped"] == sorted(LAYOUT.values())
+
+
+def test_init_writes_the_templates_rendered_and_no_token(monkeypatch, repo):
+    """A stranger's project gets commands, never `{{lean-herdr:...}}` braces."""
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    for relative in LAYOUT.values():
+        assert b"{{lean-herdr:" not in (repo / relative).read_bytes(), relative
+    gate = tomllib.loads((repo / ".config" / "wt.toml").read_text(encoding="utf-8"))
+    assert gate["pre-merge"] == DEFAULT_VALUES
 
 
 def test_a_dangling_symlink_is_not_written_through(monkeypatch, repo, tmp_path):

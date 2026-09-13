@@ -1,18 +1,15 @@
 # worktrunk project hooks. Project hooks need an approval on their first run:
 # `wt config approvals`.
 #
-# pre-merge is the test gate: worktrunk runs it after the rebase and BEFORE the
+# pre-merge is the gate: worktrunk runs it after the rebase and BEFORE the
 # merge, and a failure aborts the merge. That gives one check which does not
-# hang on a model's judgement.
+# hang on a model's judgement. Both commands are rendered by `lean-herdr
+# workspace init --test/--lint`, and the builder's permissions carry the same
+# two strings -- a changed command needs `wt config approvals add` again.
 
 [pre-merge]
-test = "uv run pytest -q"
-
-# W2: `wt list --format=json` emits schema 1 today and announces schema 2 as the
-# future default. Pinned so the output shape cannot shift under a script -- even
-# though this design never parses `wt list`.
-[list]
-json-schema = 1
+test = "uv run pytest"
+lint = "uv run ruff check"
 
 # Appended to worktrunk's own commit prompt -- we write no template of our
 # own (spec 9). Needs `wt config approvals add` once, through the same

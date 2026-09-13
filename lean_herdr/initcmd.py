@@ -37,9 +37,8 @@ from lean_herdr.settings import (
     settings_for,
     workspace_settings,
 )
+from lean_herdr.templating import DEFAULT_VALUES, LAYOUT, render
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
-
-TEMPLATES = Path(__file__).resolve().parent / "templates"
 
 #: A read-only check must not hold up the whole call.
 CHECK_TIMEOUT_S = 10.0
@@ -54,28 +53,6 @@ CHECK_TIMEOUT_S = 10.0
 #: NOT `--pure`: that switch skips external plugins, i.e. exactly the step
 #: that has to be warmed. Measured 3 of 3 still hanging afterwards.
 WARM_TIMEOUT_S = 8.0
-
-#: template inside the package -> where it goes in the target project.
-#: THE one truth: tests/test_templates.py imports this table to hold each
-#: template byte-identical against this repo's own copy.
-#:
-#: Only the first four are movable. `opencode.jsonc`,
-#: `.claude/settings.json`, `.config/wt.toml` and the opencode plugin sit
-#: where their owners look for them. `.config/wt.toml` could in theory move
-#: via WORKTRUNK_PROJECT_CONFIG_PATH -- but that variable would have to be
-#: set on EVERY `wt` call, hand-typed ones included, and a single miss makes
-#: `wt` skip the project hooks silently and report success. The pre-merge
-#: test gate would then not run at all.
-LAYOUT = {
-    "config.toml": ".lean-ctx/lean-herdr/config.toml",
-    "roles/orchestrator.md": ".lean-ctx/lean-herdr/roles/orchestrator.md",
-    "roles/builder.md": ".lean-ctx/lean-herdr/roles/builder.md",
-    "roles/reviewer.md": ".lean-ctx/lean-herdr/roles/reviewer.md",
-    "opencode.jsonc": "opencode.jsonc",
-    "settings.json": ".claude/settings.json",
-    "wt.toml": ".config/wt.toml",
-    "lean-ctx-policy.js": ".opencode/plugins/lean-ctx-policy.js",
-}
 
 
 def _read(runner: Any, *cmd: str, cwd: Path | None = None) -> str | None:
@@ -288,8 +265,8 @@ def _warm_opencode(root: Path, *, runner: Any) -> bool:
     return True
 
 
-def _place(root: Path, relative: str, source: Path, *, force: bool) -> bool:
-    """Write one template. True when it landed, False when it was skipped.
+def _place(root: Path, relative: str, data: bytes, *, force: bool) -> bool:
+    """Write one rendered template. True when it landed, False when it was skipped.
 
     NO component below `root` may be a symlink -- neither the file at the
     end of `relative` nor a directory on the way to it.
@@ -326,7 +303,7 @@ def _place(root: Path, relative: str, source: Path, *, force: bool) -> bool:
     target.parent.mkdir(parents=True, exist_ok=True)
     if target.is_symlink():
         target.unlink()
-    target.write_bytes(source.read_bytes())
+    target.write_bytes(data)
     return True
 
 
@@ -360,7 +337,7 @@ def workspace_init(
     skipped: list[str] = []
     try:
         for name, relative in LAYOUT.items():
-            landed = _place(base, relative, TEMPLATES / name, force=force)
+            landed = _place(base, relative, render(name, DEFAULT_VALUES), force=force)
             (written if landed else skipped).append(relative)
     except OSError as exc:
         return {

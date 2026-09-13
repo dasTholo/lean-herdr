@@ -64,8 +64,10 @@
           "lean-herdr report done *": "allow",
           "lean-herdr report fail *": "allow",
           "lean-herdr report ask *": "allow",
-          "uv run pytest*": "allow",
-          "uv run ruff*": "allow",
+          // The pre-merge gate's own two commands, rendered by `workspace init`:
+          // the builder may run exactly what the merge is measured against.
+          "{{lean-herdr:test}}*": "allow",
+          "{{lean-herdr:lint}}*": "allow",
           "git add*": "allow",
           "git commit*": "allow",
           "git diff*": "allow",

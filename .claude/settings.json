@@ -9,6 +9,7 @@
       "Bash(lean-herdr report ask:*)",
       "Bash(git add:*)",
       "Bash(uv run pytest:*)",
+      "Bash(uv run ruff check:*)",
       "Bash(wt step commit:*)"
     ]
   }

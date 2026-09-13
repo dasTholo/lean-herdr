@@ -8,7 +8,8 @@
       "Bash(lean-herdr report fail:*)",
       "Bash(lean-herdr report ask:*)",
       "Bash(git add:*)",
-      "Bash(uv run pytest:*)",
+      "Bash({{lean-herdr:test}}:*)",
+      "Bash({{lean-herdr:lint}}:*)",
       "Bash(wt step commit:*)"
     ]
   }

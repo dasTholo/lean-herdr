@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from lean_herdr.initcmd import TEMPLATES
+from lean_herdr.templating import DEFAULT_VALUES, render
 
 
 def write_opencode_config(root: Path) -> Path:
@@ -23,14 +23,14 @@ def write_opencode_config(root: Path) -> Path:
     could not resolve `--agent orchestrator` here, and every core test
     drives it with a throwaway root that carries no project files at all.
 
-    The TEMPLATE is copied rather than a minimal literal written on
+    The TEMPLATE is rendered, as `init` renders it, rather than a minimal literal written on
     purpose: it is exactly what `workspace init` puts there, so a template
     that ever stopped naming the orchestrator turns these tests red instead
     of leaving them green over a config the tool itself cannot use.
     """
     path = root / "opencode.jsonc"
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes((TEMPLATES / "opencode.jsonc").read_bytes())
+    path.write_bytes(render("opencode.jsonc", DEFAULT_VALUES))
     return path
 
 
