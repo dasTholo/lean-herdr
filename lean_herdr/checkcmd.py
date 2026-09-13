@@ -43,6 +43,7 @@ from lean_herdr.settings import (
 )
 from lean_herdr.templating import (
     LAYOUT,
+    LOCK_PATH,
     LockError,
     file_state,
     read_lock,
@@ -206,26 +207,30 @@ def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
 #: line naming one of them could ever cover the next.
 TEMP_IGNORE = ".lean-ctx/lean-herdr/.tmp-*"
 
-#: One name such a writer could draw. `git check-ignore` matches patterns and
-#: needs no file on disk, so this probe stands for every name `mkstemp` picks.
+#: One name each writer could draw -- the overlay's and the lock's. `git
+#: check-ignore` matches patterns and needs no file on disk, so a probe stands
+#: for every name `mkstemp` picks, and a rule narrower than TEMP_IGNORE that
+#: covers one writer's names shows up on the other writer's probe.
 TEMP_PROBE = OVERLAY_PATH.parent / ".tmp-models.auto.toml.probe"
+LOCK_TEMP_PROBE = LOCK_PATH.parent / ".tmp-templates.lock.json.probe"
 
 
 def _check_temp_ignored(root: Path, runner: Any) -> str | None:
     """git does not ignore the writers' temp files. Asked always, never behind `auto`.
 
-    Its own call, never one shared with `_check_overlay_ignored`: a single
-    `check-ignore` over both paths answers non-empty as soon as ONE of them
-    is covered -- and a rule for the overlay alone would then pass for both.
+    One call per probe, never one shared with `_check_overlay_ignored` or with
+    each other: a single `check-ignore` over several paths succeeds as soon as
+    ONE of them is covered -- and a rule for one path would then pass for all.
     """
-    proc = _run(runner, "git", "check-ignore", "-v", str(TEMP_PROBE), cwd=root)
-    if proc is None or proc.returncode != 1:
-        return None
-    return (
-        f"git does not ignore {TEMP_IGNORE} -- a writer killed mid-run leaves a "
-        "temp file there that would show up in git status. Add to .gitignore: "
-        f"{TEMP_IGNORE}"
-    )
+    for probe in (TEMP_PROBE, LOCK_TEMP_PROBE):
+        proc = _run(runner, "git", "check-ignore", "-v", str(probe), cwd=root)
+        if proc is not None and proc.returncode == 1:
+            return (
+                f"git does not ignore {TEMP_IGNORE} (probed with {probe}) -- a writer killed "
+                "mid-run leaves a temp file there that would show up in git status. Add to "
+                f".gitignore: {TEMP_IGNORE}"
+            )
+    return None
 
 
 def _dig(data: Any, *keys: str) -> Any:

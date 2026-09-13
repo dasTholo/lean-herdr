@@ -1,6 +1,7 @@
 """`workspace check`: every group of warnings, and the errors that stop `up` and `dispatch`."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -139,6 +140,30 @@ def test_an_ignore_check_judges_by_the_exit_code_not_the_output(monkeypatch, rep
     assert line is not None and names in line
     fatal = Completed(returncode=128, stderr="fatal: not a git repository\n")
     assert check(repo, FakeProc(replies={("check-ignore",): fatal})) is None
+
+
+@pytest.mark.parametrize(
+    ("rule", "warned"),
+    [
+        pytest.param(
+            ".lean-ctx/lean-herdr/.tmp-models.auto.toml.*", True, id="the overlay writer's only"
+        ),
+        pytest.param(TEMP_IGNORE, False, id="every writer's"),
+    ],
+)
+def test_the_temp_check_probes_the_lock_writer_as_well(monkeypatch, repo, rule, warned):
+    """A rule for the overlay's temp names passes that probe and misses the lock's.
+
+    Real git, with the operator's own excludes kept out: the verdict is git's match.
+    """
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(repo / "no-config"))
+    (repo / ".gitignore").write_text(f"{OVERLAY_PATH}\n{rule}\n", encoding="utf-8")
+    line = _check_temp_ignored(repo, subprocess.run)
+    assert (line is not None) is warned, line
+    if warned:
+        assert ".tmp-templates.lock.json" in line
 
 
 #: A child that answers with a byte no codec takes.
