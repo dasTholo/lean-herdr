@@ -137,6 +137,43 @@ def test_force_does_not_write_through_a_symlinked_parent_either(monkeypatch, rep
     assert link.is_symlink(), "the operator's link is not init's to remove"
 
 
+def test_a_symlinked_lock_directory_is_neither_read_nor_written(
+    monkeypatch, repo, tmp_path_factory
+):
+    """`.lean-ctx -> ~/dotfiles/lean-ctx` carries the lock's folder along.
+
+    Written through the link, the lock lands outside the project; read through
+    it, a file nobody here owns would decide every template's state.
+    """
+    quiet(monkeypatch)
+    outside = tmp_path_factory.mktemp("outside-lean-ctx")
+    (repo / ".lean-ctx").symlink_to(outside, target_is_directory=True)
+    answer = workspace_init(root=repo)
+    assert answer["ok"] is True
+    assert list(outside.iterdir()) == [], "init wrote past the project root"
+    assert any(w.startswith(f"{LOCK_PATH} is blocked: ") for w in answer["warnings"]), answer[
+        "warnings"
+    ]
+
+
+def test_a_symlinked_lock_file_stays_a_link_and_its_target_untouched(
+    monkeypatch, repo, tmp_path_factory
+):
+    """`os.replace` onto a link swaps the link for a file -- the operator's link, gone."""
+    quiet(monkeypatch)
+    target = tmp_path_factory.mktemp("outside-lock") / "templates.lock.json"
+    target.write_text('{"files": {}, "values": {}}\n', encoding="utf-8")
+    before = target.read_bytes()
+    link = repo / LOCK_PATH
+    link.parent.mkdir(parents=True)
+    link.symlink_to(target)
+    answer = workspace_init(root=repo)
+    assert answer["ok"] is True
+    assert link.is_symlink(), "the operator's link is not init's to replace"
+    assert target.read_bytes() == before
+    assert any(w.startswith(f"{LOCK_PATH} is blocked: ") for w in answer["warnings"])
+
+
 def test_a_layout_parent_that_is_a_file_keeps_the_report(monkeypatch, repo):
     """The docstring promises no exception. A half-built tree tests it.
 

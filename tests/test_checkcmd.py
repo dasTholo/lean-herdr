@@ -486,6 +486,25 @@ def test_a_broken_lock_guesses_no_state(monkeypatch, repo, snapshot):
     assert any(w.startswith("lock_malformed:") for w in answer["warnings"]), answer["warnings"]
 
 
+def test_a_symlinked_lock_directory_is_blocked_and_not_read_through(
+    monkeypatch, repo, snapshot, tmp_path_factory
+):
+    """Read through the link, a stranger's file would be named this project's broken lock.
+
+    The leftover scan stays out of the linked folder as well: its temp files are not ours.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    outside = tmp_path_factory.mktemp("outside-lean-ctx")
+    (outside / "lean-herdr").mkdir()
+    (outside / "lean-herdr" / "templates.lock.json").write_text("not json", encoding="utf-8")
+    (outside / "lean-herdr" / ".tmp-templates.lock.json.q1w2e3").write_text("x", encoding="utf-8")
+    (repo / ".lean-ctx").symlink_to(outside, target_is_directory=True)
+    warnings = workspace_check(root=repo)["warnings"]
+    assert not any(w.startswith("lock_malformed:") for w in warnings), warnings
+    assert any(w.startswith(f"{LOCK_PATH} is blocked: ") for w in warnings), warnings
+    assert not any("left behind" in w for w in warnings), warnings
+
+
 def test_an_outdated_template_names_init_update(monkeypatch, repo, snapshot):
     initialised(monkeypatch, repo)
     monkeypatch.setattr("shutil.which", which_stub(False))

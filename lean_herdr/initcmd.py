@@ -39,8 +39,10 @@ from lean_herdr.settings import (
 )
 from lean_herdr.templating import (
     LAYOUT,
+    LOCK_PATH,
     VALUE_RE,
     LockError,
+    blocked,
     digest,
     file_state,
     read_lock,
@@ -215,19 +217,25 @@ def workspace_init(
     except BusError:
         return {"ok": False, "error": "not_a_git_repo: run `git init` first"}
 
-    try:
-        lock = read_lock(base)
-    except LockError as exc:
-        return {
-            "ok": False,
-            "error": f"lock_malformed: {exc} -- fix or delete it",
-            "root": str(base),
-        }
+    # A symlink on the lock's way is the escape `_place` refuses for a template:
+    # the lock is then neither read nor written, the values come from the flags
+    # and the defaults, and the warnings name it.
+    lock_blocked = blocked(base, LOCK_PATH)
+    lock: dict[str, dict[str, str]] = {"values": {}, "files": {}}
+    if not lock_blocked:
+        try:
+            lock = read_lock(base)
+        except LockError as exc:
+            return {
+                "ok": False,
+                "error": f"lock_malformed: {exc} -- fix or delete it",
+                "root": str(base),
+            }
     values = resolve_values(lock["values"], test=test, lint=lint)
     written, skipped, templates, files, stopped = _lay_templates(
         base, values, lock["files"], force=force, update=update
     )
-    if stopped is None:
+    if stopped is None and not lock_blocked:
         try:
             write_lock(base, values=values, files=files)
         except OSError as exc:
@@ -274,7 +282,8 @@ def workspace_init(
         # so the overlay's ignore rule is not checked either.
         data, kind, overlay_auto = {}, "", False
     _install, found = machine_report(base, data=data, overlay_auto=overlay_auto, runner=runner)
-    warnings = found + state_warnings(templates) + warnings
+    lock_state = {str(LOCK_PATH): "blocked"} if lock_blocked else {}
+    warnings = found + state_warnings({**templates, **lock_state}) + warnings
     warmed = _warm_opencode(base, runner=runner) if kind == "opencode" else False
     return {
         "ok": True,

@@ -179,6 +179,20 @@ def write_lock(root: Path, *, values: Mapping[str, str], files: Mapping[str, str
     return path
 
 
+def blocked(root: Path, relative: str | Path) -> bool:
+    """A symlink below `root` on the way to `relative`, or at it -- never gone through.
+
+    The rules of `initcmd._place`, for the templates and for the lock alike.
+    The root itself is not looked at: it may sit under a linked home or volume.
+    """
+    parent = Path(root)
+    for part in Path(relative).parts[:-1]:
+        parent = parent / part
+        if parent.is_symlink():
+            return True
+    return (Path(root) / relative).is_symlink()
+
+
 def file_state(root: Path, relative: str, *, rendered: bytes, locked: str | None) -> str:
     """One target's state, checked in this order.
 
@@ -191,15 +205,9 @@ def file_state(root: Path, relative: str, *, rendered: bytes, locked: str | None
     directory in its place, a regular file where a parent directory belongs.
     `init` stops on it with its report so far; `check` names it.
     """
-    base = Path(root)
-    parent = base
-    for part in Path(relative).parts[:-1]:
-        parent = parent / part
-        if parent.is_symlink():
-            return "blocked"
-    target = base / relative
-    if target.is_symlink():
+    if blocked(root, relative):
         return "blocked"
+    target = Path(root) / relative
     try:
         on_disk = digest(target.read_bytes())
     except FileNotFoundError:

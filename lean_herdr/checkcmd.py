@@ -45,6 +45,7 @@ from lean_herdr.templating import (
     LAYOUT,
     LOCK_PATH,
     LockError,
+    blocked,
     file_state,
     read_lock,
     render,
@@ -372,7 +373,12 @@ def _linked_plugin(runner: Any, expected: Path) -> tuple[str | None, str | None]
 
 
 def _check_temp_leftovers(root: Path) -> str | None:
-    """Temp files a killed `models` or `init` run left in `.lean-ctx/lean-herdr/`."""
+    """Temp files a killed `models` or `init` run left in `.lean-ctx/lean-herdr/`.
+
+    Not behind a symlink: no writer here ever leaves a file in a linked folder.
+    """
+    if blocked(root, OVERLAY_PATH.parent):
+        return None
     folder = root / OVERLAY_PATH.parent
     left = sorted(path.name for path in folder.glob(".tmp-*"))
     if not left:
@@ -453,11 +459,20 @@ def _config_errors(root: Path) -> tuple[list[str], dict[str, Any], bool]:
 
 
 def _template_report(root: Path) -> tuple[dict[str, str], list[str]]:
-    """Every template's state, and the lines it earns. A broken lock guesses nothing."""
-    try:
-        lock = read_lock(root)
-    except LockError as exc:
-        return {}, [f"lock_malformed: {exc} -- fix or delete it; no template state is guessed"]
+    """Every template's state, and the lines it earns. A broken lock guesses nothing.
+
+    Nor is a lock behind a symlink read -- `init` never writes it there -- and
+    every state is then judged as if there were no lock.
+    """
+    lock: dict[str, dict[str, str]] = {"values": {}, "files": {}}
+    lock_state: dict[str, str] = {}
+    if blocked(root, LOCK_PATH):
+        lock_state = {str(LOCK_PATH): "blocked"}
+    else:
+        try:
+            lock = read_lock(root)
+        except LockError as exc:
+            return {}, [f"lock_malformed: {exc} -- fix or delete it; no template state is guessed"]
     values = resolve_values(lock["values"])
     templates: dict[str, str] = {}
     unreadable: list[str] = []
@@ -468,7 +483,7 @@ def _template_report(root: Path) -> tuple[dict[str, str], list[str]]:
             )
         except OSError as exc:
             unreadable.append(f"{relative} cannot be read: {exc}")
-    return templates, state_warnings(templates) + unreadable
+    return templates, state_warnings({**templates, **lock_state}) + unreadable
 
 
 def workspace_check(*, root: Path | None = None, runner: Any = subprocess.run) -> dict[str, Any]:
