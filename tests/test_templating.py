@@ -177,6 +177,7 @@ def test_the_lock_reads_back_what_was_written_and_diffs_line_by_line(tmp_path):
         '{"values": {"format": "ruff format"}, "files": {}}',
         '{"values": {}, "files": {"elsewhere.txt": "' + "0" * 64 + '"}}',
         '{"values": {}, "files": {"opencode.jsonc": "not-a-digest"}}',
+        "[" * 200000,
     ],
     ids=[
         "no-json",
@@ -186,6 +187,7 @@ def test_the_lock_reads_back_what_was_written_and_diffs_line_by_line(tmp_path):
         "unknown-value-key",
         "key-outside-layout",
         "bad-digest",
+        "nested-too-deep",
     ],
 )
 def test_a_broken_lock_is_a_lock_error_naming_its_path(tmp_path, text):

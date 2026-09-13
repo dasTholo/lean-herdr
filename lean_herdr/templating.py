@@ -137,7 +137,9 @@ def read_lock(root: Path) -> dict[str, dict[str, str]]:
         raise LockError(f"{path}: unreadable: {exc}") from exc
     try:
         data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError) as exc:
+        # RecursionError: arrays nested past the decoder's stack -- as unusable
+        # as any other file that is not JSON, and never a crash of `check` or `init`.
         raise LockError(f"{path}: not JSON: {exc}") from exc
     if not isinstance(data, dict) or set(data) != {"values", "files"}:
         raise LockError(f"{path}: expected exactly the keys `values` and `files`")

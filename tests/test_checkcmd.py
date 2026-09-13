@@ -477,10 +477,11 @@ def test_what_stops_up_or_dispatch_is_an_error(monkeypatch, repo, snapshot, conf
     assert any(e.startswith("config_error:") and names in e for e in answer["errors"]), answer
 
 
-def test_a_broken_lock_guesses_no_state(monkeypatch, repo, snapshot):
+@pytest.mark.parametrize("text", ["not json", "[" * 200000], ids=["no-json", "nested-too-deep"])
+def test_a_broken_lock_guesses_no_state(monkeypatch, repo, snapshot, text):
     initialised(monkeypatch, repo)
     monkeypatch.setattr("shutil.which", which_stub(False))
-    (repo / LOCK_PATH).write_text("not json", encoding="utf-8")
+    (repo / LOCK_PATH).write_text(text, encoding="utf-8")
     answer = workspace_check(root=repo)
     assert answer["templates"] == {}
     assert any(w.startswith("lock_malformed:") for w in answer["warnings"]), answer["warnings"]
