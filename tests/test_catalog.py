@@ -37,13 +37,14 @@ class FakeRequest:
         return self.reply
 
 
-def test_fetch_returns_the_recorded_page_as_four_dicts():
+def test_fetch_returns_the_recorded_page_as_five_dicts():
     fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
     models = catalog.fetch(requires=("reasoning",), request=fake)
     assert models is not None
     assert [entry["id"] for entry in models] == [
         "cheap/no-benchmarks",
         "cheap/no-minimal-effort",
+        "mid/no-effort-list",
         "mid/small-context",
         "good/all-clear",
     ]
@@ -257,6 +258,30 @@ def test_a_model_that_cannot_do_the_effort_is_dropped():
     )
     assert picked is not None
     assert picked["id"] == "mid/small-context"
+
+
+@pytest.mark.parametrize(
+    ("efforts", "expected"),
+    [(("minimal",), "mid/small-context"), ((), "mid/no-effort-list")],
+    ids=["an effort is asked for", "no effort is asked for"],
+)
+def test_a_model_without_an_effort_list_fails_only_the_effort_check(efforts, expected):
+    """Missing evidence is not a pass -- for efforts as for benchmarks.
+
+    `mid/no-effort-list` clears `min_coding_index=50.0` and is cheaper than
+    `mid/small-context`, but lists no `supported_efforts`. Asked for an effort it
+    is dropped and `mid/small-context` wins; asked for none it wins itself -- so
+    the missing list alone is what dropped it.
+
+    Remove the list check from `_clears` and the first case does not pick a wrong
+    model, it errors: `level not in None` is a TypeError. That error IS the
+    refutation, not a broken test.
+    """
+    picked = catalog.recommend(
+        sample(), thresholds=ModelsSettings(min_coding_index=50.0), efforts=efforts
+    )
+    assert picked is not None
+    assert picked["id"] == expected
 
 
 def test_write_overlay_writes_the_model_and_never_the_judge(tmp_path):
@@ -558,7 +583,9 @@ def test_main_list_shows_the_survivors_and_writes_nothing(monkeypatch, tmp_path,
     answer = one_line(capsys)
     assert answer["ok"] is True
     assert answer["efforts"] == [llm.GENERATE_EFFORT, llm.PREREVIEW_EFFORT]
-    assert answer["total"] == 3, "cheap/no-minimal-effort cannot do `minimal`"
+    assert answer["total"] == 3, (
+        "cheap/no-minimal-effort cannot do `minimal`, mid/no-effort-list lists no efforts"
+    )
     assert [entry["id"] for entry in answer["models"]] == [
         "cheap/no-benchmarks",
         "mid/small-context",
