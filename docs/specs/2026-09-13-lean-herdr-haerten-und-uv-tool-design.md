@@ -428,6 +428,8 @@ Kopie in `.lean-ctx/lean-herdr/config.toml`; die zweite `.gitignore`-Zeile diese
 - `test_templates.py`: `render(template, Werte aus dem Lock dieses Repos)` == Kopie im
   Repo; das Lock dieses Repos **existiert** und meldet für jede Datei `current`. Es
   entsteht und wird committet in Task 6 (`uv run lean-herdr workspace init` im Repo).
+  In Task 5 gibt es noch kein Lock: dort prüft der Test nur
+  `render(template, DEFAULT_VALUES)` == Kopie; Existenz und L = D gelten ab Task 6.
   Außerdem ist jeder Lock-Eintrag gleich dem sha256 der Kopie im Repo (L = D). Ohne
   diese beiden Bedingungen bestünde der Test auch mit fehlendem oder veraltetem Lock,
   weil D = P vor dem Lock-Eintrag geprüft wird; ein veralteter Eintrag machte einen
@@ -468,6 +470,10 @@ außerdem das in 4 geänderte `_check_overlay_ignored` samt Tests um und läuft 
 nie parallel zu 4. 8 kommt spät,
 weil es den Plugin-Weg ändert; das Root-Manifest bleibt bis 10, damit das verlinkte
 Plugin auf dem Branch weiterläuft.
+
+Jede Task und das Final-Gate vor dem Merge führen `uv run pytest -q` **und**
+`uv run ruff check` selbst aus. Das pre-merge-Gate dieses Repos ist bis §10.5 nicht
+approved (§2.1) und würde beim Merge dieses Branches still übersprungen.
 
 ## 10. Migration dieses Repos (Task 10)
 
