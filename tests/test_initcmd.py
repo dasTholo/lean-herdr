@@ -631,6 +631,21 @@ def test_force_writes_everything_and_locks_it(monkeypatch, repo):
     assert lock["files"]["opencode.jsonc"] == digest((repo / "opencode.jsonc").read_bytes())
 
 
+def test_a_run_stopped_mid_loop_still_locks_what_landed(monkeypatch, repo):
+    """Without the lock, the rerun forgets the value it was given and calls its own file unknown."""
+    quiet(monkeypatch)
+    blocker = repo / ".opencode" / "plugins" / "lean-ctx-policy.js"
+    blocker.mkdir(parents=True)
+    answer = workspace_init(root=repo, test="cargo test")
+    assert answer["error"].startswith("init_stopped: "), answer
+    assert _lock(repo)["values"]["test"] == "cargo test"
+    assert answer["values"]["test"] == "cargo test"
+    assert answer["templates"][".config/wt.toml"] == "current"
+    blocker.rmdir()
+    again = workspace_init(root=repo)
+    assert again["templates"][".config/wt.toml"] == "current", again
+
+
 def test_force_and_update_together_is_a_usage_error(monkeypatch, repo):
     quiet(monkeypatch)
     answer = workspace_init(root=repo, force=True, update=True)

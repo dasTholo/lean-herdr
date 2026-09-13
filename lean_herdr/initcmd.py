@@ -235,11 +235,14 @@ def workspace_init(
     written, skipped, templates, files, stopped = _lay_templates(
         base, values, lock["files"], force=force, update=update
     )
-    if stopped is None and not lock_blocked:
+    if not lock_blocked:
+        # Once, after a stop mid-loop as well: the files that already landed
+        # keep their record, and the rerun the values it was given. A lock that
+        # cannot be written after such a stop adds nothing to the stop's report.
         try:
             write_lock(base, values=values, files=files)
         except OSError as exc:
-            stopped = exc
+            stopped = stopped or exc
     if stopped is not None:
         return {
             "ok": False,
@@ -247,6 +250,8 @@ def workspace_init(
             "root": str(base),
             "written": sorted(written),
             "skipped": sorted(skipped),
+            "values": values,
+            "templates": templates,
         }
     # ONE read, two readers below: the warning list and the warm-up
     # decision. `data` stays `{}` when the file is unreadable -- init has
