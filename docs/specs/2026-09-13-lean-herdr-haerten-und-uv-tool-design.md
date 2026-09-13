@@ -187,11 +187,13 @@ die zweite deckt auch Reste des Lock-Schreibers (§5.2). Task 0c misst beide per
 `git check-ignore`.
 
 `_check_overlay_ignored` fällt **ein Urteil je Pfad**: ein `git check-ignore -v`-Aufruf
-für `OVERLAY_PATH`, ein zweiter für `.lean-ctx/lean-herdr/.tmp-models.auto.toml.probe`.
-Leere Ausgabe heißt nicht ignoriert; die Warnung nennt genau die fehlende Zeile. Ein
+für `OVERLAY_PATH` — nur bei `auto`, wie heute —, ein zweiter für
+`.lean-ctx/lean-herdr/.tmp-models.auto.toml.probe` — **immer**, weil der Lock-Schreiber in
+jedem Projekt läuft. Leere Ausgabe heißt nicht ignoriert; die Warnung nennt genau die
+fehlende Zeile. Ein
 gemeinsamer Aufruf bestünde still, sobald nur das Overlay ignoriert ist — der Stand
 dieses Repos (`.gitignore:22`). `check` meldet liegen gebliebene `.tmp-*` in
-`.lean-ctx/lean-herdr/` (§6).
+`.lean-ctx/lean-herdr/`, ebenfalls unabhängig von `auto` (§6).
 
 ### 4.3 git
 
@@ -280,7 +282,7 @@ den aufgelösten Werten. Geprüft in dieser Reihenfolge:
 
 | Modus | schreibt | Lock |
 |---|---|---|
-| ohne Flag | `missing` | trägt `missing` (geschrieben) und `current` nach — so bekommen ältere Projekte ihr Lock ohne Überschreiben |
+| ohne Flag | `missing` | setzt den Eintrag für `missing` (geschrieben) und `current` auf D — auch einen vorhandenen, veralteten; so bekommen ältere Projekte ihr Lock ohne Überschreiben |
 | `--update` | `missing`, `outdated` | wie oben plus die neu geschriebenen |
 | `--force` | alles außer Dateien unter einem Symlink-Elternteil | alle geschriebenen |
 
@@ -331,7 +333,7 @@ ohne zu starten, zu schreiben, zu fetchen oder vorzuwärmen.
 | Install | `uv-receipt.toml` fehlt in `sys.prefix`; editable; `lean_herdr.__file__` liegt aufgelöst nicht unter dem aufgelösten `sys.prefix` (nennt `PYTHONPATH`, wenn gesetzt); `Path(shutil.which("lean-herdr")).resolve()` liegt nicht darunter — ohne `resolve()` wäre jeder korrekte Install eine Warnung, denn `~/.local/bin/lean-herdr` ist ein Symlink ins Tool-venv (gemessen) | §2.3 |
 | Plugin | kein `[local:…]` für `lean.herdr` oder ungleich `<paket>/plugin` → fertige `herdr plugin link …`-Zeile | `herdr plugin list --plugin lean.herdr`, Pfad per Regex |
 | Templates | `outdated`/`missing` → `init --update`; `diverged`/`unknown` → von Hand abgleichen; `blocked` → Symlink nennen; `edited` ist keine Warnung. Lock kaputt: `templates` ist `{}`, eine Warnung nennt `lock_malformed` — kein Zustand wird geraten, auch nicht `unknown` | `templating.file_state` |
-| Overlay und Lock | Ignore-Regel je Pfad (bei `auto`); liegen gebliebene `.tmp-*` in `.lean-ctx/lean-herdr/` | §4.2, §5.2 |
+| Overlay und Lock | Ignore-Regel je Pfad: Overlay bei `auto`, `.tmp-*` immer; liegen gebliebene `.tmp-*` in `.lean-ctx/lean-herdr/` immer | §4.2, §5.2 |
 | Modelle | `model_warnings` | vorhanden |
 
 **Code:** neu `lean_herdr/checkcmd.py` mit
@@ -364,7 +366,7 @@ Operator-Doku, Englisch. Anzupassen:
 - **What else ships here:** Manifest-Ort, `herdr plugin link <tool-venv>/…/lean_herdr/plugin`,
   den Pfad nennt `workspace check`.
 - **Setting up a project:** `--test`/`--lint`, `templates.lock.json`, `--update`,
-  `workspace check`; der Absatz über `uv run pytest` in Nicht-Python-Projekten wird zu
+  `workspace check`, die Ignore-Zeile `.lean-ctx/lean-herdr/.tmp-*`; der Absatz über `uv run pytest` in Nicht-Python-Projekten wird zu
   `--test`/`--lint`.
 - **Neu „Updating":** nach einem Merge `uv tool install --reinstall …`, dann
   `lean-herdr workspace check` und je Projekt `workspace init --update`; Hinweis auf
@@ -408,7 +410,7 @@ Kopie in `.lean-ctx/lean-herdr/config.toml`; die zweite `.gitignore`-Zeile diese
   `[local:…]`; Generator aus wt-JSON mit angehängter stderr-Zeile, `user` vor `system`;
   Generator mit Flags hinter `lean-herdr llm generate` → keine Warnung; Temp-Reste;
   Lock kaputt → `templates == {}`; nur das Overlay ignoriert → Warnung nennt
-  `.lean-ctx/lean-herdr/.tmp-*`; `which` über einen Symlink ins Prefix → keine Warnung.
+  `.lean-ctx/lean-herdr/.tmp-*`, auch bei `auto = false`; `which` über einen Symlink ins Prefix → keine Warnung.
 - `cli`: `plugin` und `llm` routen; `llm prereview` gibt exit 1 durch; Import-Crash
   von `llm` → stderr + exit 1, von `plugin` → stderr + exit 0, beide ohne stdout.
 
@@ -420,8 +422,11 @@ Kopie in `.lean-ctx/lean-herdr/config.toml`; die zweite `.gitignore`-Zeile diese
 - `test_templates.py`: `render(template, Werte aus dem Lock dieses Repos)` == Kopie im
   Repo; das Lock dieses Repos **existiert** und meldet für jede Datei `current`. Es
   entsteht und wird committet in Task 6 (`uv run lean-herdr workspace init` im Repo).
-  Ohne die Existenz-Bedingung bestünde der Test auch ohne Lock, weil D = P vor dem
-  Lock-Eintrag geprüft wird.
+  Außerdem ist jeder Lock-Eintrag gleich dem sha256 der Kopie im Repo (L = D). Ohne
+  diese beiden Bedingungen bestünde der Test auch mit fehlendem oder veraltetem Lock,
+  weil D = P vor dem Lock-Eintrag geprüft wird; ein veralteter Eintrag machte einen
+  späteren Hand-Edit zu `diverged` statt `edited`. Jede Template-Änderung zieht damit
+  das Lock nach (`uv run lean-herdr workspace init`).
 - `test_worker_permissions.py`: `CLAUDE_BUILDER_TOOLING` bleibt; die Assertions laufen
   zusätzlich gegen die mit Fremdwert gerenderten Templates (oben).
 - `test_config_files.py`: `list.json-schema`-Assertion entfällt; README-Guard nach §7.
@@ -445,7 +450,7 @@ Paket-Verzeichnis ohne `warning:`.
 | 6 | Lock, Zustände, `init --test/--lint/--update` (§5.2–5.4); Lock dieses Repos committen | 5 |
 | 7 | `checkcmd.py`, `workspace check`, `init` über dieselben Produzenten (§6) | 1, 2, 4, 6 |
 | 8 | Verben `plugin`/`llm`, Manifest ins Paket, `bin/herdr-llm` und `sys.path`-Eingriff raus, Docstrings (§3) | 0b |
-| 9 | README, Template-Kommentar, `.gitignore` (§7) | 0a, 3, 4, 6, 7, 8 |
+| 9 | README, Template-Kommentar samt Lock dieses Repos, `.gitignore` (§7) | 0a, 3, 4, 6, 7, 8 |
 | 10 | Migration und Abnahme, **nach dem Merge** (§10, §1) | alle |
 
 1–4 sind klein und berühren den Install nicht. 5–7 bauen aufeinander auf; 7 zieht
