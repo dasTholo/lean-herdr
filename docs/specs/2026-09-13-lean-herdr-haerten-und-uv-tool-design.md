@@ -53,7 +53,7 @@ Nicht Ziel: Veröffentlichung, andere Maschinen (§12).
 | Der Generator ist nicht eingerichtet | `wt config show --format json`: `"user": {"config": null, "exists": false}` |
 | `list.json-schema` im Template wird ignoriert | wt 0.77.0: „Key list.json-schema belongs in user config (will be ignored)" — in jedem Projekt, das `init` schreibt |
 | 2 Projekt-Befehle ohne Approval | `wt config show`: „2 project commands awaiting approval" |
-| Projektspezifische Befehle in Templates | `wt.toml` `test = "uv run pytest -q"`, `settings.json` `Bash(uv run pytest:*)`, `opencode.jsonc` Builder `uv run pytest*`, `uv run ruff*`; die Rollen-Prompts nennen keinen Befehl |
+| Projektspezifische Befehle in Templates | `wt.toml` `test = "uv run pytest -q"`, `settings.json` `Bash(uv run pytest:*)`, `opencode.jsonc` Builder `uv run pytest*`, `uv run ruff*`; die Rollen-Prompts nennen keinen Befehl; das Gate prüft kein Lint |
 | Kein Update-Weg für Projektkopien | `init` überspringt Vorhandenes, `--force` überschreibt alles, auch Hand-Edits |
 
 ### 2.2 Overlay und Fehlerpfade
@@ -217,16 +217,20 @@ dieses Repos (`.gitignore:22`). `check` meldet liegen gebliebene `.tmp-*` in
 ### 5.1 Rendern
 
 Zwei Token, heute in keinem Template (gemessen: kein `{{`/`}}`):
-`{{lean-herdr:test}}` und `{{lean-herdr:lint}}`. Die Werte sind **Befehls-Präfixe**.
+`{{lean-herdr:test}}` und `{{lean-herdr:lint}}`. Jeder Wert ist ein **vollständiger
+Befehl**: das pre-merge-Gate führt ihn aus, und dieselbe Zeichenkette ist das Präfix der
+Builder-Permission — der Builder darf genau das laufen lassen, woran das Gate den Merge
+misst, plus Argumente dahinter.
 
 | Template | Stelle |
 |---|---|
-| `wt.toml` | `[pre-merge] test = "{{lean-herdr:test}}"`; `[list] json-schema = 1` samt Kommentar entfällt |
-| `settings.json` | `"Bash({{lean-herdr:test}}:*)"` — **kein** Lint-Token: die Claude-Seite bleibt bewusst enger als opencode (Betreiberentscheidung 2026-09-03, `test_worker_permissions.py:196-200`) |
-| `opencode.jsonc` | Builder `"{{lean-herdr:test}}*"`, `"{{lean-herdr:lint}}*"` |
+| `wt.toml` | `[pre-merge] test = "{{lean-herdr:test}}"` und neu `lint = "{{lean-herdr:lint}}"`; `[list] json-schema = 1` samt Kommentar entfällt |
+| `settings.json` | `"Bash({{lean-herdr:test}}:*)"` und neu `"Bash({{lean-herdr:lint}}:*)"`. Das hebt die Betreiberentscheidung vom 2026-09-03 (`test_worker_permissions.py:196-200`) für Lint auf (Betreiber, 2026-09-13): das Gate prüft Lint jetzt, also muss jeder Builder es vorher laufen lassen können. `git commit`/`diff`/`status` bleiben opencode-only |
+| `opencode.jsonc` | Builder `"{{lean-herdr:test}}*"`, `"{{lean-herdr:lint}}*"` — mit dem Default wird `uv run ruff*` zu `uv run ruff check*`; `ruff format` fällt aus der Freigabe, das Gate prüft kein Format |
 
-- Defaults: `test = "uv run pytest"`, `lint = "uv run ruff"`. Dieses Repo verliert
-  damit `-q` im Gate — nur Ausgabe.
+- Defaults: `test = "uv run pytest"`, `lint = "uv run ruff check"` — ohne Pfad prüft ruff
+  `.` (gemessen: `[default: .]`), in diesem Repo grün. Dieses Repo verliert `-q` im Gate
+  (nur Ausgabe) und bekommt Lint als zweiten Gate-Befehl.
 - Setzen: `init --test "…" --lint "…"`. Auflösung: Flag > Lock-Werte > Default.
 - Werte passen auf `[A-Za-z0-9][A-Za-z0-9 ._/=+,@-]*` ohne Leerzeichen am Ende — kein
   Anführungszeichen, Backslash, `*`, `:`, `$`, Zeilenumbruch, Shell-Operator. Sie
@@ -248,7 +252,7 @@ nicht den Inhalt: Einträge für Dateien, die der Lauf nicht schreibt (`outdated
 
 ```json
 {
-  "values": {"lint": "uv run ruff", "test": "uv run pytest"},
+  "values": {"lint": "uv run ruff check", "test": "uv run pytest"},
   "files": {".claude/settings.json": "<sha256 der geschriebenen Bytes>", "…": "…"}
 }
 ```
@@ -369,7 +373,9 @@ Operator-Doku, Englisch. Anzupassen:
   `workspace check`, die Ignore-Zeile `.lean-ctx/lean-herdr/.tmp-*`; der Absatz über `uv run pytest` in Nicht-Python-Projekten wird zu
   `--test`/`--lint`.
 - **Neu „Updating":** nach einem Merge `uv tool install --reinstall …`, dann
-  `lean-herdr workspace check` und je Projekt `workspace init --update`; Hinweis auf
+  `lean-herdr workspace check` und je Projekt `workspace init --update`; ändert das die
+  `.config/wt.toml`, braucht der geänderte Gate-Befehl ein neues
+  `wt config approvals add` — sonst überspringt wt ihn still; Hinweis auf
   venv-/`PYTHONPATH`-Überdeckung (§2.3).
 - **Development:** `uv run lean-herdr …` ist der Entwicklungsstand; `check` warnt dort
   zu Recht.
@@ -427,9 +433,13 @@ Kopie in `.lean-ctx/lean-herdr/config.toml`; die zweite `.gitignore`-Zeile diese
   weil D = P vor dem Lock-Eintrag geprüft wird; ein veralteter Eintrag machte einen
   späteren Hand-Edit zu `diverged` statt `edited`. Jede Template-Änderung zieht damit
   das Lock nach (`uv run lean-herdr workspace init`).
-- `test_worker_permissions.py`: `CLAUDE_BUILDER_TOOLING` bleibt; die Assertions laufen
-  zusätzlich gegen die mit Fremdwert gerenderten Templates (oben).
-- `test_config_files.py`: `list.json-schema`-Assertion entfällt; README-Guard nach §7.
+- `test_worker_permissions.py`: `BUILDER_TOOLING` nennt `uv run ruff check*` statt
+  `uv run ruff*`; `CLAUDE_BUILDER_TOOLING` bekommt `Bash(uv run ruff check:*)`; der
+  Kommentar zur Betreiberentscheidung 2026-09-03 wird auf `git commit`/`diff`/`status`
+  verengt. Die Assertions laufen zusätzlich gegen die mit Fremdwert gerenderten
+  Templates (oben).
+- `test_config_files.py`: `list.json-schema`-Assertion entfällt, `pre-merge.lint` beginnt
+  mit `uv run ruff check`; README-Guard nach §7.
 - `test_initcmd.py`: `_check_*`-Tests ziehen nach `test_checkcmd.py`; `LAYOUT` aus
   `templating`.
 - Guard-Docstrings nach §3.4.
@@ -441,12 +451,12 @@ Paket-Verzeichnis ohne `warning:`.
 
 | # | Inhalt | hängt an |
 |---|---|---|
-| 0 | **Messen, kein Code.** (a) `uv tool install` nicht-editable aus `git+file://…@main` in ein isoliertes `UV_TOOL_DIR`, Fallback Wheel aus main-Worktree; (b) liest Herdr das Manifest bei jedem Event oder kopiert `link` es; (c) `git check-ignore` für die Zeilen `models.auto.toml` und `.tmp-*` auf Overlay, Overlay-Temp- und Lock-Temp-Namen; (d) Syntax von `herdr plugin unlink`. Ergebnisse in `ctx_session` | — |
+| 0 | **Messen, kein Code.** (a) `uv tool install` nicht-editable aus `git+file://…@main` in ein isoliertes `UV_TOOL_DIR`, Fallback Wheel aus main-Worktree; (b) liest Herdr das Manifest bei jedem Event oder kopiert `link` es; (c) `git check-ignore` für die Zeilen `models.auto.toml` und `.tmp-*` auf Overlay, Overlay-Temp- und Lock-Temp-Namen; (d) Syntax von `herdr plugin unlink`; (e) `wt merge` führt zwei benannte pre-merge-Befehle aus, bricht am scheiternden `lint` ab, und ein neu hinzugekommener Befehl verlangt ein neues Approval. Ergebnisse in `ctx_session` | — |
 | 1 | `GitUnusable` (§4.3) | — |
 | 2 | `OverlayError`, `llm.file_settings` (§4.1) | — |
 | 3 | nur lesen, was gebraucht wird: `up`, `models`, `dispatch` (§4.1) | 2 |
 | 4 | `write_overlay`, Ignore-Check für beide Namen (§4.2) | 0c |
-| 5 | `templating.py`: `LAYOUT`, Token, `render`, Template-Änderungen, Kopien im Repo (§5.1, §5.5) | — |
+| 5 | `templating.py`: `LAYOUT`, Token, `render`, Template-Änderungen, Kopien im Repo (§5.1, §5.5) | 0e |
 | 6 | Lock, Zustände, `init --test/--lint/--update` (§5.2–5.4); Lock dieses Repos committen | 5 |
 | 7 | `checkcmd.py`, `workspace check`, `init` über dieselben Produzenten (§6) | 1, 2, 4, 6 |
 | 8 | Verben `plugin`/`llm`, Manifest ins Paket, `bin/herdr-llm` und `sys.path`-Eingriff raus, Docstrings (§3) | 0b |
@@ -471,7 +481,7 @@ Plugin auf dem Branch weiterläuft.
    Betreiber dabei — maschinenweit.
 4. `lean-herdr workspace check` meldet jede Template-Datei dieses Repos `current` — das
    Lock kam mit Task 6.
-5. `wt config approvals add` für die offenen Projekt-Befehle.
+5. `wt config approvals add` für die offenen Projekt-Befehle — auch den neuen `lint`.
 6. Abnahme aus §1; `workspace check` hier und im `/tmp`-Repo ohne `errors`.
 
 Übergang: Bis Schritt 2 zeigt der Plugin-Link auf den Checkout. Dort liegt bis dahin
@@ -487,6 +497,7 @@ das Paket-Manifest) und lebt nur bis Schritt 2.
 | uv nimmt `git+file` nicht | Task 0a; Fallback Wheel aus main-Worktree |
 | Herdr liest das Manifest live, der Link auf den Checkout bricht auf dem Branch | Root-Manifest bleibt bis Task 10; Task 0b misst |
 | Rendern verschiebt eine Gate-Zeile | Permission-Tests gegen Default **und** Fremdwert (§8) |
+| Ein neuer oder geänderter Gate-Befehl ist nicht approved, wt überspringt ihn still | `check` warnt über `_check_approvals`; README „Updating“; Task 0e misst |
 | Python-Minor-Wechsel beim Reinstall → Link ins Leere | `check` meldet mit fertiger Link-Zeile |
 | Aktiviertes Repo-venv oder `PYTHONPATH` überdeckt den Snapshot | Install-Gruppe in `check` |
 | Zwei Branches fahren `--update`, das Lock kollidiert | Konflikt sichtbar in git, selten; kein Mechanismus |
@@ -499,6 +510,9 @@ das Paket-Manifest) und lebt nur bis Schritt 2.
   Maschinen.
 - **Keine Agents-Konfiguration, kein Dispatch-Umbau** — nächste Spec. `dispatch.py`
   ändert nur, wann es das Overlay liest.
+- **Kein Lint-Pflichtschritt in `builder.md`, kein Format-Check im Gate** — Rollentext
+  ist Agents-Konfiguration (nächste Spec). Bis dahin fängt das Gate Lint-Fehler beim
+  Merge, und jeder Builder darf den Gate-Befehl vorher selbst laufen lassen.
 - **Kein automatisches Reinstall, kein automatisches Template-Update** — `--update` ist
   eine Geste.
 - **Kein toleranter Leser** in `up`, `dispatch`, `models check` (Katalog-Spec §8).
