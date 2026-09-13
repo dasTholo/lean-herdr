@@ -259,14 +259,32 @@ def test_config_toml_alone_reaches_the_caller(tmp_path):
     assert llm_settings_layered(tmp_path).model == "by/hand"
 
 
-def test_config_toml_beats_the_overlay_field_by_field(tmp_path):
-    """The operator's hand survives every daily check -- per FIELD, not per file.
+def test_the_overlay_gives_model_and_nothing_else(tmp_path):
+    """The check writes one key, and the chain in llm.py knows the overlay for one key.
 
-    The overlay is what a machine wrote. A merge that took the whole
-    foreground table the moment it had one key would silently drop the
-    three the check filled in, and the reverse would drop the operator's.
+    A valid `effort` or `prereview_model` in the overlay is IGNORED, not refused:
+    refusing it would fail `dispatch` over a file that says nothing wrong. An invalid
+    one still raises -- `test_a_broken_overlay_is_a_config_error_too` holds that.
     """
-    from lean_herdr.settings import llm_settings_layered
+    from lean_herdr.settings import LlmSettings, llm_settings_layered
+
+    _write_llm_files(
+        tmp_path,
+        config='[llm]\nprereview_effort = "high"\n',
+        overlay='[llm]\nmodel = "auto/pick"\neffort = "low"\nprereview_model = "auto/judge"\n',
+    )
+    got = llm_settings_layered(tmp_path)
+    assert got == LlmSettings(model="auto/pick", prereview_effort="high")
+
+
+def test_config_toml_beats_the_overlay_where_it_speaks(tmp_path):
+    """The operator's hand survives every daily check.
+
+    The overlay is what a machine wrote. Where config.toml names `model`, the
+    overlay's `model` is gone -- and the three other keys it carries here never
+    arrive at all, spoken over or not.
+    """
+    from lean_herdr.settings import LlmSettings, llm_settings_layered
 
     _write_llm_files(
         tmp_path,
@@ -277,10 +295,7 @@ def test_config_toml_beats_the_overlay_field_by_field(tmp_path):
         ),
     )
     got = llm_settings_layered(tmp_path)
-    assert got.model == "by/hand", "config.toml wins where it speaks"
-    assert got.prereview_effort == "high"
-    assert got.prereview_model == "auto/judge", "and loses where it is silent"
-    assert got.effort == "low"
+    assert got == LlmSettings(model="by/hand", prereview_effort="high")
 
 
 def test_an_empty_value_in_the_foreground_lets_the_overlay_through(tmp_path):

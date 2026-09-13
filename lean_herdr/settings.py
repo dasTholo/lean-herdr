@@ -333,6 +333,11 @@ def llm_settings_layered(root: str | Path, data: dict[str, Any] | None = None) -
     first: an explicit `model` in config.toml survives every check, and
     no automatic run has to parse and preserve a human's line.
 
+    The overlay gives `model` and NOTHING else. The daily check writes that
+    one key, and the THE TWO CHAINS block in llm.py knows the overlay as a
+    level for `model` only. Any other `[llm]` field comes out of config.toml
+    or stays "" -- whatever else a hand put into the overlay has no effect.
+
     An empty string in the foreground still means "not set" -- the same
     rule `llm._first()` follows -- so `model = ""` in config.toml lets the
     overlay through instead of blanking it.
@@ -349,9 +354,12 @@ def llm_settings_layered(root: str | Path, data: dict[str, Any] | None = None) -
     base = Path(root)
     below = llm_settings(read_settings(base / OVERLAY_PATH))
     above = llm_settings(read_settings(base / SETTINGS_PATH) if data is None else data)
-    return LlmSettings(
-        **{f.name: getattr(above, f.name) or getattr(below, f.name) for f in fields(LlmSettings)}
-    )
+    # The overlay went through `llm_settings()` WHOLE above: an unknown
+    # key, a wrong type or an invalid value is already a SettingsError.
+    # Only now is `model` lifted out of it. A valid foreign field is
+    # ignored, not refused -- refusing it would fail `dispatch` over a
+    # file that says nothing wrong, only nothing that counts.
+    return replace(above, model=above.model or below.model)
 
 
 @dataclass(frozen=True)

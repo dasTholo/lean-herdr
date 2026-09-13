@@ -625,14 +625,12 @@ def test_the_overlay_reaches_dispatch_under_config_toml(monkeypatch, tmp_path):
 
     Read the overlay in only one of the two and the commit generator and
     the pre-review judge would run on different models the moment one
-    exists.
+    exists. The proof is `model`, the one key the overlay gives, under a
+    config.toml that is silent on it.
     """
     root = tmp_path / "repo"
-    _write_config(root, '[llm]\nmodel = "by/hand"\n')
-    (root / OVERLAY_PATH).write_text(
-        '[llm]\nmodel = "auto/pick"\nprereview_model = "auto/judge"\n',
-        encoding="utf-8",
-    )
+    _write_config(root, '[llm]\nprereview_model = "by/hand"\n')
+    (root / OVERLAY_PATH).write_text('[llm]\nmodel = "auto/pick"\n', encoding="utf-8")
     monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
     seen = []
 
@@ -645,8 +643,8 @@ def test_the_overlay_reaches_dispatch_under_config_toml(monkeypatch, tmp_path):
 
     main(["builder", "--kind", "claude", "--await", "--task-id", "T1"])
 
-    assert seen[0].model == "by/hand"
-    assert seen[0].prereview_model == "auto/judge"
+    assert seen[0].model == "auto/pick"
+    assert seen[0].prereview_model == "by/hand"
 
 
 def test_a_broken_config_wins_over_a_usage_error(monkeypatch, tmp_path, capsys):

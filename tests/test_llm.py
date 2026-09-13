@@ -284,16 +284,17 @@ def test_a_broken_overlay_costs_the_defaults_not_the_commit(tmp_path, capsys):
 
 
 def test_the_overlay_is_read_under_config_toml(tmp_path):
-    """Both files reach `generate()`, and the operator's line wins."""
-    _write_config(tmp_path, '[llm]\nmodel = "by/hand"\n')
+    """Both files reach `generate()`: the overlay's `model`, under config.toml's lines.
+
+    The proof is `model`, because `model` is the one key the overlay gives --
+    config.toml here is silent on it and speaks on `prereview_model` instead.
+    """
+    _write_config(tmp_path, '[llm]\nprereview_model = "by/hand"\n')
     overlay = tmp_path / OVERLAY_PATH
-    overlay.write_text(
-        '[llm]\nmodel = "auto/pick"\nprereview_model = "auto/judge"\n',
-        encoding="utf-8",
-    )
+    overlay.write_text('[llm]\nmodel = "auto/pick"\n', encoding="utf-8")
     got = llm.file_settings(tmp_path)
-    assert got.model == "by/hand"
-    assert got.prereview_model == "auto/judge"
+    assert got.model == "auto/pick"
+    assert got.prereview_model == "by/hand"
 
 
 def test_the_file_is_read_relative_to_the_repo_root(tmp_path):
