@@ -344,6 +344,42 @@ def test_the_plugin_link_is_read_from_the_local_marker(monkeypatch, tmp_path):
     assert line is not None and f"herdr plugin link {expected}" in line
 
 
+@pytest.mark.parametrize(
+    ("through_link", "foreign_first"),
+    [
+        pytest.param(True, False, id="the same folder through a symlink"),
+        pytest.param(False, True, id="another plugin's local path first"),
+    ],
+)
+def test_the_plugin_link_is_judged_on_its_own_line_by_its_resolved_path(
+    monkeypatch, tmp_path, through_link, foreign_first
+):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    expected = tmp_path / "lean_herdr" / "plugin"
+    expected.mkdir(parents=True)
+    listed = expected
+    if through_link:
+        listed = tmp_path / "linked-plugin"
+        listed.symlink_to(expected, target_is_directory=True)
+    foreign = "- other.plugin (other) enabled [local:/x]\n" if foreign_first else ""
+    proc = FakeProc(
+        replies={("plugin", "list"): f"{foreign}- lean.herdr (context) enabled [local:{listed}]\n"}
+    )
+    assert _linked_plugin(proc, expected) == (str(listed), None)
+
+
+def test_a_link_elsewhere_names_the_unlink_by_id(monkeypatch, tmp_path):
+    """`herdr plugin unlink` takes the plugin id, not a path (Task 0d)."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    expected = tmp_path / "lean_herdr" / "plugin"
+    checkout = FakeProc(
+        replies={("plugin", "list"): "- lean.herdr (context) enabled [local:/home/x/lean-herdr]\n"}
+    )
+    _linked, line = _linked_plugin(checkout, expected)
+    assert line is not None and "herdr plugin unlink lean.herdr" in line, line
+    assert f"herdr plugin link {expected}" in line
+
+
 def test_without_herdr_there_is_no_plugin_verdict(monkeypatch, tmp_path):
     monkeypatch.setattr("shutil.which", which_stub(False))
     assert _linked_plugin(FakeProc(), tmp_path) == (None, None)

@@ -73,6 +73,9 @@ PLUGIN_ID = "lean.herdr"
 #: `herdr plugin list` has no JSON; the plugin's line ends in `[local:<path>]`.
 _LOCAL = re.compile(r"\[local:([^\]]+)\]")
 
+#: `lean.herdr` as a whole name, never a piece of a longer plugin id.
+_OWN = re.compile(rf"(?<![\w.-]){re.escape(PLUGIN_ID)}(?![\w.-])")
+
 #: A read-only check must not hold up the whole call.
 CHECK_TIMEOUT_S = 10.0
 
@@ -358,17 +361,26 @@ def install_report(
 
 
 def _linked_plugin(runner: Any, expected: Path) -> tuple[str | None, str | None]:
-    """(the path Herdr links `lean.herdr` to, a warning). (None, None): no herdr."""
+    """(the path Herdr links `lean.herdr` to, a warning). (None, None): no herdr.
+
+    Only a `[local:...]` behind `lean.herdr` on the same line counts -- another
+    plugin's path is not this one's -- and both sides are compared resolved:
+    the same folder reached through a symlink is the same manifest.
+    """
     listing = _read(runner, "herdr", "plugin", "list", "--plugin", PLUGIN_ID)
     if listing is None:
         return None, None
-    hit = _LOCAL.search(listing)
-    linked = hit.group(1) if hit else None
-    if linked is not None and Path(linked) == expected:
+    linked = None
+    for line in listing.splitlines():
+        hit = _LOCAL.search(line)
+        if hit and _OWN.search(line, 0, hit.start()):
+            linked = hit.group(1)
+            break
+    if linked is not None and Path(linked).resolve() == expected.resolve():
         return linked, None
     return linked, (
-        f"herdr links {PLUGIN_ID} to {linked or 'no local path'}, not to this "
-        f"snapshot's manifest -- remove that link, then: herdr plugin link {expected}"
+        f"herdr links {PLUGIN_ID} to {linked or 'no local path'}, not to this snapshot's "
+        f"manifest -- herdr plugin unlink {PLUGIN_ID}, then: herdr plugin link {expected}"
     )
 
 
