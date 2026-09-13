@@ -85,7 +85,14 @@ def fetch(
     query = {"sort": "pricing-low-to-high", "limit": str(limit)}
     if requires:
         query["supported_parameters"] = ",".join(requires)
-    raw = request(f"{CATALOG_URL}?{urllib.parse.urlencode(query)}", timeout_s=timeout_s)
+    try:
+        raw = request(f"{CATALOG_URL}?{urllib.parse.urlencode(query)}", timeout_s=timeout_s)
+    except OSError, ValueError:
+        # The belt on the SEAM, as in `llm.complete()`: `openrouter.request`
+        # answers every failure with None already, but `request` is
+        # injectable, and "never raises" is a promise this function makes
+        # itself -- `check()` and `workspace up` stand behind it.
+        return None
     if raw is None:
         return None
     try:

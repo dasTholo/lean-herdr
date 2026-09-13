@@ -106,6 +106,28 @@ def test_fetch_answers_every_unusable_reply_with_none(reply):
     assert catalog.fetch(requires=("reasoning",), request=FakeRequest(reply)) is None
 
 
+@pytest.mark.parametrize(
+    "error", [OSError("refused"), ValueError("bad url")], ids=["oserror", "valueerror"]
+)
+def test_a_request_seam_that_raises_is_no_catalogue(tmp_path, error):
+    """`fetch()` promises "never raises" itself -- it does not borrow that from a default.
+
+    `openrouter.request` answers every failure with None, but `request` is
+    injectable, and `check()` stands between `workspace up` and a price comparison.
+    Same belt, same reason as `llm.complete()`.
+    """
+
+    def boom(url, **kwargs):
+        raise error
+
+    assert catalog.fetch(requires=("reasoning",), request=boom) is None
+    outcome = catalog.check(
+        root=tmp_path, settings=ModelsSettings(auto=True), efforts=(), request=boom
+    )
+    assert outcome == {"written": False, "model": None, "reason": "no_catalog"}
+    assert not (tmp_path / OVERLAY_PATH).exists()
+
+
 # Every row names its thresholds IN FULL -- nothing carries over from the
 # row above, and everything unnamed is the default, i.e. "no threshold".
 # Two of these rows stand again as named tests below, where the reasoning
