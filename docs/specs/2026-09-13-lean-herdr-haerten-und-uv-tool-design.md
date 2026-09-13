@@ -30,8 +30,9 @@ Update-Weg, der keine Hand-Edits überschreibt.
 **Abnahme** (Task 10, nach dem Merge, gemessen):
 
 1. In einem frischen Repository unter `/tmp` laufen `lean-herdr workspace init`,
-   `workspace check`, `workspace up` und ein `wt step commit` mit Generator —
-   während `~/Scripts/lean-herdr` auf einem Feature-Branch steht.
+   `workspace check`, `workspace up` und ein `wt step commit` — während
+   `~/Scripts/lean-herdr` auf einem Feature-Branch steht. `wt config show --full`
+   meldet die Commit-Generierung über `lean-herdr llm generate` als funktionsfähig.
 2. `workspace check` meldet dort `install.tool: true`, `install.editable: false` und
    einen Paketpfad im Tool-venv.
 3. `herdr plugin list --plugin lean.herdr` zeigt `[local:<tool-venv>/…/lean_herdr/plugin]`,
@@ -47,7 +48,7 @@ Nicht Ziel: Veröffentlichung, andere Maschinen (§12).
 |---|---|
 | Der uv-tool-Install ist editable | `direct_url.json`: `{"url": "file:///home/tholo/Scripts/lean-herdr", "dir_info": {"editable": true}}`, `_editable_impl_lean_herdr.pth` → Checkout. Jedes Projekt läuft auf dem ausgecheckten Branch |
 | Drei Einstiege, drei mögliche Codestände | `lean-herdr` (uv tool); Plugin `python3 -m lean_herdr` mit `plugin link` auf den Checkout (`herdr plugin list`: `[local:/home/tholo/Scripts/lean-herdr]`); Generator laut README `…/bin/herdr-llm generate` |
-| Plugin-Handler finden `lean_herdr` nur über das Plugin-Verzeichnis | System-`python3` sieht die `.pth` des Tool-venv nicht; `__main__.py:13` und `bin/herdr-llm` schieben den Checkout in `sys.path` |
+| Plugin-Handler finden `lean_herdr` nur über den Checkout | System-`python3` sieht die `.pth` des Tool-venv nicht; `python3 -m` findet das Paket also nur, weil Herdr im verlinkten Checkout startet (abgeleitet, Task 0b misst). `bin/herdr-llm` schiebt den Checkout selbst in `sys.path`; der Eingriff in `__main__.py:13` wirkt erst nach dem Import, also nur beim Start als Skriptpfad |
 | Der Herdr-Server hat `~/.local/bin` auf dem PATH | `/proc/<pid>/environ` von `herdr` und `herdr server` |
 | Der Generator ist nicht eingerichtet | `wt config show --format json`: `"user": {"config": null, "exists": false}` |
 | `list.json-schema` im Template wird ignoriert | wt 0.77.0: „Key list.json-schema belongs in user config (will be ignored)" — in jedem Projekt, das `init` schreibt |
@@ -180,7 +181,7 @@ weiter `SettingsError` und sehen `OverlayError` als solchen.
 Ein Rest nach hartem Abbruch hat wechselnde Namen. Die empfohlene Ignore-Zeile wird
 `.lean-ctx/lean-herdr/*models.auto.toml*` (Task 0 misst per `git check-ignore`, dass
 sie Overlay und Temp-Namen trifft). `_check_overlay_ignored` fragt git nach
-`OVERLAY_PATH` **und** einem Temp-Namen; `check` meldet liegen gebliebene
+`OVERLAY_PATH` **und** nach `.lean-ctx/lean-herdr/.tmp-models.auto.toml.probe`; `check` meldet liegen gebliebene
 `.tmp-models.auto.toml.*` (§6).
 
 ### 4.3 git
@@ -245,7 +246,7 @@ den aufgelösten Werten. Geprüft in dieser Reihenfolge:
 
 | Zustand | Bedingung | Bedeutung |
 |---|---|---|
-| `blocked` | Ziel oder ein Elternteil unter `root` ist ein Symlink | `init` schreibt dort nie (Regel aus `_place`) |
+| `blocked` | ein Elternteil unter `root` ist ein Symlink, oder das Ziel selbst ist einer | Elternteil: `init` schreibt dort nie, auch nicht mit `--force`. Ziel: nur `--force` ersetzt den Link (beides Regeln aus `_place`) |
 | `missing` | Datei fehlt | |
 | `current` | D = P | nichts zu tun |
 | `unknown` | kein L | Projekt aus der Zeit vor dieser Spec |
@@ -262,7 +263,7 @@ den aufgelösten Werten. Geprüft in dieser Reihenfolge:
 |---|---|---|
 | ohne Flag | `missing` | trägt `missing` (geschrieben) und `current` nach — so bekommen ältere Projekte ihr Lock ohne Überschreiben |
 | `--update` | `missing`, `outdated` | wie oben plus die neu geschriebenen |
-| `--force` | alles außer `blocked` | alle geschriebenen |
+| `--force` | alles außer Dateien unter einem Symlink-Elternteil | alle geschriebenen |
 
 - `--force` und `--update` zusammen: `usage_error`.
 - Die Ergebnis-Schlüssel `written`/`skipped` bleiben; neu `values` und `templates`
@@ -331,7 +332,8 @@ editable" — korrekt. `uv-receipt.toml` ist ein uv-Detail; ändert es sich, mel
 Operator-Doku, Englisch. Anzupassen:
 
 - **Runtime dependencies:** `lean-herdr`-Zeile — Snapshot-Befehl aus Task 0 statt
-  `uv tool install --editable .`, Verbzahl stimmt; `python3`-Zeile — Zweck „runs the
+  `uv tool install --editable .`, die Zeile nennt die sechs Verben `dispatch`, `llm`,
+  `models`, `plugin`, `report`, `workspace`; `python3`-Zeile — Zweck „runs the
   Claude-Code hooks of the policy adapter" statt „runtime of the plugin handlers".
 - **Commit generator:** `command = "lean-herdr llm generate"`; der Absatz „The path is
   absolute, never `bin/herdr-llm`" entfällt; `stage = "none"` bleibt als dokumentierte
@@ -413,7 +415,7 @@ Paket-Verzeichnis ohne `warning:`.
 | 6 | Lock, Zustände, `init --test/--lint/--update` (§5.2–5.4) | 5 |
 | 7 | `checkcmd.py`, `workspace check`, `init` über dieselben Produzenten (§6) | 1, 2, 6 |
 | 8 | Verben `plugin`/`llm`, Manifest ins Paket, `bin/herdr-llm` und `sys.path`-Eingriff raus, Docstrings (§3) | 0b |
-| 9 | README, Template-Kommentar, `.gitignore` (§7) | 3, 4, 6, 7, 8 |
+| 9 | README, Template-Kommentar, `.gitignore` (§7) | 0a, 3, 4, 6, 7, 8 |
 | 10 | Migration und Abnahme, **nach dem Merge** (§10, §1) | alle |
 
 1–4 sind klein und unabhängig vom Install. 5–7 bauen aufeinander auf. 8 kommt spät,
@@ -434,9 +436,11 @@ Plugin auf dem Branch weiterläuft.
 5. `wt config approvals add` für die offenen Projekt-Befehle.
 6. Abnahme aus §1; `workspace check` hier und im `/tmp`-Repo ohne `errors`.
 
-Einmaliger Bruch: zwischen Schritt 1 und 2 zeigt das Plugin noch auf den Checkout —
-der ab Task 8 kein `python3 -m`-Manifest mehr braucht, aber das Root-Manifest noch hat.
-Nichts fällt aus.
+Übergang: Bis Schritt 2 zeigt der Plugin-Link auf den Checkout. Dort liegt bis dahin
+unverändert das Root-Manifest mit `python3 -m lean_herdr`, und das Paket liegt
+daneben — die Handler laufen weiter, auf Checkout-Code. Erst Schritt 2 legt sie auf
+den Snapshot. Das Root-Manifest ist ab Task 8 ungetestet (`test_manifest.py` prüft
+das Paket-Manifest) und lebt nur bis Schritt 2.
 
 ## 11. Risiken
 
