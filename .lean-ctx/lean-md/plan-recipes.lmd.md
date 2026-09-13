@@ -78,13 +78,10 @@ Run: `@graph callers {{ symbol }}` — list callers to anchor a refactor.
 @define-end
 
 @define gate(paths)
-<!-- Pre-commit quality bar: lint + full test suite (lint_cmd/test_cmd via vars.toml) -->
-<!-- No reformat step (operator decision, 2026-09-03): nothing in this repo enforces a
-     formatter -- no CI, no pre-commit, no Makefile, and pyproject sets only [tool.ruff]
-     line-length/target-version. `ruff format` would rewrite plan-verbatim code as well as
-     ~30 already-committed files. {{ var lint_cmd }} is the real gate. Paths: {{ paths }} -->
-1. Run: {{ var lint_cmd }} — Expected: clean.
-2. Run: {{ var test_cmd }} — Expected: PASS.
+<!-- Pre-commit quality bar: reformat, lint, full test suite (lint_cmd/test_cmd via vars.toml) -->
+1. Run: `@reformat {{ paths }}`
+2. Run: {{ var lint_cmd }} — Expected: clean.
+3. Run: {{ var test_cmd }} — Expected: PASS.
 @define-end
 
 @define render_check(skill, phase)
