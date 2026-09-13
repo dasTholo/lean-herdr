@@ -424,7 +424,8 @@ def _init_flags(args: argparse.Namespace) -> str:
         ("--test", args.test),
         ("--lint", args.lint),
     )
-    return " and ".join(flag for flag, value in given if value)
+    # Given is not truthy: `--test ""` is a flag on the command line all the same.
+    return " and ".join(flag for flag, value in given if value not in (None, False))
 
 
 def main(argv: list[str] | None = None) -> int:

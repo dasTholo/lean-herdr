@@ -704,6 +704,20 @@ def test_up_refuses_every_init_flag(capsys, flags):
     assert answer["error"] == f"usage_error: up does not take {flags[0]}"
 
 
+@pytest.mark.parametrize("command", ["check", "up"])
+def test_an_empty_init_flag_is_still_a_given_one(monkeypatch, capsys, command):
+    """`--test ""` was given. Read as falsy, it slipped past the refusal and ran the command."""
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError(f"{command} ran with an init flag")
+
+    monkeypatch.setattr("lean_herdr.checkcmd.workspace_check", refuse)
+    monkeypatch.setattr("lean_herdr.workspace.workspace_up", refuse)
+    assert workspace.main([command, "--test", ""]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer["error"] == f"usage_error: {command} does not take --test", answer
+
+
 def test_main_routes_check_and_refuses_init_flags_there(monkeypatch, capsys):
     """`workspace_check` is imported ON THE CALL, so the seam is `checkcmd`."""
     monkeypatch.setattr("lean_herdr.checkcmd.workspace_check", lambda: {"ok": True, "errors": []})
