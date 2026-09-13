@@ -11,7 +11,7 @@ from lean_herdr.initcmd import WARM_TIMEOUT_S, workspace_init
 from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
 from lean_herdr.templating import DEFAULT_VALUES, LAYOUT, LOCK_PATH, digest
 from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
-from tests.doubles import Completed, FakeProc, which_stub
+from tests.doubles import Completed, FakeProc, undecodable, which_stub
 
 
 @pytest.fixture
@@ -250,7 +250,7 @@ def test_an_ignored_overlay_alone_still_warns_about_the_temp_files(monkeypatch, 
                 f".gitignore:22:{OVERLAY_PATH}\t{OVERLAY_PATH}"
             )
         },
-        default="",
+        default=Completed(returncode=1),
     )
     warnings = workspace_init(root=repo, runner=only_the_overlay)["warnings"]
     assert any(TEMP_IGNORE in w for w in warnings), warnings
@@ -268,7 +268,7 @@ def test_the_gitignore_warning_only_appears_when_auto_is_on(monkeypatch, repo):
     """
     monkeypatch.setattr("shutil.which", which_stub(True))
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
-    proc = FakeProc(default="")
+    proc = FakeProc(default=Completed(returncode=1))
 
     (repo / SETTINGS_PATH).write_text("[models]\nauto = false\n", encoding="utf-8")
     off = workspace_init(root=repo, runner=proc)["warnings"]
@@ -300,6 +300,19 @@ def test_a_check_that_cannot_run_at_all_invents_no_verdict(monkeypatch, repo, bo
     monkeypatch.setattr("shutil.which", which_stub(True))
     proc = FakeProc(raises=boom, default="")
     assert workspace_init(root=repo, runner=proc)["warnings"] == []
+
+
+def test_a_runner_that_decodes_strictly_keeps_the_report(monkeypatch, repo):
+    """An answer no codec takes arrives AFTER every file landed -- and took the report along.
+
+    opencode stays off the PATH: the warm-up is not what this test is about.
+    """
+    monkeypatch.setattr("shutil.which", lambda binary: None if binary == "opencode" else "/x")
+    answer = workspace_init(root=repo, runner=undecodable)
+    assert answer["ok"] is True
+    assert answer["written"] == sorted(LAYOUT.values())
+    assert answer["skipped"] == []
+    assert answer["templates"] == {relative: "current" for relative in LAYOUT.values()}
 
 
 def test_init_never_runs_a_command_that_changes_anything(monkeypatch, repo):

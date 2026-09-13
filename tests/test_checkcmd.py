@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -19,13 +20,14 @@ from lean_herdr.checkcmd import (
     _check_temp_ignored,
     _check_temp_leftovers,
     _linked_plugin,
+    _read,
     install_report,
     workspace_check,
 )
 from lean_herdr.initcmd import workspace_init
 from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
 from lean_herdr.templating import LAYOUT, LOCK_PATH
-from tests.doubles import FakeProc, which_stub
+from tests.doubles import Completed, FakeProc, undecodable, which_stub
 
 
 @pytest.fixture
@@ -92,7 +94,7 @@ def test_the_overlay_check_asks_git_rather_than_reading_gitignore(monkeypatch, r
     monkeypatch.setattr("shutil.which", which_stub(True))
     named = FakeProc(replies={("check-ignore",): f".gitignore:20:{OVERLAY_PATH}\t{OVERLAY_PATH}"})
     assert _check_overlay_ignored(repo, named) is None
-    silent = FakeProc(replies={("check-ignore",): ""})
+    silent = FakeProc(replies={("check-ignore",): Completed(returncode=1)})
     line = _check_overlay_ignored(repo, silent)
     assert line is not None and str(OVERLAY_PATH) in line
 
@@ -109,9 +111,53 @@ def test_the_temp_check_asks_git_about_a_probe_name(monkeypatch, repo):
     named = FakeProc(replies={("check-ignore",): f".gitignore:23:{TEMP_IGNORE}\t{TEMP_PROBE}"})
     assert _check_temp_ignored(repo, named) is None
     assert named.called_with("check-ignore", "-v", str(TEMP_PROBE))
-    silent = FakeProc(replies={("check-ignore",): ""})
+    silent = FakeProc(replies={("check-ignore",): Completed(returncode=1)})
     line = _check_temp_ignored(repo, silent)
     assert line is not None and TEMP_IGNORE in line
+
+
+@pytest.mark.parametrize(
+    ("check", "names"),
+    [
+        pytest.param(_check_overlay_ignored, str(OVERLAY_PATH), id="overlay"),
+        pytest.param(_check_temp_ignored, TEMP_IGNORE, id="temp files"),
+    ],
+)
+def test_an_ignore_check_judges_by_the_exit_code_not_the_output(monkeypatch, repo, check, names):
+    """git answers 1 for a path it does not ignore -- and may still print a warning.
+
+    Read as output, that warning passed for a named rule: a green verdict over a
+    path nobody ignores. Anything but 0 and 1 -- 128 and a `fatal:` -- is no
+    verdict either way.
+    """
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    warned = Completed(
+        returncode=1,
+        stderr="warning: unable to access '/home/x/.config/git/ignore': Permission denied\n",
+    )
+    line = check(repo, FakeProc(replies={("check-ignore",): warned}))
+    assert line is not None and names in line
+    fatal = Completed(returncode=128, stderr="fatal: not a git repository\n")
+    assert check(repo, FakeProc(replies={("check-ignore",): fatal})) is None
+
+
+#: A child that answers with a byte no codec takes.
+UNDECODABLE_CHILD = [sys.executable, "-c", "import sys; sys.stdout.buffer.write(b'\\xff')"]
+
+
+def test_a_real_child_with_an_undecodable_answer_does_not_raise():
+    assert _read(subprocess.run, *UNDECODABLE_CHILD) == "\N{REPLACEMENT CHARACTER}"
+
+
+@pytest.mark.parametrize("judge", [_check_approvals, _check_generator])
+def test_an_undecodable_answer_is_no_green_verdict(monkeypatch, tmp_path, judge):
+    """Replaced, the bytes stay an unreadable reply -- never a silent None."""
+    monkeypatch.setattr("shutil.which", which_stub(True))
+
+    def child(_cmd, *, check, **kwargs):
+        return subprocess.run(UNDECODABLE_CHILD, check=check, **kwargs)
+
+    assert judge(tmp_path, child) is not None
 
 
 def wt_show(user=None, system=None) -> str:
@@ -368,6 +414,13 @@ def test_outside_a_repository_there_is_no_root_and_an_error(monkeypatch, snapsho
     assert answer["templates"] == {}
 
 
+def test_a_runner_that_decodes_strictly_does_not_crash_check(monkeypatch, repo, snapshot):
+    initialised(monkeypatch, repo)
+    answer = workspace_check(root=repo, runner=undecodable)
+    assert answer["root"] == str(repo)
+    assert answer["templates"] == {relative: "current" for relative in LAYOUT.values()}
+
+
 def test_a_project_init_never_touched_is_not_initialised(monkeypatch, repo, snapshot):
     monkeypatch.setattr("shutil.which", which_stub(False))
     answer = workspace_check(root=repo)
@@ -441,7 +494,7 @@ def test_only_the_overlay_ignored_names_the_temp_line_whatever_auto_says(
                 f".gitignore:22:{OVERLAY_PATH}\t{OVERLAY_PATH}"
             )
         },
-        default="",
+        default=Completed(returncode=1),
     )
     answer = workspace_check(root=repo, runner=proc)
     assert any(TEMP_IGNORE in w for w in answer["warnings"]), answer["warnings"]

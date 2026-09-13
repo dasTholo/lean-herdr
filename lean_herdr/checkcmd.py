@@ -75,24 +75,40 @@ _LOCAL = re.compile(r"\[local:([^\]]+)\]")
 CHECK_TIMEOUT_S = 10.0
 
 
-def _read(runner: Any, *cmd: str, cwd: Path | None = None) -> str | None:
-    """One read-only foreign command. None when it cannot run at all.
+def _run(
+    runner: Any, *cmd: str, cwd: Path | None = None
+) -> subprocess.CompletedProcess[str] | None:
+    """One read-only foreign command, run to its end. None when it cannot run at all.
 
-    stdout AND stderr, because `wt` writes its warnings to stderr and a
-    check that ignored them would report a green state over a complaint.
+    `errors="replace"`: a reply in bytes no codec takes still comes back, and
+    the check reading it reports an unreadable answer -- a None here would be
+    read as no verdict, i.e. green. ValueError is the belt for a runner that
+    decodes strictly anyway.
     """
     if shutil.which(cmd[0]) is None:
         return None
     try:
-        proc = runner(
+        return runner(
             list(cmd),
             capture_output=True,
             text=True,
+            errors="replace",
             timeout=CHECK_TIMEOUT_S,
             cwd=None if cwd is None else str(cwd),
             check=False,
         )
-    except OSError, subprocess.SubprocessError:
+    except OSError, subprocess.SubprocessError, ValueError:
+        return None
+
+
+def _read(runner: Any, *cmd: str, cwd: Path | None = None) -> str | None:
+    """stdout AND stderr of `_run`. None when it cannot run at all.
+
+    Both, because `wt` writes its warnings to stderr and a check that
+    ignored them would report a green state over a complaint.
+    """
+    proc = _run(runner, *cmd, cwd=cwd)
+    if proc is None:
         return None
     return (proc.stdout or "") + (proc.stderr or "")
 
@@ -172,10 +188,11 @@ def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
     to the project, and lean-herdr writes only its own files -- the operator
     gets the exact line and decides.
     """
-    answer = _read(runner, "git", "check-ignore", "-v", str(OVERLAY_PATH), cwd=root)
-    if answer is None or answer.strip():
-        # None: no git at all, so no verdict. Non-empty: git named the
-        # rule that covers it, which is exactly what we wanted.
+    proc = _run(runner, "git", "check-ignore", "-v", str(OVERLAY_PATH), cwd=root)
+    if proc is None or proc.returncode != 1:
+        # None: no git at all. 0: git named the rule that covers it. 1 is the
+        # one "not ignored" -- with a warning on stderr as well, at times, so
+        # the output decides nothing. Anything else (128, `fatal:`) is no verdict.
         return None
     return (
         f"[models].auto is on and git does not ignore {OVERLAY_PATH} -- "
@@ -201,8 +218,8 @@ def _check_temp_ignored(root: Path, runner: Any) -> str | None:
     `check-ignore` over both paths answers non-empty as soon as ONE of them
     is covered -- and a rule for the overlay alone would then pass for both.
     """
-    answer = _read(runner, "git", "check-ignore", "-v", str(TEMP_PROBE), cwd=root)
-    if answer is None or answer.strip():
+    proc = _run(runner, "git", "check-ignore", "-v", str(TEMP_PROBE), cwd=root)
+    if proc is None or proc.returncode != 1:
         return None
     return (
         f"git does not ignore {TEMP_IGNORE} -- a writer killed mid-run leaves a "

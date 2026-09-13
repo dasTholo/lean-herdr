@@ -11,7 +11,7 @@ import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from lean_herdr.templating import DEFAULT_VALUES, render
 
@@ -49,7 +49,8 @@ class FakeProc:
     call` plain text. A **str** therefore reaches stdout verbatim, anything
     else through json.dumps -- otherwise an error line such as
     `error: -32602: ...` could not be faked, because json.dumps would wrap it
-    in quotes.
+    in quotes. A reply that already is a `Completed` passes through untouched,
+    so an exit code and stderr can be faked too.
     """
 
     replies: dict[tuple[str, ...], Any] = field(default_factory=dict)
@@ -61,14 +62,18 @@ class FakeProc:
     def _stdout(reply: Any) -> str:
         return reply if isinstance(reply, str) else json.dumps(reply)
 
+    @classmethod
+    def _completed(cls, reply: Any) -> Completed:
+        return reply if isinstance(reply, Completed) else Completed(stdout=cls._stdout(reply))
+
     def __call__(self, cmd: list[str], **kwargs: Any) -> Completed:
         self.calls.append(list(cmd))
         if self.raises is not None:
             raise self.raises
         for prefix, reply in self.replies.items():
             if tuple(cmd[1 : 1 + len(prefix)]) == prefix:
-                return Completed(stdout=self._stdout(reply))
-        return Completed(stdout=self._stdout(self.default))
+                return self._completed(reply)
+        return self._completed(self.default)
 
     def called_with(self, *tokens: str) -> bool:
         """Was there a call containing all tokens in this order?"""
@@ -130,11 +135,13 @@ class ScriptedProc(FakeProc):
             self.calls.append(list(cmd))
             if self.clock is not None:
                 self.clock.t += cost
-            reply = replies[min(seen, len(replies) - 1)]
-            if isinstance(reply, Completed):
-                return reply
-            return Completed(stdout=self._stdout(reply))
+            return self._completed(replies[min(seen, len(replies) - 1)])
         return super().__call__(cmd, **kwargs)
+
+
+def undecodable(_cmd: list[str], **_kwargs: Any) -> NoReturn:
+    """A runner that decodes strictly and meets a byte no codec takes."""
+    raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
 
 
 def which_stub(available: bool) -> Callable[[str], str | None]:
