@@ -209,6 +209,11 @@ def write_overlay(model: str, *, root: Path, stamp: str | None = None) -> Path:
     time, needs neither -- and nothing here ever parses one back before
     overwriting it.
 
+    WHOLE also means never HALF: the text goes to `.tmp-models.auto.toml`
+    beside the overlay, and `Path.replace` swaps it in -- the recipe of
+    `orderlog.append`, without `fsync` for the same reason. A hard kill
+    between the two leaves the temp file behind and the overlay untouched.
+
     Only `model` is written, NEVER `prereview_model`. The judge falls back
     to `model` anyway, and a second automatically set key would undo the
     very separation it exists for: raising `model` to make the judge
@@ -224,15 +229,24 @@ def write_overlay(model: str, *, root: Path, stamp: str | None = None) -> Path:
         raise ValueError(f"not a usable model slug: {model!r}")
     when = stamp or datetime.now(UTC).isoformat(timespec="seconds")
     path = Path(root) / OVERLAY_PATH
+    tmp = path.with_name(f".tmp-{path.name}")
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        f"# written by `lean-herdr models` on {when}. Do not edit --\n"
-        "# the next run overwrites this file. Your own choice belongs in\n"
-        f"# {SETTINGS_PATH}, which wins over this one.\n"
-        "[llm]\n"
-        f'model = "{model}"\n',
-        encoding="utf-8",
-    )
+    try:
+        tmp.write_text(
+            f"# written by `lean-herdr models` on {when}. Do not edit --\n"
+            "# the next run overwrites this file. Your own choice belongs in\n"
+            f"# {SETTINGS_PATH}, which wins over this one.\n"
+            "[llm]\n"
+            f'model = "{model}"\n',
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+    except OSError:
+        # `.gitignore` names the overlay EXACTLY, so a temp file left here
+        # would sit in the operator's `git status`. `orderlog.append` may
+        # leave its own behind; this one may not.
+        tmp.unlink(missing_ok=True)
+        raise
     return path
 
 

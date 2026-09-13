@@ -267,6 +267,26 @@ def test_a_second_call_overwrites_the_file_whole(tmp_path):
     assert llm_settings(read_settings(path)).model == "mid/small-context"
 
 
+def test_a_failed_replace_leaves_the_old_overlay_and_no_temp_file(monkeypatch, tmp_path):
+    """The overlay is never half-written, and a failed attempt leaves nothing behind.
+
+    `.gitignore` names `models.auto.toml` exactly. A `.tmp-` file left beside it
+    would show up in the operator's `git status` -- which is why `write_overlay`
+    removes it, where `orderlog.append` does not have to.
+    """
+    path = catalog.write_overlay("good/all-clear", root=tmp_path)
+    before = path.read_text(encoding="utf-8")
+
+    def refuse(self, target):
+        raise OSError("the disk said no")
+
+    monkeypatch.setattr(type(path), "replace", refuse)
+    with pytest.raises(OSError, match="the disk said no"):
+        catalog.write_overlay("mid/small-context", root=tmp_path)
+    assert path.read_text(encoding="utf-8") == before
+    assert list(path.parent.glob(".tmp-*")) == []
+
+
 def test_a_slug_that_would_break_out_of_the_toml_string_raises(tmp_path):
     """A quote in a third party's slug is not an escaping bug.
 
