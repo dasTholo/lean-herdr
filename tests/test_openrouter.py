@@ -34,9 +34,7 @@ def urlopen_returning(raw: bytes, recorder: dict):
 
 def test_a_get_carries_url_method_and_timeout(monkeypatch):
     seen: dict = {}
-    monkeypatch.setattr(
-        openrouter.urllib.request, "urlopen", urlopen_returning(b"{}", seen)
-    )
+    monkeypatch.setattr(openrouter.urllib.request, "urlopen", urlopen_returning(b"{}", seen))
     assert openrouter.request("https://x/y", timeout_s=3.5) == "{}"
     assert seen["url"] == "https://x/y"
     assert seen["method"] == "GET"
@@ -84,9 +82,7 @@ def test_every_failure_is_none_and_none_of_them_raise(monkeypatch, boom):
 
 
 def test_a_body_that_is_not_utf8_is_replaced_not_raised(monkeypatch):
-    monkeypatch.setattr(
-        openrouter.urllib.request, "urlopen", urlopen_returning(b"caf\xe9", {})
-    )
+    monkeypatch.setattr(openrouter.urllib.request, "urlopen", urlopen_returning(b"caf\xe9", {}))
     assert openrouter.request("https://x", timeout_s=1.0) == "caf�"
 
 

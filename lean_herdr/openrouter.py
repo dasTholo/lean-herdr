@@ -50,7 +50,7 @@ def api_key(env: Any = None, auth_path: Any = None) -> str | None:
     path = AUTH_PATH if auth_path is None else Path(auth_path)
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except OSError, json.JSONDecodeError:
         return None
     entry = data.get("openrouter") if isinstance(data, dict) else None
     stored = entry.get("key") if isinstance(entry, dict) else None

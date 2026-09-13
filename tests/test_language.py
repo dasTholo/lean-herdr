@@ -113,7 +113,7 @@ def tracked_text_files() -> list[Path]:
         path = ROOT / rel
         try:
             path.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
+        except UnicodeDecodeError, OSError:
             continue  # binary or unreadable -- nothing to read language from
         files.append(path)
     return files
@@ -177,4 +177,4 @@ def test_a_protocol_token_is_not_prose():
 
 def test_the_scan_still_catches_german_on_the_same_line():
     """Removing the token must not blank out the rest of the line."""
-    assert german_hits('# VERDIKT ist der Schluessel') >= {"ist", "der", "schluessel"}
+    assert german_hits("# VERDIKT ist der Schluessel") >= {"ist", "der", "schluessel"}

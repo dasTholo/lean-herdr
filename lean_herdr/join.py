@@ -89,9 +89,7 @@ def _parent_pid(pid: int, proc_root: str | Path) -> int | None:
         return None
 
 
-def process_ancestors(
-    pid: int, proc_root: str | Path = "/proc", max_steps: int = 32
-) -> list[int]:
+def process_ancestors(pid: int, proc_root: str | Path = "/proc", max_steps: int = 32) -> list[int]:
     """Ancestor chain of pid via PPID, nearest ancestor first.
 
     Reason: Herdr's `agent start` places the agent into an existing

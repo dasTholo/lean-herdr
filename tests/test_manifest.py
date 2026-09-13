@@ -155,7 +155,11 @@ def test_the_wheel_ships_the_templates(tmp_path):
         pytest.skip("uv not installed")
     build = subprocess.run(
         ["uv", "build", "--wheel", "--out-dir", str(tmp_path)],
-        cwd=ROOT, capture_output=True, text=True, timeout=300, check=False,
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=300,
+        check=False,
     )
     assert build.returncode == 0, build.stderr
     wheel = next(iter(tmp_path.glob("*.whl")))
@@ -176,5 +180,7 @@ def test_plugin_link_produces_no_warning(tmp_path):
     listing = subprocess.run(
         ["herdr", "plugin", "list"], capture_output=True, text=True, timeout=30, check=False
     )
-    lines = [line for line in listing.stdout.splitlines() if "lean.herdr" in line or "warning:" in line]
+    lines = [
+        line for line in listing.stdout.splitlines() if "lean.herdr" in line or "warning:" in line
+    ]
     assert not any("warning:" in line for line in lines), "\n".join(lines)

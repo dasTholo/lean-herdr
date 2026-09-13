@@ -33,9 +33,5 @@ def test_template_and_checked_in_copy_are_byte_identical(template, copy):
 
 def test_no_template_without_a_pair_and_no_pair_without_a_template():
     """Both directions: a stray file ships to strangers unannounced."""
-    on_disk = {
-        p.relative_to(TEMPLATES).as_posix()
-        for p in TEMPLATES.rglob("*")
-        if p.is_file()
-    }
+    on_disk = {p.relative_to(TEMPLATES).as_posix() for p in TEMPLATES.rglob("*") if p.is_file()}
     assert on_disk == set(PAIRS), f"unpaired: {sorted(on_disk ^ set(PAIRS))}"

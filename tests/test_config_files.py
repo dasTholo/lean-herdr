@@ -64,17 +64,25 @@ def test_wt_toml_has_the_pre_merge_gate_and_a_fixed_schema():
 def test_readme_names_every_runtime_dependency():
     text = (ROOT / "README.md").read_text(encoding="utf-8")
     for requirement in (
-        "uv", "python3", "worktrunk", "herdr-worktrunk", "fzf", "jq",
-        "lean-ctx allow herdr", "lean-ctx allow wt",
+        "uv",
+        "python3",
+        "worktrunk",
+        "herdr-worktrunk",
+        "fzf",
+        "jq",
+        "lean-ctx allow herdr",
+        "lean-ctx allow wt",
         # The path form was never able to match: the gate normalises to the
         # basename and every allowlist entry is a bare name (measured on
         # lean-ctx 3.10.1). The README names the spelling that CAN match.
         "lean-ctx allow lean-herdr",
-        "wt config approvals", "warning:",
+        "wt config approvals",
+        "warning:",
         # The work-order path, both halves of it. `ctx_task` used to stand
         # here; it is gone from the project, so requiring it would pin the
         # README to a tool that no longer exists.
-        "lean-herdr dispatch order", "lean-herdr report",
+        "lean-herdr dispatch order",
+        "lean-herdr report",
         "ORCHESTRATOR = orch",
     ):
         assert requirement in text, f"README does not name {requirement!r}"

@@ -95,15 +95,23 @@ def wt_switch(
     try:
         proc = runner(
             [
-                "wt", "switch", "--create", branch, "--base", base,
-                "--no-cd", "--format", "json", "--yes",
+                "wt",
+                "switch",
+                "--create",
+                branch,
+                "--base",
+                base,
+                "--no-cd",
+                "--format",
+                "json",
+                "--yes",
             ],
             cwd=str(cwd),
             capture_output=True,
             text=True,
             timeout=WT_TIMEOUT_S,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     try:
         data = json.loads(proc.stdout)
@@ -113,9 +121,7 @@ def wt_switch(
     return Path(path) if path else None
 
 
-def _open_workspace(
-    herdr: Herdr, *, repo_root: Path, path: Path, branch: str
-) -> str:
+def _open_workspace(herdr: Herdr, *, repo_root: Path, path: Path, branch: str) -> str:
     """Open the worktree with Herdr and return the workspace ID — or fail.
 
     --cwd MUST be the repo root; called from a linked-worktree workspace,
@@ -223,7 +229,5 @@ def ensure_worktree(
 
     return WorktreeTarget(
         path=path,
-        workspace_id=_open_workspace(
-            herdr, repo_root=repo_root, path=path, branch=branch
-        ),
+        workspace_id=_open_workspace(herdr, repo_root=repo_root, path=path, branch=branch),
     )

@@ -72,21 +72,23 @@ def world(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
     write_opencode_config(project(tmp_path))
-    monkeypatch.setattr(
-        "lean_herdr.handlers.canonical_root", lambda cwd: project(tmp_path)
-    )
+    monkeypatch.setattr("lean_herdr.handlers.canonical_root", lambda cwd: project(tmp_path))
     h_proc, l_proc = FakeProc(), FakeProc()
     h_proc.replies = dict(STARTED)
     l_proc.replies = {
         ("call", "ctx_session"): RESUME,
         ("call", "ctx_handoff"): LEDGER,
     }
-    monkeypatch.setattr("lean_herdr.handlers.Herdr", lambda *a, **kw: __import__(
-        "lean_herdr.herdr", fromlist=["Herdr"]
-    ).Herdr(runner=h_proc))
-    monkeypatch.setattr("lean_herdr.handlers.LeanCtx", lambda root, **kw: __import__(
-        "lean_herdr.leanctx", fromlist=["LeanCtx"]
-    ).LeanCtx(root, runner=l_proc))
+    monkeypatch.setattr(
+        "lean_herdr.handlers.Herdr",
+        lambda *a, **kw: __import__("lean_herdr.herdr", fromlist=["Herdr"]).Herdr(runner=h_proc),
+    )
+    monkeypatch.setattr(
+        "lean_herdr.handlers.LeanCtx",
+        lambda root, **kw: __import__("lean_herdr.leanctx", fromlist=["LeanCtx"]).LeanCtx(
+            root, runner=l_proc
+        ),
+    )
     return h_proc, l_proc, tmp_path
 
 
@@ -102,9 +104,10 @@ def cfg(tmp_path: Path, **rest) -> Config:
 
 def test_pane_detected_writes_the_digest_and_sets_the_ctx_token(world):
     h_proc, _, tmp_path = world
-    c = cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"pane_id": "w2:p2", "pane": {"cwd": "/repo.feat"}}
-    ))
+    c = cfg(
+        tmp_path,
+        HERDR_PLUGIN_EVENT_JSON=json.dumps({"pane_id": "w2:p2", "pane": {"cwd": "/repo.feat"}}),
+    )
     handlers.handle_pane_detected(c)
     digest = tmp_path / "state" / "w2:p2.md"
     assert digest.is_file()
@@ -112,8 +115,13 @@ def test_pane_detected_writes_the_digest_and_sets_the_ctx_token(world):
     # The id is POSITIONAL, not --pane: herdr.report_metadata() measured that
     # against 0.8.2 and the predecessor plan's assertion never caught up.
     assert h_proc.called_with(
-        "pane", "report-metadata", "w2:p2", "--source", "lean.herdr",
-        "--token", "ctx=build lean-herdr",
+        "pane",
+        "report-metadata",
+        "w2:p2",
+        "--source",
+        "lean.herdr",
+        "--token",
+        "ctx=build lean-herdr",
     )
 
 
@@ -125,9 +133,14 @@ def test_the_cwd_goes_through_canonical_root(world, monkeypatch):
         "lean_herdr.handlers.canonical_root",
         lambda cwd: (seen.append(Path(cwd)), Path("/repo"))[1],
     )
-    handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"pane_id": "w2:p2", "pane": {"cwd": "/repo.feat-auth"}}
-    )))
+    handlers.handle_pane_detected(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"pane_id": "w2:p2", "pane": {"cwd": "/repo.feat-auth"}}
+            ),
+        )
+    )
     assert seen == [Path("/repo.feat-auth")]
     # Three calls carry the flag -- resume, handoff list, handoff show. Every
     # one of them must carry the SAME canonical root; the predecessor plan
@@ -142,12 +155,16 @@ def test_without_lean_ctx_nothing_happens_and_nothing_breaks(monkeypatch, tmp_pa
     monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(False))
     monkeypatch.setattr("lean_herdr.handlers.canonical_root", lambda cwd: Path("/repo"))
     h_proc, l_proc = FakeProc(), FakeProc()
-    monkeypatch.setattr("lean_herdr.handlers.Herdr", lambda *a, **kw: __import__(
-        "lean_herdr.herdr", fromlist=["Herdr"]
-    ).Herdr(runner=h_proc))
-    monkeypatch.setattr("lean_herdr.handlers.LeanCtx", lambda root, **kw: __import__(
-        "lean_herdr.leanctx", fromlist=["LeanCtx"]
-    ).LeanCtx(root, runner=l_proc))
+    monkeypatch.setattr(
+        "lean_herdr.handlers.Herdr",
+        lambda *a, **kw: __import__("lean_herdr.herdr", fromlist=["Herdr"]).Herdr(runner=h_proc),
+    )
+    monkeypatch.setattr(
+        "lean_herdr.handlers.LeanCtx",
+        lambda root, **kw: __import__("lean_herdr.leanctx", fromlist=["LeanCtx"]).LeanCtx(
+            root, runner=l_proc
+        ),
+    )
     for handler in (
         handlers.handle_workspace_created,
         handlers.handle_pane_detected,
@@ -167,9 +184,12 @@ def test_an_empty_session_state_stays_silent(world, capsys):
     """Fresh project: no token, no digest -- and NO note."""
     h_proc, l_proc, tmp_path = world
     l_proc.replies = {("call", "ctx_session"): ""}
-    handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}
-    )))
+    handlers.handle_pane_detected(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps({"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}),
+        )
+    )
     assert not any("--token" in c for c in h_proc.calls)
     assert not (tmp_path / "state" / "w2:p2.md").exists()
     assert capsys.readouterr().err == "", "empty is not an error"
@@ -179,9 +199,12 @@ def test_an_error_from_lean_ctx_leaves_a_note(world, capsys):
     """Broken is not empty -- here a line MUST appear in the plugin log."""
     h_proc, l_proc, tmp_path = world
     l_proc.replies = {("call", "ctx_session"): "error: -32603: internal"}
-    handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}
-    )))
+    handlers.handle_pane_detected(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps({"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}),
+        )
+    )
     assert not any("--token" in c for c in h_proc.calls)
     assert "ctx_session resume" in capsys.readouterr().err
 
@@ -191,31 +214,39 @@ def test_a_timeout_leaves_a_note(world, capsys):
 
     _, l_proc, tmp_path = world
     l_proc.raises = subprocess.TimeoutExpired(cmd=["lean-ctx"], timeout=1)
-    handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}
-    )))
+    handlers.handle_pane_detected(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps({"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}),
+        )
+    )
     assert "timeout" in capsys.readouterr().err
 
 
 def test_no_handler_touches_the_esc_token(world):
     h_proc, _, tmp_path = world
-    handlers.handle_pane_detected(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}
-    )))
+    handlers.handle_pane_detected(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps({"pane_id": "w2:p2", "pane": {"cwd": "/repo"}}),
+        )
+    )
     assert not any("esc" in " ".join(c) for c in h_proc.calls), (
-        "esc belongs to the orchestrator -- two writers on one token are a "
-        "silent conflict"
+        "esc belongs to the orchestrator -- two writers on one token are a silent conflict"
     )
 
 
 def test_workspace_created_sets_the_token_on_the_workspace(world):
     h_proc, _, tmp_path = world
-    handlers.handle_workspace_created(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
-    assert h_proc.called_with(
-        "workspace", "report-metadata", "w2", "--source", "lean.herdr"
+    handlers.handle_workspace_created(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
     )
+    assert h_proc.called_with("workspace", "report-metadata", "w2", "--source", "lean.herdr")
 
 
 def test_inject_sends_the_digest_without_wait(world):
@@ -266,9 +297,14 @@ def test_bootstrap_starts_the_orchestrator_in_its_own_workspace(world, monkeypat
         "lean_herdr.workspace.start_orchestrator",
         functools.partial(workspace.start_orchestrator, waiter=lambda *a, **k: "mcp-42"),
     )
-    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
+    handlers.handle_bootstrap(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
+    )
     split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
     assert "--pane" in split and "w2:p1" in split, "the pane belongs in THIS workspace"
     assert "LEAN_CTX_TOOL_PROFILE=minimal" in split
@@ -288,9 +324,14 @@ def test_bootstrap_does_not_start_a_second_orchestrator(world):
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p9"}}},
     }
-    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
+    handlers.handle_bootstrap(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
+    )
     assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls)
     note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
     assert "already running" in " ".join(note), note
@@ -312,17 +353,20 @@ def test_bootstrap_surfaces_a_missing_agent_config_like_every_other_failure(worl
         ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
         ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p9"}}},
     }
-    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
+    handlers.handle_bootstrap(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
+    )
     note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
     assert "no_agent_config" in " ".join(note), note
     assert not any(c[1:3] == ["pane", "split"] for c in h_proc.calls), h_proc.flat()
 
 
-def test_bootstrap_without_git_on_the_path_notifies_like_every_other_failure(
-    world, monkeypatch
-):
+def test_bootstrap_without_git_on_the_path_notifies_like_every_other_failure(world, monkeypatch):
     """`canonical_root()` shells out to git -- no git is a bare OSError.
 
     initcmd.py reads that same call the same way and answers it with
@@ -334,13 +378,16 @@ def test_bootstrap_without_git_on_the_path_notifies_like_every_other_failure(
     h_proc, _, tmp_path = world
     monkeypatch.setattr(
         "lean_herdr.handlers.canonical_root",
-        lambda cwd: (_ for _ in ()).throw(
-            FileNotFoundError(2, "No such file or directory", "git")
-        ),
+        lambda cwd: (_ for _ in ()).throw(FileNotFoundError(2, "No such file or directory", "git")),
     )
-    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
+    handlers.handle_bootstrap(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
+    )
     note = next(c for c in h_proc.calls if c[1:3] == ["notification", "show"])
     assert "git" in " ".join(note), note
 
@@ -361,10 +408,7 @@ def test_importing_handlers_does_not_drag_in_the_workspace_subtree():
         [
             sys.executable,
             "-c",
-            (
-                "import lean_herdr.handlers, sys;"
-                "print('lean_herdr.workspace' in sys.modules)"
-            ),
+            ("import lean_herdr.handlers, sys;print('lean_herdr.workspace' in sys.modules)"),
         ],
         capture_output=True,
         text=True,
@@ -388,9 +432,14 @@ def test_bootstrap_resolves_start_orchestrator_at_call_time(world, monkeypatch):
         "lean_herdr.workspace.start_orchestrator",
         lambda **kwargs: (seen.append(kwargs), {"ok": True})[1],
     )
-    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
+    handlers.handle_bootstrap(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
+    )
     assert [k["workspace_id"] for k in seen] == ["w2"]
     assert not hasattr(handlers, "start_orchestrator"), (
         "a module-level name would make the patch above a no-op"
@@ -412,16 +461,19 @@ def test_the_keystroke_asks_for_no_second_attempt(world, monkeypatch):
         "lean_herdr.workspace.start_orchestrator",
         lambda **kwargs: (seen.append(kwargs), {"ok": True})[1],
     )
-    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
+    handlers.handle_bootstrap(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
+    )
     assert seen[0]["retry_on_hang"] is False
     assert seen[0]["ready_timeout_s"] == handlers.KEYSTROKE_READY_TIMEOUT_S
 
 
-def test_the_keystroke_reads_the_runtime_out_of_the_same_table_up_does(
-    world, monkeypatch
-):
+def test_the_keystroke_reads_the_runtime_out_of_the_same_table_up_does(world, monkeypatch):
     """No config in reach -- and the built-ins still say `opencode`.
 
     `kind` used to come off `[workspace]`, whose default was opencode.
@@ -435,9 +487,14 @@ def test_the_keystroke_reads_the_runtime_out_of_the_same_table_up_does(
         "lean_herdr.workspace.start_orchestrator",
         lambda **kwargs: (seen.append(kwargs), {"ok": True})[1],
     )
-    handlers.handle_bootstrap(cfg(tmp_path, HERDR_PLUGIN_EVENT_JSON=json.dumps(
-        {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
-    )))
+    handlers.handle_bootstrap(
+        cfg(
+            tmp_path,
+            HERDR_PLUGIN_EVENT_JSON=json.dumps(
+                {"workspace_id": "w2", "workspace": {"cwd": "/repo"}}
+            ),
+        )
+    )
     assert seen[0]["kind"] == "opencode"
     assert seen[0]["model"] == ""
 
@@ -451,7 +508,8 @@ def test_main_catches_every_exception_and_ends_with_0(monkeypatch, capsys):
     from lean_herdr.__main__ import main
 
     monkeypatch.setattr(
-        handlers, "handle_pane_detected",
+        handlers,
+        "handle_pane_detected",
         lambda cfg: (_ for _ in ()).throw(RuntimeError("broken")),
     )
     assert main(["pane-detected"]) == 0

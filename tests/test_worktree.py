@@ -147,7 +147,13 @@ def test_new_worktree_is_created_and_registered_at_repo_root(h, monkeypatch):
     target = ensure_worktree("feat/auth", herdr=herdr, cwd="/repo", runner=wt_runner)
     assert target.path == Path("/repo.feat-auth") and target.workspace_id == "w2"
     assert wt_calls[0][:7] == [
-        "wt", "switch", "--create", "feat/auth", "--base", "@", "--no-cd",
+        "wt",
+        "switch",
+        "--create",
+        "feat/auth",
+        "--base",
+        "@",
+        "--no-cd",
     ]
     assert "--yes" in wt_calls[0] and "--format" in wt_calls[0]
     assert not any(c[1] == "list" and "--format=json" in c for c in wt_calls), (
@@ -179,8 +185,7 @@ def test_existing_worktree_without_workspace_is_reopened(h):
             "result": {
                 "source": {"repo_root": "/repo"},
                 "worktrees": [
-                    {"branch": "feat/auth", "path": "/repo.feat-auth",
-                     "open_workspace_id": None}
+                    {"branch": "feat/auth", "path": "/repo.feat-auth", "open_workspace_id": None}
                 ],
             }
         },
@@ -201,9 +206,7 @@ def test_failed_worktree_open_is_an_error_not_a_target(h, monkeypatch):
         ("worktree", "open"): {"error": {"code": "linked_worktree_source"}},
     }
     monkeypatch.setattr("lean_herdr.worktree.shutil.which", lambda _b: "/usr/bin/wt")
-    runner = lambda *a, **k: Completed(
-        stdout=json.dumps({"path": "/repo.feat-auth"})
-    )
+    runner = lambda *a, **k: Completed(stdout=json.dumps({"path": "/repo.feat-auth"}))
     with pytest.raises(WorktreeOpenFailed, match="linked_worktree_source"):
         ensure_worktree("feat/auth", herdr=herdr, cwd="/repo", runner=runner)
 
@@ -248,14 +251,10 @@ def test_open_workspace_tab_only_response_names_what_it_got(h):
     """
     herdr, proc = h
     proc.replies = {
-        ("worktree", "open"): {
-            "result": {"tab": {"tab_id": "w9:t1", "workspace_id": "w9"}}
-        }
+        ("worktree", "open"): {"result": {"tab": {"tab_id": "w9:t1", "workspace_id": "w9"}}}
     }
     with pytest.raises(WorktreeOpenFailed, match="tab 'w9:t1', no workspace"):
-        _open_workspace(
-            herdr, repo_root=Path("/repo"), path=Path("/repo.feat-x"), branch="feat/x"
-        )
+        _open_workspace(herdr, repo_root=Path("/repo"), path=Path("/repo.feat-x"), branch="feat/x")
 
 
 def test_wt_switch_passes_base_at_by_default(monkeypatch):
@@ -285,4 +284,3 @@ def test_wt_switch_base_is_overridable(monkeypatch):
 
     wt_switch("feat/x", cwd="/repo", runner=runner, base="main")
     assert calls[0][:6] == ["wt", "switch", "--create", "feat/x", "--base", "main"]
-

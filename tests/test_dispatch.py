@@ -135,9 +135,7 @@ def test_build_mode_returns_pane_and_agent_id_and_creates_nothing(world):
     """The build mode is finished the moment the agent_id is resolved."""
     h_proc, _ = world
     result = run_dispatch(world, reg=registry())
-    assert result == {
-        "ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"
-    }
+    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"}
     assert h_proc.called_with("agent", "start"), "the worker is running"
     assert not h_proc.called_with("agent", "prompt", "--wait"), (
         "the build mode neither rings nor waits"
@@ -167,8 +165,7 @@ def test_the_pane_carries_the_agent_name_in_its_environment(world):
             "result": {
                 "source": {"repo_root": "/repo"},
                 "worktrees": [
-                    {"branch": "feat/auth", "path": "/repo.feat-auth",
-                     "open_workspace_id": "w2"}
+                    {"branch": "feat/auth", "path": "/repo.feat-auth", "open_workspace_id": "w2"}
                 ],
             }
         },
@@ -199,19 +196,14 @@ def test_the_worker_resolves_its_name_out_of_the_env_the_pane_was_given(world):
             "result": {
                 "source": {"repo_root": "/repo"},
                 "worktrees": [
-                    {"branch": "feat/auth", "path": "/repo.feat-auth",
-                     "open_workspace_id": "w2"}
+                    {"branch": "feat/auth", "path": "/repo.feat-auth", "open_workspace_id": "w2"}
                 ],
             }
         },
     }
     result = run_dispatch(world, reg=registry(), request=req(worktree="feat/auth"))
     split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
-    env = dict(
-        pair.split("=", 1)
-        for flag, pair in pairwise(split)
-        if flag == "--env"
-    )
+    env = dict(pair.split("=", 1) for flag, pair in pairwise(split) if flag == "--env")
     assert env[AGENT_ENV] == "builder-feat-auth"
     assert resolve_agent(root=ROOT, env=env) == result["agent"] == "builder-feat-auth"
 
@@ -237,9 +229,7 @@ def test_dispatch_with_no_settings_still_gives_the_orchestrator_its_minimal_prof
 
 def test_layout_from_the_config_reaches_herdr(world):
     h_proc, _ = world
-    run_dispatch(
-        world, reg=registry(), settings=RoleSettings(direction="down", ratio=0.3)
-    )
+    run_dispatch(world, reg=registry(), settings=RoleSettings(direction="down", ratio=0.3))
     split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
     assert "--direction" in split and split[split.index("--direction") + 1] == "down"
     assert "--ratio" in split and split[split.index("--ratio") + 1] == "0.3"
@@ -259,9 +249,7 @@ def test_the_configured_ready_timeout_reaches_the_waiter(world):
         seen.append(kwargs)
         return AGENT_ID
 
-    run_dispatch(
-        world, reg=registry(), settings=RoleSettings(ready_timeout_s=7.5), waiter=spy
-    )
+    run_dispatch(world, reg=registry(), settings=RoleSettings(ready_timeout_s=7.5), waiter=spy)
     assert seen and seen[0].get("timeout_s") == 7.5
 
 
@@ -296,11 +284,21 @@ def test_without_a_config_file_the_split_is_the_one_from_before(world, tmp_path)
     run_dispatch(world, reg=registry(), settings=cfg)
     split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
     assert split == [
-        "herdr", "pane", "split", "--current", "--direction", "right",
-        "--cwd", "/repo", "--no-focus",
-        "--env", "LEAN_CTX_TOOL_PROFILE=standard",
-        "--env", "LEAN_CTX_ROLE=builder",
-        "--env", "LEAN_HERDR_AGENT=builder",
+        "herdr",
+        "pane",
+        "split",
+        "--current",
+        "--direction",
+        "right",
+        "--cwd",
+        "/repo",
+        "--no-focus",
+        "--env",
+        "LEAN_CTX_TOOL_PROFILE=standard",
+        "--env",
+        "LEAN_CTX_ROLE=builder",
+        "--env",
+        "LEAN_HERDR_AGENT=builder",
     ]
 
 
@@ -316,9 +314,7 @@ def test_an_existing_agent_is_reused_and_cleared(world):
     assert "--wait" not in clear, "/clear without --wait (H4)"
 
 
-def test_the_build_mode_reads_the_registry_the_data_dir_points_at(
-    monkeypatch, tmp_path
-):
+def test_the_build_mode_reads_the_registry_the_data_dir_points_at(monkeypatch, tmp_path):
     """Both halves of one dispatch must read the SAME lean-ctx install.
 
     `bus.REGISTRY_PATH` is the hardcoded XDG default, while
@@ -340,17 +336,13 @@ def test_the_build_mode_reads_the_registry_the_data_dir_points_at(
 
     h_proc = FakeProc()
     h_proc.replies = {
-        ("agent", "list"): {
-            "result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}
-        },
+        ("agent", "list"): {"result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}},
         ("pane", "process-info"): {"result": {"process_info": {"shell_pid": 4242}}},
     }
 
     result = dispatch(req(), herdr=Herdr(runner=h_proc), root=ROOT)
 
-    assert result == {
-        "ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"
-    }
+    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"}
 
 
 def test_a_refused_agent_start_is_reported_instead_of_waited_out(world):
@@ -370,9 +362,7 @@ def test_a_refused_agent_start_is_reported_instead_of_waited_out(world):
     result = run_dispatch(
         world,
         reg=registry(),
-        waiter=lambda *a, **kw: pytest.fail(
-            "the waiter must not run after a refused agent start"
-        ),
+        waiter=lambda *a, **kw: pytest.fail("the waiter must not run after a refused agent start"),
     )
     assert result == {
         "ok": False,
@@ -433,8 +423,7 @@ def test_main_writes_one_json_line_and_exits_0(capsys, monkeypatch):
         lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("no repo")),
     )
     code = main(
-        ["builder", "--kind", "claude", "--model", "sonnet",
-         "--role-file", "roles/builder.md"]
+        ["builder", "--kind", "claude", "--model", "sonnet", "--role-file", "roles/builder.md"]
     )
     assert code == 0, "the orchestrator reads ok, not the exit code"
     lines = capsys.readouterr().out.strip().splitlines()
@@ -524,6 +513,7 @@ def _no_launch(monkeypatch):
     operator's live Herdr workspace and started a real `claude` there.
     A test may never be one edit away from that.
     """
+
     def stop(*_a, **_kw):
         raise AssertionError("main() reached the launch path past a config error")
 
@@ -546,8 +536,7 @@ def test_a_broken_config_is_one_json_line_with_ok_false(monkeypatch, tmp_path, c
     _no_launch(monkeypatch)
 
     code = main(
-        ["builder", "--kind", "claude", "--model", "sonnet",
-         "--role-file", "roles/builder.md"]
+        ["builder", "--kind", "claude", "--model", "sonnet", "--role-file", "roles/builder.md"]
     )
 
     assert code == 0
@@ -559,9 +548,7 @@ def test_a_broken_config_is_one_json_line_with_ok_false(monkeypatch, tmp_path, c
     assert "direction" in result["error"], result["error"]
 
 
-def test_a_broken_config_is_a_config_error_in_await_mode_too(
-    monkeypatch, tmp_path, capsys
-):
+def test_a_broken_config_is_a_config_error_in_await_mode_too(monkeypatch, tmp_path, capsys):
     """`--await` reads the same config through the same code path -- a wrong
     file must not wear the `dispatch_crashed:` label there either."""
     root = tmp_path / "repo"
@@ -594,8 +581,7 @@ def test_a_broken_llm_block_is_a_config_error_too(monkeypatch, tmp_path, capsys)
     _no_launch(monkeypatch)
 
     code = main(
-        ["builder", "--kind", "claude", "--model", "sonnet",
-         "--role-file", "roles/builder.md"]
+        ["builder", "--kind", "claude", "--model", "sonnet", "--role-file", "roles/builder.md"]
     )
 
     assert code == 0
@@ -622,8 +608,7 @@ def test_a_broken_overlay_is_a_config_error_too(monkeypatch, tmp_path, capsys):
     _no_launch(monkeypatch)
 
     code = main(
-        ["builder", "--kind", "claude", "--model", "sonnet",
-         "--role-file", "roles/builder.md"]
+        ["builder", "--kind", "claude", "--model", "sonnet", "--role-file", "roles/builder.md"]
     )
 
     assert code == 0
@@ -676,9 +661,7 @@ def test_a_broken_config_wins_over_a_usage_error(monkeypatch, tmp_path, capsys):
     """
     root = tmp_path / "repo"
     _write_config(root, '[default]\ndirection = "links"\n')
-    monkeypatch.setattr(
-        "lean_herdr.dispatch.canonical_root", lambda *a, **kw: root
-    )
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
 
     code = main(["builder", "--kind", "claude"])  # also missing --model
 
@@ -709,9 +692,7 @@ def _line(argv, root, monkeypatch, capsys):
     # touches the store does -- otherwise it lands in the operator's own
     # lean-ctx data directory and the next run inherits it.
     monkeypatch.setenv("LEAN_CTX_DATA_DIR", str(root.parent / "data"))
-    monkeypatch.setattr(
-        "lean_herdr.dispatch.canonical_root", lambda *a, **kw: root
-    )
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
     assert main(argv) == 0
     return json.loads(capsys.readouterr().out.strip())
 
@@ -729,9 +710,7 @@ def _spy_dispatch(monkeypatch) -> list[DispatchRequest]:
     return seen
 
 
-def test_only_the_orchestrator_has_a_kind_without_a_file(
-    monkeypatch, tmp_path, capsys
-):
+def test_only_the_orchestrator_has_a_kind_without_a_file(monkeypatch, tmp_path, capsys):
     """`settings.KIND_BY_ROLE` reaches `--kind` too, and only for one role.
 
     `settings_for()` seeds `kind` from that table, so `settings.kind` is
@@ -749,20 +728,18 @@ def test_only_the_orchestrator_has_a_kind_without_a_file(
 
     orch = _line(
         ["orchestrator", "--role-file", "roles/orchestrator.md", "--model", "x"],
-        root, monkeypatch, capsys,
+        root,
+        monkeypatch,
+        capsys,
     )
-    work = _line(
-        [*BUILD_ARGS, "--model", "x"], root, monkeypatch, capsys
-    )
+    work = _line([*BUILD_ARGS, "--model", "x"], root, monkeypatch, capsys)
 
     assert orch["ok"] is True, orch
     assert work["ok"] is False
     assert "--kind is required" in work["error"], work
 
 
-def test_the_orchestrators_built_in_kind_does_not_excuse_a_model(
-    monkeypatch, tmp_path, capsys
-):
+def test_the_orchestrators_built_in_kind_does_not_excuse_a_model(monkeypatch, tmp_path, capsys):
     """The one built-in stops at `kind`. `--model` is still a duty flag."""
     root = tmp_path / "repo"
     _write_config(root, "")
@@ -770,7 +747,9 @@ def test_the_orchestrators_built_in_kind_does_not_excuse_a_model(
 
     got = _line(
         ["orchestrator", "--role-file", "roles/orchestrator.md"],
-        root, monkeypatch, capsys,
+        root,
+        monkeypatch,
+        capsys,
     )
 
     assert got["ok"] is False
@@ -850,9 +829,7 @@ def test_await_does_not_take_a_model_from_the_file(monkeypatch, tmp_path, capsys
     root = tmp_path / "repo"
     _write_config(root, BUILDER_CONFIG)
 
-    got = _line(
-        ["builder", "--await", "--task-id", "o-1"], root, monkeypatch, capsys
-    )
+    got = _line(["builder", "--await", "--task-id", "o-1"], root, monkeypatch, capsys)
 
     assert "usage_error" not in str(got.get("error", "")), got
 
@@ -869,15 +846,15 @@ def test_a_log_command_takes_no_kind_from_the_file(monkeypatch, tmp_path, capsys
 
     got = _line(
         ["order", "--to", "builder", "--message", "do it"],
-        root, monkeypatch, capsys,
+        root,
+        monkeypatch,
+        capsys,
     )
 
     assert "does not take --kind" not in str(got.get("error", "")), got
 
 
-def test_a_reviewer_build_carries_the_shared_model_warning(
-    monkeypatch, tmp_path, capsys
-):
+def test_a_reviewer_build_carries_the_shared_model_warning(monkeypatch, tmp_path, capsys):
     """One model for two roles is allowed, but never silent.
 
     The orchestrator reads the REVIEWER's dispatch line, so that is the one
@@ -887,18 +864,14 @@ def test_a_reviewer_build_carries_the_shared_model_warning(
     _write_config(root, SHARED_MODEL_CONFIG)
     _spy_dispatch(monkeypatch)
 
-    got = _line(
-        ["reviewer", "--role-file", "roles/reviewer.md"], root, monkeypatch, capsys
-    )
+    got = _line(["reviewer", "--role-file", "roles/reviewer.md"], root, monkeypatch, capsys)
 
     assert got["ok"] is True, got
     assert len(got["warnings"]) == 1, got
     assert "blind spots" in got["warnings"][0], got
 
 
-def test_a_builder_build_of_the_same_config_carries_no_warning(
-    monkeypatch, tmp_path, capsys
-):
+def test_a_builder_build_of_the_same_config_carries_no_warning(monkeypatch, tmp_path, capsys):
     """Same file, no reader: nothing reads the builder's line for this."""
     root = tmp_path / "repo"
     _write_config(root, SHARED_MODEL_CONFIG)
@@ -920,8 +893,7 @@ def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch)
             "result": {
                 "source": {"repo_root": "/repo"},
                 "worktrees": [
-                    {"branch": "feat/auth", "path": "/repo.feat-auth",
-                     "open_workspace_id": "w2"}
+                    {"branch": "feat/auth", "path": "/repo.feat-auth", "open_workspace_id": "w2"}
                 ],
             }
         },
@@ -944,8 +916,7 @@ def test_a_worktree_dispatch_splits_a_pane_of_that_workspace(world):
             "result": {
                 "source": {"repo_root": "/repo"},
                 "worktrees": [
-                    {"branch": "feat/auth", "path": "/repo.feat-auth",
-                     "open_workspace_id": "w2"}
+                    {"branch": "feat/auth", "path": "/repo.feat-auth", "open_workspace_id": "w2"}
                 ],
             }
         },
@@ -964,8 +935,7 @@ def test_a_worktree_without_an_anchor_pane_aborts(world):
             "result": {
                 "source": {"repo_root": "/repo"},
                 "worktrees": [
-                    {"branch": "feat/auth", "path": "/repo.feat-auth",
-                     "open_workspace_id": "w2"}
+                    {"branch": "feat/auth", "path": "/repo.feat-auth", "open_workspace_id": "w2"}
                 ],
             }
         },

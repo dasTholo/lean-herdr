@@ -25,7 +25,13 @@ ORCH = "orchestrator"
 
 
 def order(tmp_path, task, *, to_agent=ME, description="build it", **payload):
-    append(task, "created", ORCH, {"to_agent": to_agent, "description": description, **payload}, orders=tmp_path)
+    append(
+        task,
+        "created",
+        ORCH,
+        {"to_agent": to_agent, "description": description, **payload},
+        orders=tmp_path,
+    )
     return task
 
 
@@ -42,6 +48,7 @@ def _break_chain(orders_dir, task_id):
 
 # -- identity ---------------------------------------------------------
 
+
 def test_the_environment_name_wins_over_every_derivation():
     assert resolve_agent(root=ROOT, env={AGENT_ENV: ME, ROLE_ENV: "builder"}) == ME
 
@@ -57,9 +64,7 @@ def test_without_a_role_the_worker_stops_instead_of_guessing():
 
 
 def test_the_fallback_derives_role_plus_branch(tmp_path, monkeypatch):
-    monkeypatch.setattr(
-        "lean_herdr.report.current_branch", lambda *_a, **_k: "feat/lean-herdr"
-    )
+    monkeypatch.setattr("lean_herdr.report.current_branch", lambda *_a, **_k: "feat/lean-herdr")
     assert resolve_agent(root=tmp_path, env={ROLE_ENV: "builder"}) == "builder-feat-lean-herdr"
 
 
@@ -69,6 +74,7 @@ def test_a_detached_head_has_no_branch():
 
 
 # -- next -------------------------------------------------------------
+
 
 def test_next_finds_the_open_order_for_this_agent(tmp_path):
     order(tmp_path, "o-a-1", to_agent=OTHER)
@@ -88,7 +94,13 @@ def test_next_skips_a_finished_order(tmp_path):
 def test_next_folds_in_the_predecessors_own_words(tmp_path):
     """The run-up is a reference, not a retelling."""
     order(tmp_path, "o-a-1", to_agent=OTHER)
-    append("o-a-1", "completed", OTHER, {"message": "VERDIKT: result\ntwo findings, both fixed"}, orders=tmp_path)
+    append(
+        "o-a-1",
+        "completed",
+        OTHER,
+        {"message": "VERDIKT: result\ntwo findings, both fixed"},
+        orders=tmp_path,
+    )
     order(tmp_path, "o-b-2", after="o-a-1")
     text = next_order(ME, orders_dir=tmp_path)["text"]
     assert "after: o-a-1 (reviewer-feat-x, completed)" in text
@@ -96,6 +108,7 @@ def test_next_folds_in_the_predecessors_own_words(tmp_path):
 
 
 # -- the four writing commands ----------------------------------------
+
 
 @pytest.mark.parametrize(
     ("command", "kind"),
@@ -141,6 +154,7 @@ def test_an_unknown_order_is_not_found(tmp_path):
 
 # -- show -------------------------------------------------------------
 
+
 def test_show_lists_the_answer_as_its_own_event(tmp_path):
     """The reason `show` exists: after a question, the answer stands here."""
     order(tmp_path, "o-a-1")
@@ -153,6 +167,7 @@ def test_show_lists_the_answer_as_its_own_event(tmp_path):
 
 
 # -- the CLI shell ----------------------------------------------------
+
 
 def _one_json_line(capsys) -> dict:
     """Exactly one JSON line on stdout -- main()'s own contract, spelled

@@ -266,7 +266,7 @@ def complete(
             ),
             timeout_s=timeout_s,
         )
-    except (OSError, ValueError):
+    except OSError, ValueError:
         # The belt on the SEAM, not on the transport: `openrouter.request`
         # answers every failure with None already. But `request` is
         # injectable, and "never raises" is a promise this function makes to
@@ -342,9 +342,7 @@ def file_settings(root: Any = None, *, cwd: Any = None) -> LlmSettings:
     try:
         base = Path(root) if root is not None else canonical_root(cwd)
         return llm_settings_layered(base)
-    except (
-        SettingsError, BusError, OSError, subprocess.SubprocessError, ValueError
-    ) as exc:
+    except (SettingsError, BusError, OSError, subprocess.SubprocessError, ValueError) as exc:
         # SubprocessError is NOT redundant beside OSError: canonical_root()
         # runs git with a timeout, and subprocess.TimeoutExpired descends
         # from SubprocessError, not from OSError. A hung git would
@@ -393,9 +391,7 @@ def generate(
     answer = complete(
         prompt,
         effort=_first(effort, cfg.effort, fallback=GENERATE_EFFORT),
-        model=_first(
-            model, environ.get(MODEL_ENV), cfg.model, fallback=DEFAULT_MODEL
-        ),
+        model=_first(model, environ.get(MODEL_ENV), cfg.model, fallback=DEFAULT_MODEL),
         timeout_s=timeout_s,
         request=request,
         env=env,
@@ -438,7 +434,7 @@ def wt_diff(
             errors="replace",
             timeout=timeout_s,
         )
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except OSError, subprocess.SubprocessError, ValueError:
         # ValueError for whatever `errors="replace"` does not cover: a
         # failure of this machinery owes the caller `skipped`, never a
         # rejection and never a traceback.
@@ -549,7 +545,7 @@ def prereview_result(
         return _skip("no_branch")
     try:
         entry = find_worktree(worktree_list or {}, branch)
-    except (AttributeError, TypeError):
+    except AttributeError, TypeError:
         return _skip("worktree_unresolved")
     path = entry.get("path") if isinstance(entry, dict) else None
     if not path:
@@ -592,11 +588,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("mode", choices=("generate", "prereview"))
     p.add_argument(
-        "-C", dest="path", default=".",
+        "-C",
+        dest="path",
+        default=".",
         help="prereview: the worktree to judge (default: the current one)",
     )
     p.add_argument(
-        "--order", default="",
+        "--order",
+        default="",
         help="prereview: the order text the diff is supposed to answer",
     )
     p.add_argument(
@@ -604,33 +603,38 @@ def build_parser() -> argparse.ArgumentParser:
         # of its own directly below the flag. Naming only the generator's
         # would tell an operator who set $LEAN_HERDR_PREREVIEW_MODEL the
         # opposite of the truth.
-        "--model", default=None,
+        "--model",
+        default=None,
         help="generate: beats $LEAN_HERDR_LLM_MODEL, then [llm].model in "
-             ".lean-ctx/lean-herdr/config.toml, then the same key in "
-             "models.auto.toml beside it, then the built-in default. "
-             "prereview: beats $LEAN_HERDR_PREREVIEW_MODEL, then "
-             "[llm].prereview_model, then those same four",
+        ".lean-ctx/lean-herdr/config.toml, then the same key in "
+        "models.auto.toml beside it, then the built-in default. "
+        "prereview: beats $LEAN_HERDR_PREREVIEW_MODEL, then "
+        "[llm].prereview_model, then those same four",
     )
     p.add_argument(
         # EFFORTS, not a second spelling of the same four words: the
         # settings validator rejects anything outside it, and two lists
         # would disagree the day a fifth level shows up.
-        "--effort", default=None, choices=EFFORTS,
+        "--effort",
+        default=None,
+        choices=EFFORTS,
         help="generate: beats [llm].effort, then the built-in default. "
-             "prereview: beats [llm].prereview_effort, then its own "
-             "built-in -- it does NOT inherit [llm].effort. "
-             "No environment level exists for either",
+        "prereview: beats [llm].prereview_effort, then its own "
+        "built-in -- it does NOT inherit [llm].effort. "
+        "No environment level exists for either",
     )
     p.add_argument(
         # One flag, and in prereview mode it caps TWO subprocesses whose own
         # defaults differ by a factor of two. `--timeout 40` therefore raises
         # the diff's limit and lowers the model's at once, and a value chosen
         # for the model alone can starve `wt step diff` on a big branch.
-        "--timeout", type=_positive_seconds, default=None,
+        "--timeout",
+        type=_positive_seconds,
+        default=None,
         help="seconds, per subprocess. generate: the model call (default "
-             f"{GENERATE_TIMEOUT_S:g}). prereview: BOTH `wt step diff` "
-             f"(default {DIFF_TIMEOUT_S:g}) and the model call (default "
-             f"{PREREVIEW_TIMEOUT_S:g}) get this one value",
+        f"{GENERATE_TIMEOUT_S:g}). prereview: BOTH `wt step diff` "
+        f"(default {DIFF_TIMEOUT_S:g}) and the model call (default "
+        f"{PREREVIEW_TIMEOUT_S:g}) get this one value",
     )
     return p
 

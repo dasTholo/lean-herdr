@@ -95,9 +95,7 @@ def test_ready_timeout_must_be_positive():
         settings_for("builder", {"default": {"ready_timeout_s": 0}})
 
 
-@pytest.mark.parametrize(
-    "template", ["{branch}", "{role}", "worker", "{role}-{twig}"]
-)
+@pytest.mark.parametrize("template", ["{branch}", "{role}", "worker", "{role}-{twig}"])
 def test_a_name_template_missing_either_placeholder_is_rejected(template):
     """The reuse key is (branch, role) -- otherwise a reviewer dispatch hits
     the running builder of that branch."""
@@ -182,9 +180,7 @@ def test_the_shipped_template_changes_nothing(tmp_path):
     assert data == {}, f"{template} carries active values: {sorted(data)}"
     assert settings_for("builder", data) == RoleSettings(profile="standard")
     assert settings_for("reviewer", data) == RoleSettings(profile="standard")
-    assert settings_for("orchestrator", data) == RoleSettings(
-        profile="minimal", kind="opencode"
-    )
+    assert settings_for("orchestrator", data) == RoleSettings(profile="minimal", kind="opencode")
 
 
 def test_the_llm_section_is_read_and_defaults_to_empty():
@@ -326,7 +322,7 @@ def test_handed_in_data_beats_the_file_on_disk(tmp_path):
 
 @pytest.mark.parametrize(
     "text",
-    ['[llm]\nmodel = 5\n', '[llm]\nmodel = "unclosed\n'],
+    ["[llm]\nmodel = 5\n", '[llm]\nmodel = "unclosed\n'],
     ids=["wrong-type", "malformed-toml"],
 )
 def test_a_broken_overlay_is_loud_here(tmp_path, text):
@@ -357,9 +353,7 @@ def test_a_kind_no_role_prompt_is_written_for_is_rejected():
 
 
 def test_a_role_carries_its_own_model_and_kind():
-    values = settings_for(
-        "builder", {"roles": {"builder": {"kind": "claude", "model": "sonnet"}}}
-    )
+    values = settings_for("builder", {"roles": {"builder": {"kind": "claude", "model": "sonnet"}}})
     assert values.kind == "claude"
     assert values.model == "sonnet"
 
@@ -376,7 +370,7 @@ def test_only_the_orchestrator_has_a_built_in_kind():
 
 
 def test_workspace_model_names_its_new_home():
-    """"unknown keys ['model']" is true and useless -- it sends the reader
+    """ "unknown keys ['model']" is true and useless -- it sends the reader
     hunting for a typo instead of to the new home.
     """
     with pytest.raises(SettingsError, match=r"\[roles.orchestrator\].model"):
@@ -406,10 +400,11 @@ def test_a_default_model_reaches_every_role():
     one line sets the model for the whole project.
     """
     data = {"default": {"model": "sonnet"}}
-    assert [
-        settings_for(role, data).model
-        for role in ("builder", "reviewer", "orchestrator")
-    ] == ["sonnet", "sonnet", "sonnet"]
+    assert [settings_for(role, data).model for role in ("builder", "reviewer", "orchestrator")] == [
+        "sonnet",
+        "sonnet",
+        "sonnet",
+    ]
 
 
 @pytest.mark.parametrize(

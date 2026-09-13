@@ -77,9 +77,7 @@ class _Parser(argparse.ArgumentParser):
         raise UsageError(message)
 
 
-def find_workspace(
-    herdr: Herdr, root: Path, listing: dict[str, Any]
-) -> str | None:
+def find_workspace(herdr: Herdr, root: Path, listing: dict[str, Any]) -> str | None:
     """The workspace for `root` -- by worktree first, by pane cwd second.
 
     `worktree` is optional AND nullable in WorkspaceInfo
@@ -118,9 +116,12 @@ def create_workspace(
     success.
     """
     args = [
-        "workspace", "create",
-        "--cwd", str(root),
-        "--label", settings.label.format(repo=root.name),
+        "workspace",
+        "create",
+        "--cwd",
+        str(root),
+        "--label",
+        settings.label.format(repo=root.name),
         "--focus",
     ]
     for key, value in env.items():
@@ -163,13 +164,8 @@ def missing_agent_config(root: Path, kind: str) -> str | None:
     if config.error:
         return f"{OPENCODE_CONFIG} in {root} is {config.error}"
     agents = config.data.get("agent")
-    if not isinstance(agents, dict) or not isinstance(
-        agents.get(OPENCODE_ORCHESTRATOR), dict
-    ):
-        return (
-            f"{OPENCODE_CONFIG} in {root} defines no "
-            f"agent.{OPENCODE_ORCHESTRATOR}"
-        )
+    if not isinstance(agents, dict) or not isinstance(agents.get(OPENCODE_ORCHESTRATOR), dict):
+        return f"{OPENCODE_CONFIG} in {root} defines no agent.{OPENCODE_ORCHESTRATOR}"
     return None
 
 
@@ -247,8 +243,10 @@ def start_orchestrator(
         }
 
     env = {"LEAN_CTX_TOOL_PROFILE": profile, "LEAN_CTX_ROLE": "orchestrator"}
-    target = workspace_id or find_workspace(herdr, root, listing) or create_workspace(
-        herdr, root, settings=settings, env=env
+    target = (
+        workspace_id
+        or find_workspace(herdr, root, listing)
+        or create_workspace(herdr, root, settings=settings, env=env)
     )
     if not target:
         return {"ok": False, "error": "no_workspace"}
@@ -282,9 +280,7 @@ def start_orchestrator(
         kind=kind,
         pane=pane,
         agent_args=agent_args,
-        first_timeout_ms=min(
-            FIRST_START_TIMEOUT_MS, timeout_ms_for(ready_timeout_s)
-        ),
+        first_timeout_ms=min(FIRST_START_TIMEOUT_MS, timeout_ms_for(ready_timeout_s)),
         retry_timeout_ms=timeout_ms_for(ready_timeout_s) if retry_on_hang else 0,
     )
     if not started["ok"]:
@@ -317,9 +313,7 @@ def start_orchestrator(
     }
 
 
-def workspace_up(
-    *, root: Path | None = None, herdr: Herdr | None = None
-) -> dict[str, Any]:
+def workspace_up(*, root: Path | None = None, herdr: Herdr | None = None) -> dict[str, Any]:
     """Root, config, then the shared core.
 
     A missing config is a hard stop, not a fallback to defaults: the

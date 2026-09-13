@@ -134,9 +134,10 @@ def profile_for(
     role: str, override: str | None = None, *, settings: RoleSettings | None = None
 ) -> str:
     """CLI flag beats file beats built-in default."""
-    return override or (
-        settings or RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))
-    ).profile
+    return (
+        override
+        or (settings or RoleSettings(profile=PROFILE_BY_ROLE.get(role, DEFAULT_PROFILE))).profile
+    )
 
 
 def agent_name(
@@ -208,9 +209,7 @@ def wait_for_agent_id(
                 registry = read_registry(path)
             except BusError:
                 registry = {}
-            agent_id = resolve_agent_id(
-                agents, info, agents_in_registry(registry), name=name
-            )
+            agent_id = resolve_agent_id(agents, info, agents_in_registry(registry), name=name)
             if agent_id:
                 return agent_id
         if now() >= deadline:
@@ -218,9 +217,7 @@ def wait_for_agent_id(
         sleep(interval_s)
 
 
-def _result(
-    ok: bool, pane: str | None, agent_id: str | None, **rest: Any
-) -> dict[str, Any]:
+def _result(ok: bool, pane: str | None, agent_id: str | None, **rest: Any) -> dict[str, Any]:
     return {"ok": ok, "pane": pane, "agent_id": agent_id, **rest}
 
 
@@ -276,26 +273,27 @@ def dispatch(
         # and triggers NO lifecycle change (H4).
         herdr.agent_prompt(name, "/clear", wait=False)
     else:
-        pane = herdr.pane_split(
-            target_cwd,
-            pane=target_pane,
-            direction=cfg.direction,
-            ratio=cfg.ratio,
-            focus=cfg.focus,
-            env={
-                "LEAN_CTX_TOOL_PROFILE": profile_for(
-                    req.role, req.profile, settings=cfg
-                ),
-                ROLE_ENV: req.role,
-                # The worker's own name, so `lean-herdr report` does not have to
-                # derive it. Derivation from role plus branch disagrees with
-                # this side whenever the dispatch carried no `--worktree`:
-                # here the agent is `builder`, there it would be
-                # `builder-feat-x`, and an order under the wrong name
-                # reaches nobody.
-                AGENT_ENV: name,
-            },
-        ) or ""
+        pane = (
+            herdr.pane_split(
+                target_cwd,
+                pane=target_pane,
+                direction=cfg.direction,
+                ratio=cfg.ratio,
+                focus=cfg.focus,
+                env={
+                    "LEAN_CTX_TOOL_PROFILE": profile_for(req.role, req.profile, settings=cfg),
+                    ROLE_ENV: req.role,
+                    # The worker's own name, so `lean-herdr report` does not have to
+                    # derive it. Derivation from role plus branch disagrees with
+                    # this side whenever the dispatch carried no `--worktree`:
+                    # here the agent is `builder`, there it would be
+                    # `builder-feat-x`, and an order under the wrong name
+                    # reaches nobody.
+                    AGENT_ENV: name,
+                },
+            )
+            or ""
+        )
         if not pane:
             return _result(False, None, None, error="pane_split_failed")
         started = start_agent(
@@ -315,9 +313,7 @@ def dispatch(
             # hang the orchestrator does.
             return _result(False, pane, None, error=started["error"])
 
-    agent_id = waiter(
-        herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s
-    )
+    agent_id = waiter(herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s)
     if not agent_id:
         return _result(False, pane, None, error="no_agent_id")
     # This is the end. The orchestrator creates the order itself, with
@@ -376,7 +372,7 @@ def _worker_root(worktree: str | None, *, herdr: Herdr, root: Path) -> Path:
     try:
         entry = find_worktree(herdr.worktree_list(root), worktree)
         path = entry.get("path") if isinstance(entry, dict) else None
-    except (TypeError, AttributeError, KeyError):
+    except TypeError, AttributeError, KeyError:
         return root
     return Path(path) if path else root
 
@@ -391,9 +387,7 @@ def _result_for_state(order: Order) -> dict[str, Any] | None:
     """
     message = message_from(order, order.to_agent)
     if order.state == "completed":
-        result = order_result(
-            True, order.id, state=order.state, message=message or ""
-        )
+        result = order_result(True, order.id, state=order.state, message=message or "")
         ruling = verdict(message)
         if ruling:
             result["verdict"] = ruling
@@ -503,9 +497,7 @@ def await_task(
             # Exactly once, and without --wait: whoever sleeps through the
             # first ring will not wake for the second. That is what the
             # timeout is for.
-            herdr.agent_prompt(
-                name, WAKE_PROMPT.format(task_id=req.task_id), wait=False
-            )
+            herdr.agent_prompt(name, WAKE_PROMPT.format(task_id=req.task_id), wait=False)
             has_rung = True
         if now() >= deadline:
             break
@@ -520,9 +512,7 @@ def await_task(
         _worker_root(req.worktree, herdr=herdr, root=root),
     )
     if error:
-        return order_result(
-            False, req.task_id, state=state, error=f"agent_error: {error}"
-        )
+        return order_result(False, req.task_id, state=state, error=f"agent_error: {error}")
     return order_result(False, req.task_id, state=state, error="no_reply")
 
 
@@ -568,9 +558,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    p = _Parser(
-        prog="lean-herdr dispatch", description="Build or wait -- one call."
-    )
+    p = _Parser(prog="lean-herdr dispatch", description="Build or wait -- one call.")
     p.add_argument(
         "command",
         help="builder | reviewer | orchestrator | order | answer | cancel | remember",
@@ -590,20 +578,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--task-id", default=None, help="required with --await")
     p.add_argument("--model", default=None, help="required in build mode")
-    p.add_argument(
-        "--role-file", default=None, type=Path, help="required in build mode"
-    )
-    p.add_argument(
-        "--worktree", default=None, help="branch; the pane runs in its worktree"
-    )
+    p.add_argument("--role-file", default=None, type=Path, help="required in build mode")
+    p.add_argument("--worktree", default=None, help="branch; the pane runs in its worktree")
     p.add_argument(
         "--prereview",
         action="store_true",
         help="only with --await and --worktree: judge the branch diff first",
     )
-    p.add_argument(
-        "--profile", default=None, help="overrides the role's default profile"
-    )
+    p.add_argument("--profile", default=None, help="overrides the role's default profile")
     # `default=None`, not the number: only that tells a `--timeout-ms` given
     # in build mode from one left out. main() fills the value in.
     p.add_argument(
@@ -612,15 +594,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=f"only with --await (default {DEFAULT_TIMEOUT_MS})",
     )
-    p.add_argument(
-        "--to", default=None, help="required with `order`: the worker's agent name"
-    )
-    p.add_argument(
-        "--after", default=None, help="only with `order`: the predecessor's task id"
-    )
-    p.add_argument(
-        "--message", default=None, help="required with `order` and `cancel`"
-    )
+    p.add_argument("--to", default=None, help="required with `order`: the worker's agent name")
+    p.add_argument("--after", default=None, help="only with `order`: the predecessor's task id")
+    p.add_argument("--message", default=None, help="required with `order` and `cancel`")
     # `--from` needs `dest=` for the same reason as `--await`: `from` is a
     # keyword and would be unreachable as args.from.
     p.add_argument(
@@ -828,13 +804,9 @@ def main(argv: list[str] | None = None) -> int:
                     root=root,
                 )
             elif args.command == "answer":
-                result = answer_order(
-                    args.task_id, args.message, root=root, actor=sender
-                )
+                result = answer_order(args.task_id, args.message, root=root, actor=sender)
             elif args.command == "cancel":
-                result = cancel_order(
-                    args.task_id, args.message, root=root, actor=sender
-                )
+                result = cancel_order(args.task_id, args.message, root=root, actor=sender)
             elif args.command == "remember":
                 result = remember_branch(args.key, args.message, root=root)
             elif args.waiting:

@@ -61,8 +61,7 @@ def test_the_role_prompts_trust_the_name_dispatch_actually_stamps():
         text = (ROLES / f"{name}.md").read_text(encoding="utf-8")
         hit = ORCHESTRATOR_LINE.search(text)
         assert hit.group(1) == ORCHESTRATOR_AGENT, (
-            f"{name}.md trusts {hit.group(1)!r}, dispatch stamps "
-            f"{ORCHESTRATOR_AGENT!r}"
+            f"{name}.md trusts {hit.group(1)!r}, dispatch stamps {ORCHESTRATOR_AGENT!r}"
         )
 
 

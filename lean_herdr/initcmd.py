@@ -95,7 +95,7 @@ def _read(runner: Any, *cmd: str, cwd: Path | None = None) -> str | None:
             cwd=None if cwd is None else str(cwd),
             check=False,
         )
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return None
     return (proc.stdout or "") + (proc.stderr or "")
 
@@ -141,7 +141,7 @@ def _check_approvals(root: Path, runner: Any) -> str | None:
     start = approvals.find("{")
     try:
         state = json.loads(approvals[start:])["state"] if start >= 0 else None
-    except (json.JSONDecodeError, KeyError, TypeError):
+    except json.JSONDecodeError, KeyError, TypeError:
         state = None
     if state == "approved":
         return None
@@ -175,9 +175,7 @@ def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
     project, and this module writes only its own files -- the operator
     gets the exact line and decides.
     """
-    answer = _read(
-        runner, "git", "check-ignore", "-v", str(OVERLAY_PATH), cwd=root
-    )
+    answer = _read(runner, "git", "check-ignore", "-v", str(OVERLAY_PATH), cwd=root)
     if answer is None or answer.strip():
         # None: no git at all, so no verdict. Non-empty: git named the
         # rule that covers it, which is exactly what we wanted.
@@ -189,9 +187,7 @@ def _check_overlay_ignored(root: Path, runner: Any) -> str | None:
     )
 
 
-def _warnings(
-    root: Path, *, data: dict[str, Any], runner: Any = subprocess.run
-) -> list[str]:
+def _warnings(root: Path, *, data: dict[str, Any], runner: Any = subprocess.run) -> list[str]:
     """The README checklist as lines. Nothing here changes anything.
 
     The three foreign checks each live in their own function: they share
@@ -219,9 +215,7 @@ def _warnings(
         # `[models].auto` no overlay is ever written, and a rule for a file
         # that cannot exist would be noise in every project that never
         # switched the feature on.
-        _check_overlay_ignored(root, runner)
-        if models_settings(data).auto
-        else None,
+        _check_overlay_ignored(root, runner) if models_settings(data).auto else None,
     )
     found.extend(line for line in checks if line is not None)
     found.extend(model_warnings(data))
@@ -253,7 +247,7 @@ def _warm_opencode(root: Path, *, runner: Any) -> bool:
     except subprocess.TimeoutExpired:
         # The expected end, not an error: the abort IS the warm-up.
         return True
-    except (OSError, subprocess.SubprocessError):
+    except OSError, subprocess.SubprocessError:
         return False
     return True
 

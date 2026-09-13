@@ -35,9 +35,7 @@ TERMINAL_STATES = frozenset({"completed", "failed", "canceled"})
 #: kind -> the state it puts the order in. `answered` is the only kind whose
 #: name is not its state: the orchestrator answered, so the worker is
 #: working again. Every other kind names its own state.
-_STATE_OF: dict[str, str] = {kind: kind for kind in EVENT_KINDS} | {
-    "answered": "working"
-}
+_STATE_OF: dict[str, str] = {kind: kind for kind in EVENT_KINDS} | {"answered": "working"}
 
 
 def is_terminal(state: str) -> bool:

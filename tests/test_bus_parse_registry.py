@@ -31,9 +31,19 @@ def test_the_frozen_sample_has_the_expected_shape(sample):
     assert "agents" in sample
     first = sample["scratchpad"][0]
     for field in (
-        "id", "from_agent", "to_agent", "task_id", "category", "priority",
-        "privacy", "message", "metadata", "project_root", "timestamp",
-        "read_by", "expires_at",
+        "id",
+        "from_agent",
+        "to_agent",
+        "task_id",
+        "category",
+        "priority",
+        "privacy",
+        "message",
+        "metadata",
+        "project_root",
+        "timestamp",
+        "read_by",
+        "expires_at",
     ):
         assert field in first, f"field {field} is missing from the sample"
     assert "pid" in sample["agents"][0], "PID join needs the pid field"

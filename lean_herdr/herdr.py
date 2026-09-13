@@ -116,9 +116,7 @@ class Herdr:
         """
         return self._run(*args, timeout=timeout)[0]
 
-    def _run(
-        self, *args: str, timeout: float | None = None
-    ) -> tuple[dict[str, Any], int]:
+    def _run(self, *args: str, timeout: float | None = None) -> tuple[dict[str, Any], int]:
         """`run()`, plus the exit code it throws away.
 
         `run()` flattens "Herdr refused" and "Herdr answered nothing" onto the
@@ -141,7 +139,7 @@ class Herdr:
                 text=True,
                 timeout=timeout if timeout is not None else self.timeout,
             )
-        except (OSError, subprocess.SubprocessError):
+        except OSError, subprocess.SubprocessError:
             return {}, NO_PROCESS_RC
         if proc.returncode != 0 and not proc.stdout.strip():
             return {}, proc.returncode
@@ -305,9 +303,7 @@ class Herdr:
 
     SOURCE = "lean.herdr"
 
-    def report_metadata(
-        self, scope: str, target: str, token: str, value: str
-    ) -> bool:
+    def report_metadata(self, scope: str, target: str, token: str, value: str) -> bool:
         """`herdr <scope> report-metadata <id> --source lean.herdr --token k=v`.
 
         Two measured quirks (0.8.2): the ID is POSITIONAL, not

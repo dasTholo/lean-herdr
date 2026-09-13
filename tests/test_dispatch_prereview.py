@@ -19,9 +19,7 @@ ROOT = Path("/repo")
 WORKER = "builder-feat-x"
 TASK_ID = "o-1a05e34cd15-1cf3b885"
 BRANCH = "feat/x"
-WORKTREES = {
-    "result": {"worktrees": [{"branch": BRANCH, "path": "/worktrees/feat-x"}]}
-}
+WORKTREES = {"result": {"worktrees": [{"branch": BRANCH, "path": "/worktrees/feat-x"}]}}
 
 
 def openrouter(text: str) -> str:
@@ -58,13 +56,23 @@ def no_network(*_a, **_kw):
 
 
 def wait(
-    herdr, tmp_path, *, prereview, runner, request=no_network,
-    worktree=BRANCH, llm_cfg=None,
+    herdr,
+    tmp_path,
+    *,
+    prereview,
+    runner,
+    request=no_network,
+    worktree=BRANCH,
+    llm_cfg=None,
 ):
     return await_task(
         AwaitRequest(
-            role="builder", kind="claude", task_id=TASK_ID,
-            worktree=worktree, timeout_ms=300_000, prereview=prereview,
+            role="builder",
+            kind="claude",
+            task_id=TASK_ID,
+            worktree=worktree,
+            timeout_ms=300_000,
+            prereview=prereview,
         ),
         herdr=herdr,
         root=ROOT,
@@ -121,8 +129,11 @@ def test_a_rejection_stands_beside_the_verdict_never_instead(herdr, tmp_path, mo
         "PREREVIEW: reject\ndebug leftover: print()", monkeypatch, tmp_path
     )
     result = wait(
-        herdr, completed_log(tmp_path, "VERDIKT: result\nall green"),
-        prereview=True, runner=runner, request=request,
+        herdr,
+        completed_log(tmp_path, "VERDIKT: result\nall green"),
+        prereview=True,
+        runner=runner,
+        request=request,
     )
     assert result["verdict"] == "result", "the strong reviewer keeps its key"
     assert result["prereview"] == "reject"
@@ -133,8 +144,11 @@ def test_a_rejection_stands_beside_the_verdict_never_instead(herdr, tmp_path, mo
 def test_a_pass_changes_nothing_about_the_answer(herdr, tmp_path, monkeypatch):
     runner, request = llm_doubles("PREREVIEW: pass", monkeypatch, tmp_path)
     result = wait(
-        herdr, completed_log(tmp_path), prereview=True,
-        runner=runner, request=request,
+        herdr,
+        completed_log(tmp_path),
+        prereview=True,
+        runner=runner,
+        request=request,
     )
     assert result["prereview"] == "pass"
     assert result["ok"] is True
@@ -166,7 +180,9 @@ def test_a_broken_pre_review_is_skipped_never_a_rejection(herdr, tmp_path, monke
     monkeypatch.setattr("lean_herdr.openrouter.AUTH_PATH", tmp_path / "absent.json")
     monkeypatch.setattr("lean_herdr.llm.os.environ", {})
     result = wait(
-        herdr, completed_log(tmp_path), prereview=True,
+        herdr,
+        completed_log(tmp_path),
+        prereview=True,
         runner=lambda *a, **k: Completed(stdout="diff --git a/x b/x"),
     )
     assert result["prereview"] == "skipped"
@@ -175,16 +191,33 @@ def test_a_broken_pre_review_is_skipped_never_a_rejection(herdr, tmp_path, monke
 
 def test_the_flag_needs_await_and_a_worktree():
     parse = build_parser().parse_args
-    assert missing_flags(parse(
-        ["builder", "--kind", "claude", "--model", "sonnet",
-         "--role-file", "roles/builder.md", "--prereview"]
-    )) == "build mode does not take --prereview"
-    assert missing_flags(parse(
-        ["builder", "--kind", "claude", "--await", "--task-id", TASK_ID, "--prereview"]
-    )) == "--prereview needs --worktree"
-    assert missing_flags(parse(
-        ["order", "--to", WORKER, "--message", "m", "--prereview"]
-    )) == "`order` does not take --prereview"
+    assert (
+        missing_flags(
+            parse(
+                [
+                    "builder",
+                    "--kind",
+                    "claude",
+                    "--model",
+                    "sonnet",
+                    "--role-file",
+                    "roles/builder.md",
+                    "--prereview",
+                ]
+            )
+        )
+        == "build mode does not take --prereview"
+    )
+    assert (
+        missing_flags(
+            parse(["builder", "--kind", "claude", "--await", "--task-id", TASK_ID, "--prereview"])
+        )
+        == "--prereview needs --worktree"
+    )
+    assert (
+        missing_flags(parse(["order", "--to", WORKER, "--message", "m", "--prereview"]))
+        == "`order` does not take --prereview"
+    )
 
 
 def test_a_stray_flag_is_a_json_line_not_an_exit_code(capsys):

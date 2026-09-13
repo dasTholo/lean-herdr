@@ -94,9 +94,7 @@ def test_a_gap_in_the_sequence_breaks_the_chain(tmp_path):
     append(TASK, "completed", "builder-feat-x", orders=tmp_path)
     first, second, _third = files(tmp_path)
     second.unlink()
-    with pytest.raises(
-        OrderLogError, match=rf"chain_broken: {TASK} @ 2: out of sequence"
-    ):
+    with pytest.raises(OrderLogError, match=rf"chain_broken: {TASK} @ 2: out of sequence"):
         read_events(TASK, orders=tmp_path)
     assert first.exists()
 
@@ -139,9 +137,7 @@ def test_a_relinked_event_breaks_the_chain(tmp_path):
     )
     digest = hashlib.sha256(blob).hexdigest()
     third.unlink()
-    third.with_name(
-        f"{3:0{SEQUENCE_DIGITS}d}-{digest[:DIGEST_PREFIX_LEN]}.json"
-    ).write_bytes(blob)
+    third.with_name(f"{3:0{SEQUENCE_DIGITS}d}-{digest[:DIGEST_PREFIX_LEN]}.json").write_bytes(blob)
     with pytest.raises(OrderLogError, match=rf"chain_broken: {TASK} @ 3: not linked"):
         read_events(TASK, orders=tmp_path)
 

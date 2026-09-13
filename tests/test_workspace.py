@@ -33,6 +33,7 @@ def _project():
     yield
     shutil.rmtree(ROOT, ignore_errors=True)
 
+
 #: A workspace found by rule 1 -- worktree.checkout_path == root.
 BY_WORKTREE = {
     "result": {
@@ -47,9 +48,7 @@ BY_WORKTREE = {
 
 #: A workspace `workspace create --cwd` made itself: worktree is null, so
 #: rule 1 cannot see it and only the pane fallback can.
-WITHOUT_WORKTREE = {
-    "result": {"workspaces": [{"workspace_id": "w3", "worktree": None}]}
-}
+WITHOUT_WORKTREE = {"result": {"workspaces": [{"workspace_id": "w3", "worktree": None}]}}
 
 PANES = {"result": {"panes": [{"pane_id": "w3:p1", "cwd": str(ROOT), "workspace_id": "w3"}]}}
 NO_AGENTS = {"result": {"agents": []}}
@@ -384,9 +383,7 @@ def test_an_unparseable_opencode_config_gets_its_own_words(monkeypatch, tmp_path
     assert proc.calls == [], proc.flat()
 
 
-def test_an_opencode_config_without_the_orchestrator_is_named_as_such(
-    monkeypatch, tmp_path
-):
+def test_an_opencode_config_without_the_orchestrator_is_named_as_such(monkeypatch, tmp_path):
     """A file that parses is still no agent -- the third repair."""
     (tmp_path / "opencode.jsonc").write_text(
         '{"agent": {"builder": {"mode": "primary"}}}\n', encoding="utf-8"
@@ -403,9 +400,7 @@ def test_a_claude_orchestrator_needs_no_opencode_config(monkeypatch, tmp_path):
     replies = {
         ("workspace", "list"): {"result": {"workspaces": []}},
         ("agent", "list"): NO_AGENTS,
-        ("pane", "list"): {
-            "result": {"panes": [{"pane_id": "w7:p1", "workspace_id": "w7"}]}
-        },
+        ("pane", "list"): {"result": {"panes": [{"pane_id": "w7:p1", "workspace_id": "w7"}]}},
         ("pane", "split"): SPLIT,
     }
     herdr, _ = herdr_with(monkeypatch, replies)
@@ -511,7 +506,7 @@ def test_up_carries_every_value_out_of_a_real_config_file(monkeypatch, tmp_path)
 #: The same config with the daily check switched on. `[models]` is the
 #: fifth top-level table and the only one `up` reads for anything but the
 #: pane it opens.
-AUTO_ON = CONFIG + '\n[models]\nauto = true\n'
+AUTO_ON = CONFIG + "\n[models]\nauto = true\n"
 
 
 def test_up_with_auto_off_never_asks_the_catalogue(monkeypatch, tmp_path):

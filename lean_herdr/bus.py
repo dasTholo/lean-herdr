@@ -160,8 +160,7 @@ def parse_registry(
     """
     if MESSAGES_KEY not in data:
         raise BusError(
-            f"registry has no key {MESSAGES_KEY!r} — "
-            f"format changed? present: {sorted(data)}"
+            f"registry has no key {MESSAGES_KEY!r} — format changed? present: {sorted(data)}"
         )
     wanted = str(Path(project_root).resolve())
     effective_now = now if now is not None else datetime.now(UTC)

@@ -10,7 +10,9 @@ import pytest
 pytestmark = pytest.mark.integration
 
 INITIALIZE = {
-    "jsonrpc": "2.0", "id": 1, "method": "initialize",
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "initialize",
     "params": {
         "protocolVersion": "2024-11-05",
         "capabilities": {},

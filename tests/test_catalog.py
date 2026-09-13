@@ -157,9 +157,7 @@ def test_recommend_takes_the_given_order_and_does_not_re_sort():
     expensive one. A `recommend` that re-sorted would return
     `cheap/no-benchmarks` here and fail.
     """
-    picked = catalog.recommend(
-        list(reversed(sample())), thresholds=ModelsSettings(), efforts=()
-    )
+    picked = catalog.recommend(list(reversed(sample())), thresholds=ModelsSettings(), efforts=())
     assert picked is not None
     assert picked["id"] == "good/all-clear", "the order given is the order used"
 
@@ -245,9 +243,7 @@ def test_write_overlay_writes_the_model_and_never_the_judge(tmp_path):
     The judge falls back to `model` anyway, and a second automatically set
     key would undo the separation it exists for.
     """
-    path = catalog.write_overlay(
-        "good/all-clear", root=tmp_path, stamp="2026-09-04T07:00:00+00:00"
-    )
+    path = catalog.write_overlay("good/all-clear", root=tmp_path, stamp="2026-09-04T07:00:00+00:00")
     assert path == tmp_path / OVERLAY_PATH
     text = path.read_text(encoding="utf-8")
     assert "2026-09-04T07:00:00+00:00" in text
@@ -303,9 +299,7 @@ def test_auto_off_touches_neither_the_network_nor_the_file(tmp_path):
     that box.
     """
     fake = FakeRequest(FIXTURE.read_text(encoding="utf-8"))
-    outcome = catalog.check(
-        root=tmp_path, settings=ModelsSettings(), efforts=(), request=fake
-    )
+    outcome = catalog.check(root=tmp_path, settings=ModelsSettings(), efforts=(), request=fake)
     assert outcome == {"written": False, "model": None, "reason": "auto_off"}
     assert fake.urls == [], "auto is off; nothing may be fetched"
     assert not (tmp_path / OVERLAY_PATH).exists()
@@ -385,9 +379,7 @@ def test_without_an_overlay_there_is_nothing_to_be_fresh(tmp_path):
         request=fake,
     )
     assert outcome["written"] is True
-    assert llm_settings(read_settings(tmp_path / OVERLAY_PATH)).model == (
-        "cheap/no-benchmarks"
-    )
+    assert llm_settings(read_settings(tmp_path / OVERLAY_PATH)).model == ("cheap/no-benchmarks")
 
 
 def test_a_catalogue_that_did_not_answer_leaves_the_file_alone(tmp_path):
@@ -485,9 +477,7 @@ def test_a_root_that_is_no_repository_is_named_not_swallowed(monkeypatch, capsys
     assert answer["error"] == "not a git repository", "bare, with no prefix"
 
 
-def test_the_effort_fallbacks_come_from_llm_and_are_not_respelled(
-    monkeypatch, tmp_path, capsys
-):
+def test_the_effort_fallbacks_come_from_llm_and_are_not_respelled(monkeypatch, tmp_path, capsys):
     """M3: one definition per rule. Two literals here would drift silently.
 
     `llm.GENERATE_EFFORT` and `llm.PREREVIEW_EFFORT` are imported, never
@@ -519,9 +509,7 @@ def one_line(capsys) -> dict:
     return json.loads(out)
 
 
-def test_main_list_shows_the_survivors_and_writes_nothing(
-    monkeypatch, tmp_path, capsys
-):
+def test_main_list_shows_the_survivors_and_writes_nothing(monkeypatch, tmp_path, capsys):
     """Both resolved effort levels, because one `[llm].model` serves both jobs."""
     no_network(monkeypatch, tmp_path)
     assert catalog.main(["list", "--limit", "2"]) == 0
@@ -536,9 +524,7 @@ def test_main_list_shows_the_survivors_and_writes_nothing(
     assert not (tmp_path / OVERLAY_PATH).exists(), "list writes nothing"
 
 
-def test_main_check_names_the_winner_and_what_runs_today(
-    monkeypatch, tmp_path, capsys
-):
+def test_main_check_names_the_winner_and_what_runs_today(monkeypatch, tmp_path, capsys):
     no_network(monkeypatch, tmp_path)
     assert catalog.main(["check"]) == 0
     answer = one_line(capsys)
@@ -548,18 +534,14 @@ def test_main_check_names_the_winner_and_what_runs_today(
     assert not (tmp_path / OVERLAY_PATH).exists(), "check writes nothing"
 
 
-def test_main_apply_writes_the_overlay_regardless_of_auto(
-    monkeypatch, tmp_path, capsys
-):
+def test_main_apply_writes_the_overlay_regardless_of_auto(monkeypatch, tmp_path, capsys):
     """No `[models]` section at all here, so `auto` is at its `false` default."""
     no_network(monkeypatch, tmp_path)
     assert catalog.main(["apply"]) == 0
     answer = one_line(capsys)
     assert answer["ok"] is True
     assert answer["reason"] == "written"
-    assert llm_settings(read_settings(tmp_path / OVERLAY_PATH)).model == (
-        answer["model"]
-    )
+    assert llm_settings(read_settings(tmp_path / OVERLAY_PATH)).model == (answer["model"])
 
 
 def test_main_answers_a_bad_command_with_one_json_line(capsys):
@@ -574,9 +556,7 @@ def test_main_answers_a_bad_command_with_one_json_line(capsys):
     assert answer["error"].startswith("usage_error:")
 
 
-def test_main_turns_a_broken_config_into_one_json_line(
-    monkeypatch, tmp_path, capsys
-):
+def test_main_turns_a_broken_config_into_one_json_line(monkeypatch, tmp_path, capsys):
     """A `[models]` typo is reported, never swallowed into a default."""
     no_network(monkeypatch, tmp_path)
     (tmp_path / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)

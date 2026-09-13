@@ -53,7 +53,11 @@ def _note(text: str) -> None:
 
 def cwd_from_event(event: dict[str, Any] | None, herdr: Herdr, cfg: Config) -> Path | None:
     """cwd of the pane or workspace from the event -- else asked of Herdr."""
-    for source in (event or {}, (event or {}).get("pane") or {}, (event or {}).get("workspace") or {}):
+    for source in (
+        event or {},
+        (event or {}).get("pane") or {},
+        (event or {}).get("workspace") or {},
+    ):
         if isinstance(source, dict) and source.get("cwd"):
             return Path(str(source["cwd"]))
     if cfg.pane_id:
@@ -207,9 +211,7 @@ def handle_bootstrap(cfg: Config) -> None:
         return
     cwd = cwd_from_event(event, herdr, cfg)
     if cwd is None:
-        herdr.run(
-            "notification", "show", "--message", "lean-herdr: workspace without a cwd"
-        )
+        herdr.run("notification", "show", "--message", "lean-herdr: workspace without a cwd")
         return
     # Imported on the call, not up top. This module is imported by EVERY
     # plugin event, and `pane.agent_status_changed` fires constantly; the
@@ -257,6 +259,4 @@ def handle_bootstrap(cfg: Config) -> None:
             "lean-herdr: the orchestrator is already running",
         )
     elif not result.get("ok"):
-        herdr.run(
-            "notification", "show", "--message", f"lean-herdr: {result.get('error')}"
-        )
+        herdr.run("notification", "show", "--message", f"lean-herdr: {result.get('error')}")

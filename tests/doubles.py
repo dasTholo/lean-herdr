@@ -120,17 +120,13 @@ class ScriptedProc(FakeProc):
     """
 
     clock: Clock | None = None
-    script: dict[tuple[str, ...], tuple[float, list[Any]]] = field(
-        default_factory=dict
-    )
+    script: dict[tuple[str, ...], tuple[float, list[Any]]] = field(default_factory=dict)
 
     def __call__(self, cmd: list[str], **kwargs: Any) -> Completed:
         for prefix, (cost, replies) in self.script.items():
             if tuple(cmd[1 : 1 + len(prefix)]) != prefix:
                 continue
-            seen = sum(
-                1 for c in self.calls if tuple(c[1 : 1 + len(prefix)]) == prefix
-            )
+            seen = sum(1 for c in self.calls if tuple(c[1 : 1 + len(prefix)]) == prefix)
             self.calls.append(list(cmd))
             if self.clock is not None:
                 self.clock.t += cost
@@ -145,9 +141,7 @@ def which_stub(available: bool) -> Callable[[str], str | None]:
     return lambda _binary: "/usr/bin/fake" if available else None
 
 
-def agent_started(
-    name: str, pane: str, kind: str = "opencode"
-) -> dict[str, Any]:
+def agent_started(name: str, pane: str, kind: str = "opencode") -> dict[str, Any]:
     """What `herdr agent start` answers when it WORKS -- the 0.8.2 shape.
 
     Every fixture owes this one. FakeProc's empty default is exactly what a

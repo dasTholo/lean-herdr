@@ -99,9 +99,7 @@ def test_resolve_agent_id_via_the_ancestor_chain(tmp_path: Path):
     _write_stat(tmp_path, 185502, 185157, 185502)  # opencode, own pgrp
     _write_stat(tmp_path, 185631, 185502, 185502)  # lean-ctx, inherits it
 
-    agents = [
-        {"agent_id": "mcp-185631-abc", "pid": 185631, "started_at": "2026-09-01T08:00:00Z"}
-    ]
+    agents = [{"agent_id": "mcp-185631-abc", "pid": 185631, "started_at": "2026-09-01T08:00:00Z"}]
     got = resolve_agent_id(
         [{"name": "builder", "pane_id": "w2:p1"}],
         {"result": {"process_info": {"shell_pid": 185157}}},

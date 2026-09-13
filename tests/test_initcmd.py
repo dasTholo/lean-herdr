@@ -198,7 +198,9 @@ def test_the_allowlist_check_answers_a_line_only_when_the_name_is_missing(monkey
         pytest.param('{"other": 1}', id="json without the key"),
     ],
 )
-def test_an_unreadable_approvals_reply_is_reported_as_an_unknown_state(monkeypatch, tmp_path, reply):
+def test_an_unreadable_approvals_reply_is_reported_as_an_unknown_state(
+    monkeypatch, tmp_path, reply
+):
     """Never a green verdict over a reply nobody could parse."""
     monkeypatch.setattr("shutil.which", which_stub(True))
     line = _check_approvals(tmp_path, FakeProc(replies={("config", "approvals"): reply}))
@@ -235,9 +237,7 @@ def test_the_overlay_check_asks_git_rather_than_reading_gitignore(monkeypatch, r
     a false alarm on every one of them.
     """
     monkeypatch.setattr("shutil.which", which_stub(True))
-    named = FakeProc(
-        replies={("check-ignore",): f".gitignore:20:{OVERLAY_PATH}\t{OVERLAY_PATH}"}
-    )
+    named = FakeProc(replies={("check-ignore",): f".gitignore:20:{OVERLAY_PATH}\t{OVERLAY_PATH}"})
     assert _check_overlay_ignored(repo, named) is None
     silent = FakeProc(replies={("check-ignore",): ""})
     line = _check_overlay_ignored(repo, silent)
@@ -246,9 +246,7 @@ def test_the_overlay_check_asks_git_rather_than_reading_gitignore(monkeypatch, r
 
 def test_without_git_there_is_no_verdict_on_the_overlay(monkeypatch, repo):
     """No git at all: no answer, and an unasked question invents none."""
-    monkeypatch.setattr(
-        "shutil.which", lambda binary: None if binary == "git" else "/usr/bin/fake"
-    )
+    monkeypatch.setattr("shutil.which", lambda binary: None if binary == "git" else "/usr/bin/fake")
     assert _check_overlay_ignored(repo, FakeProc(default="")) is None
 
 
@@ -343,9 +341,7 @@ def test_the_warm_up_budget_is_hard_and_the_abort_is_the_point(monkeypatch, repo
     assert seen["cwd"] == str(repo), "the project is what gets warmed"
 
 
-def test_without_opencode_on_path_nothing_is_warmed_and_nothing_is_said(
-    monkeypatch, repo
-):
+def test_without_opencode_on_path_nothing_is_warmed_and_nothing_is_said(monkeypatch, repo):
     """Silent, like every other check that cannot run."""
     quiet(monkeypatch)
     proc = FakeProc(default="")
@@ -365,9 +361,7 @@ def test_a_claude_project_is_not_warmed(monkeypatch, repo):
     """
     monkeypatch.setattr("shutil.which", which_stub(True))
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (repo / SETTINGS_PATH).write_text(
-        '[roles.orchestrator]\nkind = "claude"\n', encoding="utf-8"
-    )
+    (repo / SETTINGS_PATH).write_text('[roles.orchestrator]\nkind = "claude"\n', encoding="utf-8")
     proc = FakeProc(default="")
     answer = workspace_init(root=repo, runner=proc)
     assert answer["warmed"] is False
@@ -387,15 +381,12 @@ def test_a_leftover_workspace_kind_is_named_here_not_left_for_up(monkeypatch, re
     """
     monkeypatch.setattr("shutil.which", which_stub(True))
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (repo / SETTINGS_PATH).write_text(
-        '[workspace]\nkind = "claude"\n', encoding="utf-8"
-    )
+    (repo / SETTINGS_PATH).write_text('[workspace]\nkind = "claude"\n', encoding="utf-8")
     answer = workspace_init(root=repo, runner=FakeProc(default=""))
     assert answer["ok"] is True, "the written/skipped report must survive"
     assert answer["warmed"] is False
     assert any(
-        "workspace.kind has moved to [roles.orchestrator].kind" in w
-        for w in answer["warnings"]
+        "workspace.kind has moved to [roles.orchestrator].kind" in w for w in answer["warnings"]
     )
 
 
@@ -403,14 +394,10 @@ def test_a_leftover_workspace_kind_is_named_here_not_left_for_up(monkeypatch, re
     ("extra", "warned"),
     [
         pytest.param("", True, id="one model, and nobody said so"),
-        pytest.param(
-            "shares_builder_model = true\n", False, id="one model, and it is meant"
-        ),
+        pytest.param("shares_builder_model = true\n", False, id="one model, and it is meant"),
     ],
 )
-def test_init_warns_when_builder_and_reviewer_share_a_model(
-    monkeypatch, repo, extra, warned
-):
+def test_init_warns_when_builder_and_reviewer_share_a_model(monkeypatch, repo, extra, warned):
     """The reviewer earns its keep by having DIFFERENT blind spots.
 
     `settings.model_warnings` is the one producer of this line; `init`
@@ -419,8 +406,7 @@ def test_init_warns_when_builder_and_reviewer_share_a_model(
     quiet(monkeypatch)
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
     (repo / SETTINGS_PATH).write_text(
-        '[roles.builder]\nmodel = "sonnet"\n\n'
-        '[roles.reviewer]\nmodel = "sonnet"\n' + extra,
+        '[roles.builder]\nmodel = "sonnet"\n\n[roles.reviewer]\nmodel = "sonnet"\n' + extra,
         encoding="utf-8",
     )
     warnings = workspace_init(root=repo)["warnings"]
@@ -458,9 +444,7 @@ def test_a_broken_worker_block_costs_the_warm_up_and_not_the_report(monkeypatch,
     """
     quiet(monkeypatch)
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (repo / SETTINGS_PATH).write_text(
-        '[roles.builder]\ndirection = "links"\n', encoding="utf-8"
-    )
+    (repo / SETTINGS_PATH).write_text('[roles.builder]\ndirection = "links"\n', encoding="utf-8")
     answer = workspace_init(root=repo)
     assert answer["ok"] is True
     assert answer["written"] or answer["skipped"], "the report must survive"

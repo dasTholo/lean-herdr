@@ -179,9 +179,13 @@ def test_report_metadata_builds_the_token_pair(fake):
     assert h(fake).report_metadata("workspace", "w2", "esc", "T1: reviewer rejects")
     # ID positional, --source mandatory — measured against 0.8.2.
     assert fake.called_with(
-        "workspace", "report-metadata", "w2",
-        "--source", "lean.herdr",
-        "--token", "esc=T1: reviewer rejects",
+        "workspace",
+        "report-metadata",
+        "w2",
+        "--source",
+        "lean.herdr",
+        "--token",
+        "esc=T1: reviewer rejects",
     )
     assert "--workspace" not in fake.calls[0]
 
@@ -214,9 +218,7 @@ def test_agent_start_returns_at_once_when_herdr_says_yes(monkeypatch):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     proc = StartProc(0)
     naps: list[float] = []
-    reply = Herdr(runner=proc).agent_start(
-        "orch", kind="opencode", pane="w8:p5", sleep=naps.append
-    )
+    reply = Herdr(runner=proc).agent_start("orch", kind="opencode", pane="w8:p5", sleep=naps.append)
     assert reply == STARTED
     assert len(proc.calls) == 1
     assert naps == [], "a start that works may not cost a single sleep"
@@ -227,9 +229,7 @@ def test_agent_start_retries_the_pane_that_is_not_a_shell_yet(monkeypatch):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     proc = StartProc(1, 0)
     naps: list[float] = []
-    reply = Herdr(runner=proc).agent_start(
-        "orch", kind="opencode", pane="w8:p5", sleep=naps.append
-    )
+    reply = Herdr(runner=proc).agent_start("orch", kind="opencode", pane="w8:p5", sleep=naps.append)
     assert reply == STARTED, "the reply of the attempt that worked, not the refusal"
     assert len(proc.calls) == 2
     assert naps == [AGENT_START_INTERVAL_S]
@@ -242,9 +242,9 @@ def test_agent_start_gives_up_after_the_bound(monkeypatch):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     proc = StartProc(1)
     naps: list[float] = []
-    assert Herdr(runner=proc).agent_start(
-        "nope", kind="claude", pane="w8:p5", sleep=naps.append
-    ) == {}
+    assert (
+        Herdr(runner=proc).agent_start("nope", kind="claude", pane="w8:p5", sleep=naps.append) == {}
+    )
     assert len(proc.calls) == AGENT_START_ATTEMPTS
     assert naps == [AGENT_START_INTERVAL_S] * (AGENT_START_ATTEMPTS - 1)
 
@@ -258,9 +258,10 @@ def test_agent_start_does_not_retry_when_no_process_ran_at_all(monkeypatch):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     proc = FakeProc(raises=subprocess.TimeoutExpired(cmd=["herdr"], timeout=1))
     naps: list[float] = []
-    assert Herdr(runner=proc).agent_start(
-        "orch", kind="opencode", pane="w8:p5", sleep=naps.append
-    ) == {}
+    assert (
+        Herdr(runner=proc).agent_start("orch", kind="opencode", pane="w8:p5", sleep=naps.append)
+        == {}
+    )
     assert len(proc.calls) == 1 and naps == []
 
 
@@ -403,9 +404,7 @@ def test_a_hung_start_is_aborted_and_the_second_attempt_carries_it(monkeypatch):
     assert proc.called_with("pane", "send-keys", "w8:p5", "ctrl-c")
     starts = [c for c in proc.calls if c[1:3] == ["agent", "start"]]
     assert len(starts) == 2
-    assert starts[0][starts[0].index("--timeout") + 1] == str(
-        FIRST_START_TIMEOUT_MS
-    )
+    assert starts[0][starts[0].index("--timeout") + 1] == str(FIRST_START_TIMEOUT_MS)
     assert starts[1][starts[1].index("--timeout") + 1] == "45000"
 
 

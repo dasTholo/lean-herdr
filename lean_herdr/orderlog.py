@@ -306,8 +306,7 @@ def read_events(task_id: str, *, orders: str | Path | None = None) -> list[Event
         seq_text, _, prefix = path.stem.partition("-")
         if prefix != digest[:DIGEST_PREFIX_LEN]:
             raise OrderLogError(
-                f"chain_broken: {task_id} @ {path.name}: "
-                "does not hash to the digest in its name"
+                f"chain_broken: {task_id} @ {path.name}: does not hash to the digest in its name"
             )
         try:
             body = json.loads(blob.decode("utf-8"))

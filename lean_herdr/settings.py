@@ -152,26 +152,18 @@ def read_settings(path: str | Path | None = None) -> dict[str, Any]:
 def _check_types(block: dict[str, Any], role: str) -> None:
     unknown = sorted(set(block) - ALLOWED)
     if unknown:
-        raise SettingsError(
-            f"{role}: unknown keys {unknown}; allowed: {sorted(ALLOWED)}"
-        )
+        raise SettingsError(f"{role}: unknown keys {unknown}; allowed: {sorted(ALLOWED)}")
     for key, value in block.items():
         sneaky_bool = key in _NO_BOOL and isinstance(value, bool)
         if sneaky_bool or not isinstance(value, _TYPES[key]):
-            raise SettingsError(
-                f"{role}.{key}: {value!r} is {type(value).__name__}"
-            )
+            raise SettingsError(f"{role}.{key}: {value!r} is {type(value).__name__}")
 
 
 def _validate(values: RoleSettings, role: str) -> None:
     if values.direction not in DIRECTIONS:
-        raise SettingsError(
-            f"{role}: direction={values.direction!r}, allowed: {list(DIRECTIONS)}"
-        )
+        raise SettingsError(f"{role}: direction={values.direction!r}, allowed: {list(DIRECTIONS)}")
     if values.kind and values.kind not in KINDS:
-        raise SettingsError(
-            f"{role}: kind={values.kind!r}, allowed: {list(KINDS)}"
-        )
+        raise SettingsError(f"{role}: kind={values.kind!r}, allowed: {list(KINDS)}")
     if values.ratio is not None and not 0.0 < float(values.ratio) < 1.0:
         raise SettingsError(f"{role}: ratio={values.ratio!r} is not between 0 and 1")
     if float(values.ready_timeout_s) <= 0:
@@ -181,8 +173,7 @@ def _validate(values: RoleSettings, role: str) -> None:
     # end up sharing one worker.
     if "{role}" not in values.name_template or "{branch}" not in values.name_template:
         raise SettingsError(
-            f"{role}: name_template={values.name_template!r} "
-            "must contain {role} AND {branch}"
+            f"{role}: name_template={values.name_template!r} must contain {{role}} AND {{branch}}"
         )
     try:
         values.name_template.format(role="r", branch="b")
@@ -194,9 +185,7 @@ def _validate(values: RoleSettings, role: str) -> None:
 
 def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
     if not isinstance(block, dict):
-        raise SettingsError(
-            f"{role}: section is not a table, but {type(block).__name__}"
-        )
+        raise SettingsError(f"{role}: section is not a table, but {type(block).__name__}")
     _check_types(block, role)
     merged = replace(base, **block)
     _validate(merged, role)
@@ -212,9 +201,7 @@ def _check_root(table: Any) -> dict[str, Any]:
     keeps a wrong `roles` an error the caller can catch, not an AttributeError.
     """
     if not isinstance(table, dict):
-        raise SettingsError(
-            f"settings: root is not a table, but {type(table).__name__}"
-        )
+        raise SettingsError(f"settings: root is not a table, but {type(table).__name__}")
     unknown = sorted(set(table) - set(ROOT_KEYS))
     if unknown:
         raise SettingsError(
@@ -222,9 +209,7 @@ def _check_root(table: Any) -> dict[str, Any]:
         )
     roles = table.get("roles")
     if roles is not None and not isinstance(roles, dict):
-        raise SettingsError(
-            f"settings: roles is not a table, but {type(roles).__name__}"
-        )
+        raise SettingsError(f"settings: roles is not a table, but {type(roles).__name__}")
     return table
 
 
@@ -262,11 +247,7 @@ def model_warnings(data: dict[str, Any] | None = None) -> list[str]:
     """
     builder = settings_for("builder", data)
     reviewer = settings_for("reviewer", data)
-    if (
-        not builder.model
-        or builder.model != reviewer.model
-        or reviewer.shares_builder_model
-    ):
+    if not builder.model or builder.model != reviewer.model or reviewer.shares_builder_model:
         return []
     return [
         (
@@ -328,19 +309,13 @@ def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
     if block is None:
         return LlmSettings()
     if not isinstance(block, dict):
-        raise SettingsError(
-            f"llm: section is not a table, but {type(block).__name__}"
-        )
+        raise SettingsError(f"llm: section is not a table, but {type(block).__name__}")
     unknown = sorted(set(block) - LLM_ALLOWED)
     if unknown:
-        raise SettingsError(
-            f"llm: unknown keys {unknown}; allowed: {sorted(LLM_ALLOWED)}"
-        )
+        raise SettingsError(f"llm: unknown keys {unknown}; allowed: {sorted(LLM_ALLOWED)}")
     for key, value in block.items():
         if not isinstance(value, str):
-            raise SettingsError(
-                f"llm.{key}: {value!r} is {type(value).__name__}, not str"
-            )
+            raise SettingsError(f"llm.{key}: {value!r} is {type(value).__name__}, not str")
     values = LlmSettings(**block)
     for key in ("effort", "prereview_effort"):
         level = getattr(values, key)
@@ -349,9 +324,7 @@ def llm_settings(data: dict[str, Any] | None = None) -> LlmSettings:
     return values
 
 
-def llm_settings_layered(
-    root: str | Path, data: dict[str, Any] | None = None
-) -> LlmSettings:
+def llm_settings_layered(root: str | Path, data: dict[str, Any] | None = None) -> LlmSettings:
     """`models.auto.toml` UNDER `config.toml`. One function, both consumers.
 
     The overlay is what the daily check wrote; `[llm]` in config.toml is
@@ -375,14 +348,9 @@ def llm_settings_layered(
     """
     base = Path(root)
     below = llm_settings(read_settings(base / OVERLAY_PATH))
-    above = llm_settings(
-        read_settings(base / SETTINGS_PATH) if data is None else data
-    )
+    above = llm_settings(read_settings(base / SETTINGS_PATH) if data is None else data)
     return LlmSettings(
-        **{
-            f.name: getattr(above, f.name) or getattr(below, f.name)
-            for f in fields(LlmSettings)
-        }
+        **{f.name: getattr(above, f.name) or getattr(below, f.name) for f in fields(LlmSettings)}
     )
 
 
@@ -445,19 +413,14 @@ def models_settings(data: dict[str, Any] | None = None) -> ModelsSettings:
     if block is None:
         return ModelsSettings()
     if not isinstance(block, dict):
-        raise SettingsError(
-            f"models: section is not a table, but {type(block).__name__}"
-        )
+        raise SettingsError(f"models: section is not a table, but {type(block).__name__}")
     unknown = sorted(set(block) - MODELS_ALLOWED)
     if unknown:
-        raise SettingsError(
-            f"models: unknown keys {unknown}; allowed: {sorted(MODELS_ALLOWED)}"
-        )
+        raise SettingsError(f"models: unknown keys {unknown}; allowed: {sorted(MODELS_ALLOWED)}")
     values = dict(block)
     if "auto" in values and not isinstance(values["auto"], bool):
         raise SettingsError(
-            f"models.auto: {values['auto']!r} is "
-            f"{type(values['auto']).__name__}, not bool"
+            f"models.auto: {values['auto']!r} is {type(values['auto']).__name__}, not bool"
         )
     for key in _MODELS_NUMBERS:
         if key not in values:
@@ -465,24 +428,16 @@ def models_settings(data: dict[str, Any] | None = None) -> ModelsSettings:
         number = values[key]
         if isinstance(number, bool) or not isinstance(number, (int, float)):
             raise SettingsError(
-                f"models.{key}: {number!r} is {type(number).__name__}, "
-                "not a number"
+                f"models.{key}: {number!r} is {type(number).__name__}, not a number"
             )
         if number < 0:
             raise SettingsError(f"models.{key}={number!r} is negative")
     if "min_context" in values and not isinstance(values["min_context"], int):
-        raise SettingsError(
-            f"models.min_context={values['min_context']!r} is not a "
-            "whole number"
-        )
+        raise SettingsError(f"models.min_context={values['min_context']!r} is not a whole number")
     if "requires" in values:
         wanted = values["requires"]
-        if not isinstance(wanted, list) or not all(
-            isinstance(item, str) for item in wanted
-        ):
-            raise SettingsError(
-                f"models.requires={wanted!r} is not a list of strings"
-            )
+        if not isinstance(wanted, list) or not all(isinstance(item, str) for item in wanted):
+            raise SettingsError(f"models.requires={wanted!r} is not a list of strings")
         # A tuple, because the dataclass is frozen and a list in a frozen
         # dataclass is a mutable field on an immutable object -- the sort
         # of thing that works until somebody appends to it.
@@ -534,28 +489,20 @@ def workspace_settings(data: dict[str, Any] | None = None) -> WorkspaceSettings:
     if block is None:
         return WorkspaceSettings()
     if not isinstance(block, dict):
-        raise SettingsError(
-            f"workspace: section is not a table, but {type(block).__name__}"
-        )
+        raise SettingsError(f"workspace: section is not a table, but {type(block).__name__}")
     moved = [key for key in MOVED_TO_ORCHESTRATOR if key in block]
     if moved:
         raise SettingsError(
-            "; ".join(
-                f"workspace.{key} has moved to [roles.orchestrator].{key}"
-                for key in moved
-            )
+            "; ".join(f"workspace.{key} has moved to [roles.orchestrator].{key}" for key in moved)
         )
     unknown = sorted(set(block) - WORKSPACE_ALLOWED)
     if unknown:
         raise SettingsError(
-            f"workspace: unknown keys {unknown}; "
-            f"allowed: {sorted(WORKSPACE_ALLOWED)}"
+            f"workspace: unknown keys {unknown}; allowed: {sorted(WORKSPACE_ALLOWED)}"
         )
     for key, value in block.items():
         if not isinstance(value, str):
-            raise SettingsError(
-                f"workspace.{key}: {value!r} is {type(value).__name__}, not str"
-            )
+            raise SettingsError(f"workspace.{key}: {value!r} is {type(value).__name__}, not str")
     values = WorkspaceSettings(**block)
     # `{repo}` is OPTIONAL here, unlike name_template's {role}/{branch}:
     # the label is a caption, not a reuse key, so a literal `label =
@@ -564,9 +511,7 @@ def workspace_settings(data: dict[str, Any] | None = None) -> WorkspaceSettings:
     try:
         values.label.format(repo="r")
     except (KeyError, IndexError, ValueError) as exc:
-        raise SettingsError(
-            f"workspace.label={values.label!r} is not formattable: {exc}"
-        ) from exc
+        raise SettingsError(f"workspace.label={values.label!r} is not formattable: {exc}") from exc
     return values
 
 

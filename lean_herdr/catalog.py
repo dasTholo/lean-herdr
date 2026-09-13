@@ -85,9 +85,7 @@ def fetch(
     query = {"sort": "pricing-low-to-high", "limit": str(limit)}
     if requires:
         query["supported_parameters"] = ",".join(requires)
-    raw = request(
-        f"{CATALOG_URL}?{urllib.parse.urlencode(query)}", timeout_s=timeout_s
-    )
+    raw = request(f"{CATALOG_URL}?{urllib.parse.urlencode(query)}", timeout_s=timeout_s)
     if raw is None:
         return None
     try:
@@ -154,9 +152,7 @@ def _clears(
     if not isinstance(slug, str) or not SLUG_RE.match(slug):
         return False
     reasoning = entry.get("reasoning")
-    supported = (
-        reasoning.get("supported_efforts") if isinstance(reasoning, dict) else None
-    )
+    supported = reasoning.get("supported_efforts") if isinstance(reasoning, dict) else None
     if efforts:
         if not isinstance(supported, list):
             return False
@@ -168,9 +164,7 @@ def _clears(
             return False
     if thresholds.max_prompt_price:
         pricing = entry.get("pricing")
-        price = (
-            _number(pricing.get("prompt")) if isinstance(pricing, dict) else None
-        )
+        price = _number(pricing.get("prompt")) if isinstance(pricing, dict) else None
         if price is None or price > thresholds.max_prompt_price:
             return False
     bench = entry.get("benchmarks")
@@ -201,11 +195,7 @@ def recommend(
     second ordering rule that can drift from the server's (M3).
     """
     return next(
-        (
-            entry
-            for entry in models
-            if _clears(entry, thresholds=thresholds, efforts=efforts)
-        ),
+        (entry for entry in models if _clears(entry, thresholds=thresholds, efforts=efforts)),
         None,
     )
 
@@ -257,9 +247,7 @@ def write_overlay(model: str, *, root: Path, stamp: str | None = None) -> Path:
 #:   written       -- a new overlay is on disk
 
 
-def _outcome(
-    reason: str, *, model: str | None = None, written: bool = False
-) -> dict[str, Any]:
+def _outcome(reason: str, *, model: str | None = None, written: bool = False) -> dict[str, Any]:
     return {"written": written, "model": model, "reason": reason}
 
 
@@ -359,9 +347,7 @@ def main(argv: list[str] | None = None) -> int:
                 result = {"ok": False, "error": "no_catalog"}
             else:
                 survivors = [
-                    entry
-                    for entry in models
-                    if _clears(entry, thresholds=cfg, efforts=efforts)
+                    entry for entry in models if _clears(entry, thresholds=cfg, efforts=efforts)
                 ]
                 result = {
                     "ok": True,
@@ -370,9 +356,7 @@ def main(argv: list[str] | None = None) -> int:
                     "models": [
                         {
                             "id": entry.get("id"),
-                            "prompt_price": (entry.get("pricing") or {}).get(
-                                "prompt"
-                            ),
+                            "prompt_price": (entry.get("pricing") or {}).get("prompt"),
                             "context_length": entry.get("context_length"),
                         }
                         for entry in survivors[: args.limit]
@@ -391,9 +375,7 @@ def main(argv: list[str] | None = None) -> int:
                     "current": llm_cfg.model or llm.DEFAULT_MODEL,
                 }
         else:
-            outcome = check(
-                root=root, settings=cfg, efforts=efforts, force=True
-            )
+            outcome = check(root=root, settings=cfg, efforts=efforts, force=True)
             result = {"ok": outcome["written"], **outcome}
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}

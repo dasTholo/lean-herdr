@@ -118,9 +118,7 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
 
     h_proc = FakeProc()
     h_proc.replies = {
-        ("agent", "list"): {
-            "result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}
-        },
+        ("agent", "list"): {"result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}},
         ("pane", "process-info"): {"result": {"process_info": {"shell_pid": 4242}}},
     }
     registry = {"agents": [{"agent_id": AGENT_ID, "pid": 4242}]}
@@ -129,8 +127,13 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
 
     code = main(
         [
-            "builder", "--kind", "claude", "--model", "sonnet",
-            "--role-file", "roles/builder.md",
+            "builder",
+            "--kind",
+            "claude",
+            "--model",
+            "sonnet",
+            "--role-file",
+            "roles/builder.md",
         ]
     )
 
@@ -138,9 +141,7 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 1
     result = json.loads(lines[0])
-    assert result == {
-        "ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"
-    }
+    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"}
 
 
 # -- Gap 3: wait_for_agent_id() run for real -------------------------------
@@ -155,9 +156,7 @@ def test_wait_for_agent_id_runs_the_real_pid_join(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     h_proc = FakeProc()
     h_proc.replies = {
-        ("agent", "list"): {
-            "result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}
-        },
+        ("agent", "list"): {"result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}},
         ("pane", "process-info"): {"result": {"process_info": {"shell_pid": 4242}}},
     }
     registry_path = tmp_path / "registry.json"
@@ -209,18 +208,23 @@ def test_an_unreadable_registry_does_not_end_the_readiness_wait(monkeypatch, tmp
         ("agent", "list"): {"result": {"agents": [{"name": "builder", "pane_id": "w1:p6"}]}},
         ("pane", "process-info"): {"result": {"process_info": {"shell_pid": 4242}}},
     }
-    assert wait_for_agent_id(
-        Herdr(runner=proc), "builder",
-        registry_path=broken, timeout_s=0, interval_s=0, sleep=lambda _s: None,
-    ) is None
+    assert (
+        wait_for_agent_id(
+            Herdr(runner=proc),
+            "builder",
+            registry_path=broken,
+            timeout_s=0,
+            interval_s=0,
+            sleep=lambda _s: None,
+        )
+        is None
+    )
 
 
 # -- Gap 4: pane_split_failed -----------------------------------------------
 
 
-def test_dispatch_reports_pane_split_failed_when_herdr_gives_no_pane(
-    monkeypatch, tmp_path
-):
+def test_dispatch_reports_pane_split_failed_when_herdr_gives_no_pane(monkeypatch, tmp_path):
     """Herdr.pane_split() returning no pane_id must surface as
     pane_split_failed in the result -- and thus in the JSON line main()
     writes -- not silently continue or crash.
@@ -239,9 +243,7 @@ def test_dispatch_reports_pane_split_failed_when_herdr_gives_no_pane(
         herdr=Herdr(runner=h_proc),
         root=ROOT,
         registry_path=registry_path,
-        waiter=lambda *a, **kw: pytest.fail(
-            "waiter must not run after a pane_split failure"
-        ),
+        waiter=lambda *a, **kw: pytest.fail("waiter must not run after a pane_split failure"),
     )
 
     assert result == {

@@ -219,9 +219,7 @@ def test_prohibition_is_present_verbatim(role_file: str, sentence: str, constrai
 
 
 @pytest.mark.parametrize(("role_file", "sentence", "constraint"), MANDATORY_SENTENCES)
-def test_mandatory_sentence_is_present_verbatim(
-    role_file: str, sentence: str, constraint: str
-):
+def test_mandatory_sentence_is_present_verbatim(role_file: str, sentence: str, constraint: str):
     """The write path is untestable -- these sentences ARE the implementation."""
     text = _normalized(role_file)
     assert " ".join(sentence.split()) in text, (

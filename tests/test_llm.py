@@ -98,9 +98,7 @@ class SpyRequest:
 #: a ValueError, which is neither an OSError nor a SubprocessError. Built
 #: by hand here so it can be injected; that a real subprocess raises
 #: exactly this shape is measured in the test right below the class.
-DECODE_ERROR = UnicodeDecodeError(
-    "utf-8", b"caf\xe9", 3, 4, "invalid continuation byte"
-)
+DECODE_ERROR = UnicodeDecodeError("utf-8", b"caf\xe9", 3, 4, "invalid continuation byte")
 
 
 class DecodingRunner:
@@ -151,8 +149,11 @@ def test_the_key_travels_in_a_header_and_never_in_a_file(no_store):
     """
     spy = SpyRequest(answer("feat(x): y"))
     llm.complete(
-        "prompt", effort="minimal", request=spy,
-        env={openrouter.KEY_ENV: "sk-secret-42"}, auth_path=no_store,
+        "prompt",
+        effort="minimal",
+        request=spy,
+        env={openrouter.KEY_ENV: "sk-secret-42"},
+        auth_path=no_store,
     )
     assert spy.headers[0]["Authorization"] == "Bearer sk-secret-42"
     assert "sk-secret-42" not in spy.urls[0]
@@ -164,8 +165,12 @@ def test_the_body_carries_model_and_effort(no_store):
     """complete() resolves nothing -- it sends what it is handed."""
     spy = SpyRequest(answer("feat(x): y"))
     llm.complete(
-        "prompt", effort="minimal", model="some/other-model", request=spy,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt",
+        effort="minimal",
+        model="some/other-model",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
     )
     body = json.loads(spy.bodies[0])
     assert body["model"] == "some/other-model"
@@ -181,8 +186,12 @@ def test_the_precedence_runs_flag_environment_file_constant(no_store):
     def sent(**kw):
         spy = SpyRequest(answer("feat(x): y"))
         llm.generate(
-            "prompt", request=spy, env=env, auth_path=no_store,
-            settings=cfg, **kw,
+            "prompt",
+            request=spy,
+            env=env,
+            auth_path=no_store,
+            settings=cfg,
+            **kw,
         )
         return json.loads(spy.bodies[0])
 
@@ -195,7 +204,10 @@ def test_the_precedence_runs_flag_environment_file_constant(no_store):
 def test_without_a_file_and_without_an_environment_the_constants_win(no_store):
     spy = SpyRequest(answer("feat(x): y"))
     llm.generate(
-        "prompt", request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
         settings=LlmSettings(),
     )
     body = json.loads(spy.bodies[0])
@@ -244,6 +256,7 @@ def test_an_undecodable_repo_root_costs_the_defaults_not_the_run(monkeypatch, ca
     prereview` as a traceback and exit 1, and exit 1 is this CLI's word
     for "the model rejected".
     """
+
     def boom(*_a, **_kw):
         raise UnicodeDecodeError("utf-8", b"\xe9", 0, 1, "invalid start byte")
 
@@ -284,9 +297,7 @@ def test_the_overlay_is_read_under_config_toml(tmp_path):
 
 
 def test_the_file_is_read_relative_to_the_repo_root(tmp_path):
-    _write_config(
-        tmp_path, '[llm]\nmodel = "from/file"\nprereview_effort = "medium"\n'
-    )
+    _write_config(tmp_path, '[llm]\nmodel = "from/file"\nprereview_effort = "medium"\n')
     got = llm.file_settings(tmp_path)
     assert got.model == "from/file"
     assert got.prereview_effort == "medium"
@@ -296,8 +307,11 @@ def test_the_file_is_read_relative_to_the_repo_root(tmp_path):
 def test_a_fenced_answer_loses_its_fence(no_store):
     spy = SpyRequest(answer("```\nfix(parser): add null check\n```"))
     got = llm.complete(
-        "prompt", effort="minimal", request=spy,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt",
+        effort="minimal",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
     )
     assert got == "fix(parser): add null check"
 
@@ -311,15 +325,11 @@ def test_the_fallback_reads_the_files_out_of_the_diffstat():
 def test_the_fallback_caps_the_file_list():
     stat = "\n".join(f" f{n}.py | 1 +" for n in range(6))
     prompt = f"<diffstat>\n{stat}\n</diffstat>"
-    assert llm.fallback_message(prompt) == (
-        "Changes to f0.py, f1.py, f2.py and 3 more"
-    )
+    assert llm.fallback_message(prompt) == ("Changes to f0.py, f1.py, f2.py and 3 more")
 
 
 def test_the_fallback_survives_a_prompt_with_no_diffstat():
-    assert llm.fallback_message("nothing useful here") == (
-        "Changes to the working tree"
-    )
+    assert llm.fallback_message("nothing useful here") == ("Changes to the working tree")
 
 
 @pytest.mark.parametrize(
@@ -334,17 +344,18 @@ def test_the_fallback_survives_a_prompt_with_no_diffstat():
 )
 def test_generate_returns_the_fallback_for_every_failure(spy, no_store):
     got = llm.generate(
-        DIFFSTAT_PROMPT, request=spy, settings=NO_FILE,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        DIFFSTAT_PROMPT,
+        request=spy,
+        settings=NO_FILE,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
     )
     assert got == "Changes to lean_herdr/llm.py, tests/test_llm.py"
 
 
 def test_generate_without_a_key_never_calls_the_endpoint(no_store):
     spy = SpyRequest(answer("feat(x): y"))
-    got = llm.generate(
-        DIFFSTAT_PROMPT, request=spy, env={}, auth_path=no_store, settings=NO_FILE
-    )
+    got = llm.generate(DIFFSTAT_PROMPT, request=spy, env={}, auth_path=no_store, settings=NO_FILE)
     assert spy.urls == []
     assert got.startswith("Changes to ")
 
@@ -352,10 +363,16 @@ def test_generate_without_a_key_never_calls_the_endpoint(no_store):
 def test_a_prompt_over_the_cap_is_never_sent(no_store):
     spy = SpyRequest(answer("feat(x): y"))
     huge = "x" * (llm.MAX_PROMPT_BYTES + 1)
-    assert llm.complete(
-        huge, effort="minimal", request=spy,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
-    ) is None
+    assert (
+        llm.complete(
+            huge,
+            effort="minimal",
+            request=spy,
+            env={openrouter.KEY_ENV: "k"},
+            auth_path=no_store,
+        )
+        is None
+    )
     assert spy.urls == [], "a runaway diff must not cost money"
 
 
@@ -367,17 +384,26 @@ def test_a_key_that_would_inject_a_header_is_refused(no_store):
     stays explicit and stays in front of the call.
     """
     spy = SpyRequest(answer("feat(x): y"))
-    assert llm.complete(
-        "prompt", effort="minimal", request=spy,
-        env={openrouter.KEY_ENV: 'k"\nX-Evil: 1'}, auth_path=no_store,
-    ) is None
+    assert (
+        llm.complete(
+            "prompt",
+            effort="minimal",
+            request=spy,
+            env={openrouter.KEY_ENV: 'k"\nX-Evil: 1'},
+            auth_path=no_store,
+        )
+        is None
+    )
     assert spy.urls == []
 
 
 def test_generate_passes_the_measured_effort_by_default(no_store):
     spy = SpyRequest(answer("feat(x): y"))
     llm.generate(
-        "prompt", request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
         settings=NO_FILE,
     )
     assert json.loads(spy.bodies[0])["reasoning"] == {"effort": "minimal"}
@@ -391,9 +417,7 @@ def test_generate_writes_the_message_and_exits_zero(monkeypatch, capsys, tmp_pat
     # $OPENROUTER_API_KEY the file would otherwise never be consulted.
     monkeypatch.setattr(llm.os, "environ", {})
     monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
-    monkeypatch.setattr(
-        llm, "generate", lambda *a, **kw: "feat(llm): add the generator"
-    )
+    monkeypatch.setattr(llm, "generate", lambda *a, **kw: "feat(llm): add the generator")
     assert llm.main(["generate"]) == 0
     captured = capsys.readouterr()
     assert captured.out == "feat(llm): add the generator\n"
@@ -423,17 +447,13 @@ def test_the_flags_reach_generate(monkeypatch, tmp_path):
     }
 
 
-def test_the_absent_flags_stay_none_so_generate_owns_the_precedence(
-    monkeypatch, tmp_path
-):
+def test_the_absent_flags_stay_none_so_generate_owns_the_precedence(monkeypatch, tmp_path):
     """A constant passed from here would put the CLI's silence above the file."""
     monkeypatch.setattr(openrouter, "AUTH_PATH", tmp_path / "absent.json")
     monkeypatch.setattr(llm.os, "environ", {openrouter.KEY_ENV: "k"})
     monkeypatch.setattr(llm.sys, "stdin", _Stdin(DIFFSTAT_PROMPT))
     seen: dict[str, object] = {}
-    monkeypatch.setattr(
-        llm, "generate", lambda prompt, **kw: (seen.update(kw), "feat(x): y")[1]
-    )
+    monkeypatch.setattr(llm, "generate", lambda prompt, **kw: (seen.update(kw), "feat(x): y")[1])
     assert llm.main(["generate"]) == 0
     assert seen["model"] is None
     assert seen["effort"] is None
@@ -449,8 +469,13 @@ def test_a_sub_second_timeout_survives_into_the_request(no_store):
     """
     spy = SpyRequest(answer("fix(x): y"))
     llm.complete(
-        "prompt", effort="minimal", model="vendor/m", timeout_s=0.5,
-        request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        "prompt",
+        effort="minimal",
+        model="vendor/m",
+        timeout_s=0.5,
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
     )
     assert spy.timeouts == [0.5]
 
@@ -493,13 +518,19 @@ def worktrees(*entries: dict) -> dict:
 
 def test_prereview_reads_only_the_first_line(no_store):
     """The reasoning may say `reject` as often as it likes."""
-    spy = SpyRequest(answer(
-        "PREREVIEW: pass\nI would reject this if the order had not asked "
-        "for it. Nothing to reject."
-    ))
+    spy = SpyRequest(
+        answer(
+            "PREREVIEW: pass\nI would reject this if the order had not asked "
+            "for it. Nothing to reject."
+        )
+    )
     ruling, note = llm.prereview(
-        "add a parser", "diff --git a/x b/x", request=spy,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "add a parser",
+        "diff --git a/x b/x",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
+        settings=NO_FILE,
     )
     assert ruling == "pass"
     assert note.startswith("I would reject this")
@@ -508,8 +539,12 @@ def test_prereview_reads_only_the_first_line(no_store):
 def test_a_verdict_further_down_does_not_count(no_store):
     spy = SpyRequest(answer("Looks fine to me.\nPREREVIEW: reject"))
     ruling, note = llm.prereview(
-        "add a parser", "diff", request=spy,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "add a parser",
+        "diff",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
+        settings=NO_FILE,
     )
     assert ruling == "skipped"
     assert note == "unparsable_answer"
@@ -547,8 +582,12 @@ def test_a_verdict_further_down_does_not_count(no_store):
 )
 def test_prereview_never_rejects_when_its_own_machinery_fails(diff, spy, reason, no_store):
     ruling, note = llm.prereview(
-        "an order", diff, request=spy,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "an order",
+        diff,
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
+        settings=NO_FILE,
     )
     assert ruling == "skipped", "the plumbing must never reject"
     assert note == reason
@@ -557,7 +596,11 @@ def test_prereview_never_rejects_when_its_own_machinery_fails(diff, spy, reason,
 def test_a_missing_key_is_skipped_not_rejected(no_store):
     spy = SpyRequest(answer("PREREVIEW: reject"))
     ruling, note = llm.prereview(
-        "an order", "diff", request=spy, env={}, auth_path=no_store,
+        "an order",
+        "diff",
+        request=spy,
+        env={},
+        auth_path=no_store,
         settings=NO_FILE,
     )
     assert (ruling, note) == ("skipped", "no_answer")
@@ -568,7 +611,10 @@ def judged(no_store, *, cfg=None, env=None, **kw):
     """One prereview call; returns the request body that was sent."""
     spy = SpyRequest(answer("PREREVIEW: pass"))
     llm.prereview(
-        "an order", "diff", request=spy, auth_path=no_store,
+        "an order",
+        "diff",
+        request=spy,
+        auth_path=no_store,
         settings=cfg if cfg is not None else NO_FILE,
         env={openrouter.KEY_ENV: "k", **(env or {})},
         **kw,
@@ -579,8 +625,10 @@ def judged(no_store, *, cfg=None, env=None, **kw):
 def test_the_judges_precedence_runs_all_six_levels(no_store):
     """Raising the judge must not raise the commit generator's bill."""
     cfg = LlmSettings(
-        model="file/shared", prereview_model="file/judge",
-        effort="minimal", prereview_effort="medium",
+        model="file/shared",
+        prereview_model="file/judge",
+        effort="minimal",
+        prereview_effort="medium",
     )
     both = {
         llm.MODEL_ENV: "env/shared",
@@ -588,16 +636,20 @@ def test_the_judges_precedence_runs_all_six_levels(no_store):
     }
     assert judged(no_store, cfg=cfg, env=both, model="flag/m")["model"] == "flag/m"
     assert judged(no_store, cfg=cfg, env=both)["model"] == "env/judge"
-    assert judged(no_store, cfg=cfg, env={llm.MODEL_ENV: "env/shared"})[
-        "model"
-    ] == "file/judge", "its own file key beats the shared environment"
-    assert judged(
-        no_store, cfg=LlmSettings(model="file/shared"),
-        env={llm.MODEL_ENV: "env/shared"},
-    )["model"] == "env/shared"
-    assert judged(no_store, cfg=LlmSettings(model="file/shared"))[
-        "model"
-    ] == "file/shared", "with nothing of its own the judge shares the model"
+    assert judged(no_store, cfg=cfg, env={llm.MODEL_ENV: "env/shared"})["model"] == "file/judge", (
+        "its own file key beats the shared environment"
+    )
+    assert (
+        judged(
+            no_store,
+            cfg=LlmSettings(model="file/shared"),
+            env={llm.MODEL_ENV: "env/shared"},
+        )["model"]
+        == "env/shared"
+    )
+    assert judged(no_store, cfg=LlmSettings(model="file/shared"))["model"] == "file/shared", (
+        "with nothing of its own the judge shares the model"
+    )
     assert judged(no_store)["model"] == llm.DEFAULT_MODEL
 
 
@@ -605,20 +657,22 @@ def test_the_judge_does_not_inherit_the_commit_generators_effort(no_store):
     """`[llm].effort` is the formatter's `minimal`. Inheriting it would
     make the judge as thoughtless as the formatter, silently."""
     cfg = LlmSettings(effort="minimal")
-    assert judged(no_store, cfg=cfg)["reasoning"] == {
-        "effort": llm.PREREVIEW_EFFORT
-    }
-    assert judged(
-        no_store, cfg=LlmSettings(effort="minimal", prereview_effort="high")
-    )["reasoning"] == {"effort": "high"}
+    assert judged(no_store, cfg=cfg)["reasoning"] == {"effort": llm.PREREVIEW_EFFORT}
+    assert judged(no_store, cfg=LlmSettings(effort="minimal", prereview_effort="high"))[
+        "reasoning"
+    ] == {"effort": "high"}
     assert judged(no_store, cfg=cfg, effort="low")["reasoning"] == {"effort": "low"}
 
 
 def test_the_note_is_cut_at_the_cap(no_store):
     spy = SpyRequest(answer("PREREVIEW: reject\n" + "x" * 5000))
     _ruling, note = llm.prereview(
-        "an order", "diff", request=spy,
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store, settings=NO_FILE,
+        "an order",
+        "diff",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
+        settings=NO_FILE,
     )
     assert len(note) == llm.NOTE_MAX_CHARS
 
@@ -641,19 +695,34 @@ def test_a_failing_wt_diff_is_none():
 
 def test_an_unresolvable_worktree_is_skipped_not_rejected():
     """The invariant `_worker_root()` would have broken."""
+
     def runner(*_a, **_kw):
         raise AssertionError("nothing may run without a resolved path")
 
     assert llm.prereview_result(
-        "an order", branch="feat/x", worktree_list=worktrees(), runner=runner,
+        "an order",
+        branch="feat/x",
+        worktree_list=worktrees(),
+        runner=runner,
     ) == {"prereview": "skipped", "prereview_note": "worktree_unresolved"}
-    assert llm.prereview_result(
-        "an order", branch="feat/x",
-        worktree_list=worktrees({"branch": "feat/x"}), runner=runner,
-    )["prereview_note"] == "worktree_unresolved"
-    assert llm.prereview_result(
-        "an order", branch=None, worktree_list=worktrees(), runner=runner,
-    )["prereview_note"] == "no_branch"
+    assert (
+        llm.prereview_result(
+            "an order",
+            branch="feat/x",
+            worktree_list=worktrees({"branch": "feat/x"}),
+            runner=runner,
+        )["prereview_note"]
+        == "worktree_unresolved"
+    )
+    assert (
+        llm.prereview_result(
+            "an order",
+            branch=None,
+            worktree_list=worktrees(),
+            runner=runner,
+        )["prereview_note"]
+        == "no_branch"
+    )
 
 
 def test_prereview_itself_refuses_to_judge_without_an_order(no_store):
@@ -665,8 +734,11 @@ def test_prereview_itself_refuses_to_judge_without_an_order(no_store):
     """
     spy = SpyRequest(answer("PREREVIEW: reject\nnothing matches the order"))
     assert llm.prereview(
-        "", "diff --git a/x b/x\n+print('debug')",
-        request=spy, env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
+        "",
+        "diff --git a/x b/x\n+print('debug')",
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
         settings=NO_FILE,
     ) == ("skipped", "no_order")
     assert spy.urls == [], "no model may be asked to judge against nothing"
@@ -679,11 +751,13 @@ def test_an_empty_order_is_skipped_not_rejected():
     rejection, so an empty <order> block invites exactly the false reject
     the whole module is built to avoid.
     """
+
     def runner(*_a, **_kw):
         raise AssertionError("nothing may run without an order to judge")
 
     assert llm.prereview_result(
-        "", branch="feat/x",
+        "",
+        branch="feat/x",
         worktree_list=worktrees({"branch": "feat/x", "path": "/w"}),
         runner=runner,
     ) == {"prereview": "skipped", "prereview_note": "no_order"}
@@ -698,21 +772,28 @@ def test_wt_diff_carries_its_own_timeout():
 
 def test_a_diff_that_never_arrives_is_skipped_not_rejected():
     """`wt step diff` failing is the machine's fault, never the branch's."""
+
     def runner(*_a, **_kw):
         return Completed(returncode=1)
 
     assert llm.prereview_result(
-        "an order", branch="feat/x",
+        "an order",
+        branch="feat/x",
         worktree_list=worktrees({"branch": "feat/x", "path": "/w"}),
         runner=runner,
     ) == {"prereview": "skipped", "prereview_note": "diff_failed"}
 
 
 def test_a_garbage_worktree_list_is_skipped_not_a_crash():
-    assert llm.prereview_result(
-        "an order", branch="feat/x", worktree_list="not a dict",
-        runner=lambda *a, **k: Completed(),
-    )["prereview"] == "skipped"
+    assert (
+        llm.prereview_result(
+            "an order",
+            branch="feat/x",
+            worktree_list="not a dict",
+            runner=lambda *a, **k: Completed(),
+        )["prereview"]
+        == "skipped"
+    )
 
 
 def test_the_resolved_path_is_the_one_the_diff_runs_in(no_store):
@@ -742,9 +823,7 @@ def test_the_resolved_path_is_the_one_the_diff_runs_in(no_store):
 
 def test_the_cli_rejects_with_exit_one(monkeypatch, capsys):
     monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: "diff --git a/x b/x")
-    monkeypatch.setattr(
-        llm, "prereview", lambda *a, **kw: ("reject", "no test beside new logic")
-    )
+    monkeypatch.setattr(llm, "prereview", lambda *a, **kw: ("reject", "no test beside new logic"))
     assert llm.main(["prereview", "-C", "/worktrees/feat-x"]) == 1
     out = capsys.readouterr().out
     assert out == "reject\nno test beside new logic\n"
@@ -754,9 +833,7 @@ def test_the_cli_passes_and_skips_with_exit_zero(monkeypatch, capsys):
     monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: "diff")
     for ruling in ("pass", "skipped"):
         # `fixed=ruling` binds now, not at call time -- ruff B023.
-        monkeypatch.setattr(
-            llm, "prereview", lambda *a, fixed=ruling, **kw: (fixed, "")
-        )
+        monkeypatch.setattr(llm, "prereview", lambda *a, fixed=ruling, **kw: (fixed, ""))
         assert llm.main(["prereview"]) == 0
         assert capsys.readouterr().out == f"{ruling}\n"
 
@@ -771,7 +848,8 @@ def test_a_failing_wt_diff_says_so_and_judges_nothing(monkeypatch, capsys):
     """
     monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: None)
     monkeypatch.setattr(
-        llm, "prereview",
+        llm,
+        "prereview",
         lambda *a, **kw: pytest.fail("nothing may be judged without a diff"),
     )
     assert llm.main(["prereview", "-C", "/gone"]) == 0
@@ -795,7 +873,11 @@ def test_a_strict_decode_raises_a_value_error_no_handler_here_names():
     assert not isinstance(raised, OSError)
     assert not isinstance(raised, subprocess.SubprocessError)
     proc = subprocess.run(
-        cmd, capture_output=True, text=True, errors="replace", timeout=30,
+        cmd,
+        capture_output=True,
+        text=True,
+        errors="replace",
+        timeout=30,
         check=False,
     )
     assert proc.stdout == "a�b", "errors=replace is what keeps the bytes coming"
@@ -817,10 +899,13 @@ def test_a_foreign_byte_in_the_diff_is_judged_and_not_crashed_on(no_store):
     """
     spy = SpyRequest(answer("PREREVIEW: reject\nno test"))
     got = llm.prereview_result(
-        "an order", branch="feat/x",
+        "an order",
+        branch="feat/x",
         worktree_list=worktrees({"branch": "feat/x", "path": "/w"}),
         runner=DecodingRunner(b"diff --git a/x b/x\n+caf\xe9\n"),
-        request=spy, settings=NO_FILE, env={openrouter.KEY_ENV: "k"},
+        request=spy,
+        settings=NO_FILE,
+        env={openrouter.KEY_ENV: "k"},
         auth_path=no_store,
     )
     assert got == {"prereview": "reject", "prereview_note": "no test"}
@@ -836,10 +921,16 @@ def test_a_decode_error_the_replacement_missed_is_skipped_not_a_crash(no_store):
     means one thing only: the model rejected the branch.
     """
     assert llm.wt_diff("/x", runner=SpyRunner(raises=DECODE_ERROR)) is None
-    assert llm.complete(
-        "prompt", effort="minimal", request=SpyRequest(raises=DECODE_ERROR),
-        env={openrouter.KEY_ENV: "k"}, auth_path=no_store,
-    ) is None
+    assert (
+        llm.complete(
+            "prompt",
+            effort="minimal",
+            request=SpyRequest(raises=DECODE_ERROR),
+            env={openrouter.KEY_ENV: "k"},
+            auth_path=no_store,
+        )
+        is None
+    )
 
 
 def test_the_flags_reach_prereview(monkeypatch):
@@ -866,8 +957,17 @@ def test_the_flags_reach_prereview(monkeypatch):
     monkeypatch.setattr(llm, "wt_diff", fake_wt_diff)
     monkeypatch.setattr(llm, "prereview", fake_prereview)
     argv = [
-        "prereview", "-C", "/worktrees/feat-x", "--order", "add a row parser",
-        "--model", "vendor/m", "--effort", "high", "--timeout", "5",
+        "prereview",
+        "-C",
+        "/worktrees/feat-x",
+        "--order",
+        "add a row parser",
+        "--model",
+        "vendor/m",
+        "--effort",
+        "high",
+        "--timeout",
+        "5",
     ]
     assert llm.main(argv) == 0
     assert fetched == {"path": "/worktrees/feat-x", "timeout_s": 5.0}
@@ -921,6 +1021,7 @@ def test_the_real_chain_answers_at_all(tmp_path):
     if openrouter.api_key() is None:
         pytest.skip("no OpenRouter key on this machine")
     got = llm.complete(
-        "Answer with exactly the word: pong", effort=llm.GENERATE_EFFORT,
+        "Answer with exactly the word: pong",
+        effort=llm.GENERATE_EFFORT,
     )
     assert got is not None and "pong" in got.lower()

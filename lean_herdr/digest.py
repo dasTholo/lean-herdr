@@ -42,9 +42,7 @@ def render_digest(resume_text: str, handoff_text: str | None = None) -> str | No
     # is nothing left around it -- but stripping would eat the indentation of
     # the first and last line, and `ctx_handoff show` delivers JSON whose
     # indentation carries meaning.
-    handoff = "\n".join(
-        line for line in (handoff_text or "").splitlines() if line.strip()
-    )
+    handoff = "\n".join(line for line in (handoff_text or "").splitlines() if line.strip())
     if not (core or handoff):
         return None
 

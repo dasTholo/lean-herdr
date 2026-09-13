@@ -71,9 +71,7 @@ class ReportError(RuntimeError):
     """Something the worker must see as an error, not as an empty answer."""
 
 
-def current_branch(
-    cwd: str | Path | None = None, *, runner: Any = subprocess.run
-) -> str:
+def current_branch(cwd: str | Path | None = None, *, runner: Any = subprocess.run) -> str:
     """The branch of the checkout this process runs in -- "" when detached.
 
     Deliberately NOT in worktree.py: that module resolves and CREATES
@@ -145,9 +143,7 @@ def _brief(order: Order, *, orders_dir: str | Path) -> str:
     if order.after:
         previous = fold(read_events(order.after, orders=orders_dir))
         closing = message_from(previous, previous.to_agent) or ""
-        lines.append(
-            f"after: {order.after} ({previous.to_agent}, {previous.state})"
-        )
+        lines.append(f"after: {order.after} ({previous.to_agent}, {previous.state})")
         if closing:
             lines.append(f'  "{closing}"')
     return "\n".join(lines)
@@ -208,8 +204,7 @@ def show_order(agent: str, task_id: str, *, orders_dir: str | Path) -> dict[str,
         "from": order.from_agent,
         "text": _brief(order, orders_dir=orders_dir),
         "events": [
-            {"seq": e.sequence, "kind": e.kind, "actor": e.actor, "at": e.at,
-             "message": e.message}
+            {"seq": e.sequence, "kind": e.kind, "actor": e.actor, "at": e.at, "message": e.message}
             for e in read_events(task_id, orders=orders_dir)
         ],
     }
@@ -240,7 +235,10 @@ def report(
             "error": f"usage_error: {task_id} is already {order.state}",
         }
     event = append(
-        task_id, KIND_OF[command], agent, {"message": message} if message else {},
+        task_id,
+        KIND_OF[command],
+        agent,
+        {"message": message} if message else {},
         orders=orders_dir,
     )
     return {"ok": True, "agent": agent, "task_id": task_id, "state": event.kind}
@@ -314,7 +312,10 @@ def main(argv: list[str] | None = None) -> int:
                 result = show_order(agent, args.task, orders_dir=orders_dir)
             else:
                 result = report(
-                    agent, args.command, args.task, args.message or "",
+                    agent,
+                    args.command,
+                    args.task,
+                    args.message or "",
                     orders_dir=orders_dir,
                 )
     except UsageError as exc:

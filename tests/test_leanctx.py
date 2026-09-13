@@ -85,12 +85,11 @@ def test_handoff_show_without_a_path_does_not_exist(fake):
 
 # -- The three states that must be kept apart ---------------------------
 
+
 def test_plain_text_is_not_read_as_json(monkeypatch):
     """The core finding: `lean-ctx call` prints text, never JSON."""
     monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
-    answer = LeanCtx(
-        ROOT, runner=lambda *a, **k: Completed(stdout=RESUME_TEXT)
-    ).session_resume()
+    answer = LeanCtx(ROOT, runner=lambda *a, **k: Completed(stdout=RESUME_TEXT)).session_resume()
     assert answer.ok and "Project: lean-herdr" in answer.text
 
 
@@ -106,9 +105,7 @@ def test_an_error_line_is_recognised_as_an_error(monkeypatch):
     monkeypatch.setattr("lean_herdr.leanctx.shutil.which", which_stub(True))
     answer = LeanCtx(
         ROOT,
-        runner=lambda *a, **k: Completed(
-            stdout="error: -32602: path is required for action=show"
-        ),
+        runner=lambda *a, **k: Completed(stdout="error: -32602: path is required for action=show"),
     ).handoff_show("")
     assert answer.ok is False and "path is required" in (answer.error or "")
 

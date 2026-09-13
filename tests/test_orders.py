@@ -145,6 +145,11 @@ def test_an_order_is_immutable():
 
 def test_every_kind_of_the_design_is_known():
     assert set(EVENT_KINDS) == {
-        "created", "working", "input-required", "answered",
-        "completed", "failed", "canceled",
+        "created",
+        "working",
+        "input-required",
+        "answered",
+        "completed",
+        "failed",
+        "canceled",
     }

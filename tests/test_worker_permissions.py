@@ -44,11 +44,7 @@ def opencode_key(command: str) -> str:
     would let through anything at all. `next` is the only one that takes no
     flags, so it is the only one without a trailing ` *`.
     """
-    return (
-        "lean-herdr report next"
-        if command == "next"
-        else f"lean-herdr report {command} *"
-    )
+    return "lean-herdr report next" if command == "next" else f"lean-herdr report {command} *"
 
 
 def claude_key(command: str) -> str:
@@ -82,9 +78,7 @@ def test_every_worker_may_run_every_report_subcommand(role):
     allowed = opencode()["agent"][role]["permission"]["bash"]
     assert allowed["*"] == "deny", "the default must stay deny"
     for command in SUBCOMMANDS:
-        assert allowed.get(opencode_key(command)) == "allow", (
-            f"{role} cannot run `{command}`"
-        )
+        assert allowed.get(opencode_key(command)) == "allow", f"{role} cannot run `{command}`"
 
 
 def test_the_permission_is_never_a_bare_wildcard():
@@ -126,9 +120,9 @@ def test_the_repo_ships_the_claude_permissions_too():
 
 
 def claude_allow() -> list[str]:
-    return json.loads(
-        (ROOT / ".claude" / "settings.json").read_text(encoding="utf-8")
-    )["permissions"]["allow"]
+    return json.loads((ROOT / ".claude" / "settings.json").read_text(encoding="utf-8"))[
+        "permissions"
+    ]["allow"]
 
 
 def test_no_permission_file_names_a_subcommand_the_cli_does_not_have():
@@ -171,8 +165,16 @@ def test_the_builder_may_run_the_gate_its_role_text_demands():
 def test_the_builders_gate_is_not_a_blank_cheque():
     """`nothing more` is half the operator's decision -- pin that half too."""
     allowed = opencode()["agent"]["builder"]["permission"]["bash"]
-    for forbidden in ("git push*", "git *", "uv *", "uv run *", "rm*", "curl*",
-                      "wt *", "wt step *"):
+    for forbidden in (
+        "git push*",
+        "git *",
+        "uv *",
+        "uv run *",
+        "rm*",
+        "curl*",
+        "wt *",
+        "wt step *",
+    ):
         assert forbidden not in allowed, f"{forbidden} widens the builder's gate"
 
 
@@ -219,8 +221,14 @@ def test_the_claude_builder_may_do_what_its_role_text_prescribes():
 def test_the_claude_builders_gate_is_not_a_blank_cheque():
     """The other half of the operator's decision, pinned on this side too."""
     allow = claude_allow()
-    for forbidden in ("Bash(git:*)", "Bash(git push:*)", "Bash(uv:*)",
-                      "Bash(uv run:*)", "Bash(rm:*)", "Bash(curl:*)"):
+    for forbidden in (
+        "Bash(git:*)",
+        "Bash(git push:*)",
+        "Bash(uv:*)",
+        "Bash(uv run:*)",
+        "Bash(rm:*)",
+        "Bash(curl:*)",
+    ):
         assert forbidden not in allow, f"{forbidden} widens the builder's gate"
 
 
