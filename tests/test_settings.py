@@ -475,34 +475,63 @@ def test_a_default_model_reaches_every_role():
 
 
 @pytest.mark.parametrize(
-    ("roles", "warned"),
+    ("data", "pairs"),
     [
         pytest.param(
-            {"builder": {"model": "sonnet"}, "reviewer": {"model": "opus"}},
-            False,
+            {"roles": {"builder": {"model": "sonnet"}, "reviewer": {"model": "opus"}}},
+            [],
             id="two models, nothing to say",
         ),
         pytest.param(
-            {"builder": {"model": "sonnet"}, "reviewer": {"model": "sonnet"}},
-            True,
+            {"roles": {"builder": {"model": "sonnet"}, "reviewer": {"model": "sonnet"}}},
+            ["builder"],
             id="one model, and nobody said so",
         ),
         pytest.param(
             {
-                "builder": {"model": "sonnet"},
-                "reviewer": {"model": "sonnet", "shares_builder_model": True},
+                "roles": {
+                    "builder": {"model": "sonnet"},
+                    "reviewer": {"model": "sonnet", "shares_reviewed_model": True},
+                }
             },
-            False,
+            [],
             id="one model, and it is meant",
         ),
-        pytest.param({}, False, id="no model at all is not a shared model"),
+        pytest.param({}, [], id="no model at all is not a shared model"),
+        pytest.param(
+            {
+                "routing": {"rename": "refactorer"},
+                "roles": {"refactorer": {"model": "sonnet"}, "reviewer": {"model": "sonnet"}},
+            },
+            ["refactorer"],
+            id="a work of the project's own is paired too",
+        ),
+        pytest.param(
+            {"routing": {"implement": "reviewer"}, "roles": {"reviewer": {"model": "sonnet"}}},
+            [],
+            id="one role behind both works is no pair",
+        ),
+        pytest.param(
+            {
+                "routing": {"review": "auditor"},
+                "roles": {"builder": {"model": "sonnet"}, "auditor": {"model": "sonnet"}},
+            },
+            ["builder"],
+            id="the checker is whoever stands behind review",
+        ),
     ],
 )
-def test_two_roles_on_one_model_warn_unless_confirmed(roles, warned):
+def test_the_role_behind_review_warns_about_each_role_on_its_model(data, pairs):
     """A warning, never a refusal: two workers on one model is legitimate."""
-    lines = model_warnings({"roles": roles})
-    assert bool(lines) is warned
-    assert not warned or "'sonnet'" in lines[0]
+    lines = model_warnings(data)
+    assert [line.split(" and ", 1)[0] for line in lines] == pairs
+    assert all("'sonnet'" in line and "different blind spots" in line for line in lines)
+
+
+def test_the_old_opt_out_key_is_unknown_now():
+    """Renamed without an alias -- a file carrying it says so instead of going quiet."""
+    with pytest.raises(SettingsError, match=r"unknown keys \['shares_builder_model'\]"):
+        settings_for("reviewer", {"roles": {"reviewer": {"shares_builder_model": True}}})
 
 
 # -- models: [models] ---------------------------------------------------

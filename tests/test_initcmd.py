@@ -453,7 +453,7 @@ def test_a_leftover_workspace_kind_is_named_here_not_left_for_up(monkeypatch, re
     ("extra", "warned"),
     [
         pytest.param("", True, id="one model, and nobody said so"),
-        pytest.param("shares_builder_model = true\n", False, id="one model, and it is meant"),
+        pytest.param("shares_reviewed_model = true\n", False, id="one model, and it is meant"),
     ],
 )
 def test_init_warns_when_builder_and_reviewer_share_a_model(monkeypatch, repo, extra, warned):
@@ -503,7 +503,7 @@ def test_a_broken_worker_block_costs_the_warm_up_and_not_the_report(monkeypatch,
     """
     quiet(monkeypatch)
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (repo / SETTINGS_PATH).write_text('[roles.builder]\ndirection = "links"\n', encoding="utf-8")
+    (repo / SETTINGS_PATH).write_text('[roles.reviewer]\ndirection = "links"\n', encoding="utf-8")
     answer = workspace_init(root=repo)
     assert answer["ok"] is True
     assert answer["written"] or answer["skipped"], "the report must survive"

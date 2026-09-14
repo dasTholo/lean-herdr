@@ -99,12 +99,13 @@ class RoleSettings:
     #: spelling for one state and a second check at every level.
     model: str = ""
     kind: str = ""
-    #: Only [roles.reviewer] has a reader for this one, and that is the
-    #: same price `direction` already pays under [roles.orchestrator]:
-    #: ALLOWED is built from these fields, so every key is legal under
-    #: every role. Setting it elsewhere changes nothing -- it does not
-    #: quietly change something else either.
-    shares_builder_model: bool = False
+    #: Only the role behind `review` has a reader for this one, and that is the
+    #: same price `direction` already pays under [roles.orchestrator]: ALLOWED is
+    #: built from these fields, so every key is legal under every role. Setting it
+    #: elsewhere changes nothing -- it does not quietly change something else
+    #: either. It was `shares_builder_model` and has no alias: the old name is an
+    #: unknown key now, and says so.
+    shares_reviewed_model: bool = False
 
 
 _TYPES: dict[str, Any] = {
@@ -116,7 +117,7 @@ _TYPES: dict[str, Any] = {
     "ready_timeout_s": (float, int),
     "model": str,
     "kind": str,
-    "shares_builder_model": bool,
+    "shares_reviewed_model": bool,
 }
 
 #: Keys where a bool would slip through `_TYPES`: `isinstance(True, int)` is
@@ -296,28 +297,32 @@ def role_for_work(work: str, data: dict[str, Any] | None = None) -> str:
 def model_warnings(data: dict[str, Any] | None = None) -> list[str]:
     """What a config earns without being wrong. A list, empty is normal.
 
-    The reviewer's value is that it is a DIFFERENT model -- different
-    blind spots. That sentence used to stand in the orchestrator's role
-    prompt, where it governed a choice the orchestrator made in the run.
-    Once the config decides, the prompt cannot enforce it any more, so it
-    becomes a warning here -- and a warning, never a refusal: two workers
-    on one model is a legitimate thing to want, it just must not happen
-    by accident.
+    The review's value is that it runs on a DIFFERENT model -- different blind
+    spots. So the role behind `review` is compared with the role behind every
+    work that is not a stage: `implement` and every work of the project's own.
+    One line per role on the same, non-empty model; none where both works name
+    one role, none when the reviewing role sets `shares_reviewed_model`. A
+    warning, never a refusal: two workers on one model is a legitimate thing to
+    want, it just must not happen by accident.
 
-    Raises whatever `settings_for()` raises. Both callers read the file
-    once and validated already; a second, quieter error path here would
-    be a second rule for one thing (M3).
+    Raises whatever `settings_for()` raises. Both callers read the file once and
+    validated already; a second, quieter error path here would be a second rule
+    for one thing (M3).
     """
-    builder = settings_for("builder", data)
-    reviewer = settings_for("reviewer", data)
-    if not builder.model or builder.model != reviewer.model or reviewer.shares_builder_model:
+    routes = work_roles(data)
+    checker = routes["review"]
+    judge = settings_for(checker, data)
+    if not judge.model or judge.shares_reviewed_model:
         return []
+    reviewed = sorted({role for work, role in routes.items() if work not in STAGES})
     return [
         (
-            f"builder and reviewer both run on {builder.model!r} -- the "
-            "reviewer earns its keep by having different blind spots. Set "
-            "[roles.reviewer].shares_builder_model = true if this is meant."
+            f"{role} and {checker} both run on {judge.model!r} -- the {checker} "
+            "earns its keep by having different blind spots. Set "
+            f"[roles.{checker}].shares_reviewed_model = true if this is meant."
         )
+        for role in reviewed
+        if role != checker and settings_for(role, data).model == judge.model
     ]
 
 

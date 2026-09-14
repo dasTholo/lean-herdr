@@ -1106,6 +1106,49 @@ def test_a_builder_build_of_the_same_config_carries_no_warning(monkeypatch, tmp_
     assert "warnings" not in got, got
 
 
+def test_the_warning_follows_the_role_behind_review(monkeypatch, tmp_path, capsys):
+    """Whoever `[routing]` puts behind `review` carries it -- by work or by name."""
+    root = tmp_path / "repo"
+    _write_config(
+        root,
+        '[routing]\nreview = "auditor"\n\n'
+        '[roles.builder]\nkind = "claude"\nmodel = "sonnet"\n\n'
+        '[roles.auditor]\nkind = "claude"\nmodel = "sonnet"\n\n'
+        '[roles.reviewer]\nkind = "claude"\nmodel = "sonnet"\n',
+    )
+    write_role_fixture(root, "auditor", "reviewer")
+    _spy_dispatch(monkeypatch)
+
+    by_work = _line(["--work", "review"], root, monkeypatch, capsys)
+    by_name = _line(["auditor"], root, monkeypatch, capsys)
+    off_duty = _line(["reviewer"], root, monkeypatch, capsys)
+
+    assert len(by_work.get("warnings", [])) == 1, by_work
+    assert "blind spots" in by_work["warnings"][0], by_work
+    assert by_name.get("warnings") == by_work["warnings"], by_name
+    assert "warnings" not in off_duty, off_duty
+
+
+def test_a_broken_table_the_warning_reads_stops_the_call_before_any_pane(
+    monkeypatch, tmp_path, capsys
+):
+    """`model_warnings` reads every routed role's table -- before dispatch(), not after."""
+    root = tmp_path / "repo"
+    _write_config(
+        root,
+        '[routing]\nrename = "refactorer"\n\n'
+        '[roles.refactorer]\ndirection = "links"\n\n'
+        '[roles.reviewer]\nkind = "claude"\nmodel = "sonnet"\n',
+    )
+    write_role_fixture(root, "reviewer")
+    _no_launch(monkeypatch)
+
+    got = _line(["--work", "review"], root, monkeypatch, capsys)
+
+    assert got["ok"] is False
+    assert got["error"].startswith("config_error: refactorer: direction"), got
+
+
 def test_a_worktree_dispatch_starts_the_pane_in_the_worktree(world, monkeypatch):
     h_proc, _ = world
     h_proc.replies = {

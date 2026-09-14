@@ -292,7 +292,12 @@ Which model and which runtime each role gets is configured per role, in
     [roles.reviewer]
     kind  = "opencode"
     model = "<a different one>"   # different blind spots is the point
-    # shares_builder_model = true # confirm the same model on purpose
+    # shares_reviewed_model = true # confirm the same model on purpose
+
+`shares_reviewed_model` belongs to the role behind `review` and silences the
+warning for every role it reviews. It used to be called
+`shares_builder_model`; that name is an unknown key now, and a config
+carrying it fails with `config_error:` until the line is renamed.
 
 `--kind` and `--model` on a `dispatch` call beat the file; with neither,
 `dispatch` refuses to build. A worker quietly running on its runtime's

@@ -30,7 +30,7 @@
 # kind  = "opencode"
 # model = ""           # a DIFFERENT model than the builder: different
 #                      # blind spots is the whole point of the second pass
-# shares_builder_model = false   # true: same model as the builder, meant
+# shares_reviewed_model = false  # true: a role it reviews shares its model, meant
 
 # [llm]
 # Read by lean_herdr/llm.py alone: the commit generator worktrunk calls

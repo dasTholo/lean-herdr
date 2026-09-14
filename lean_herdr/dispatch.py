@@ -894,6 +894,14 @@ def main(argv: list[str] | None = None) -> int:
                 if problem:
                     result = {"ok": False, "error": f"config_error: {problem}"}
                 else:
+                    # Additive, and only where a reader exists: the orchestrator reads
+                    # the dispatch line of the role behind `review` -- by `--work review`
+                    # or by that role's name. `ok` is untouched: a warning, never a
+                    # refusal. Computed BEFORE dispatch(): it reads the table of every
+                    # routed role, and a broken one must stop the call while no pane
+                    # exists yet, not cost the answer of a worker already started.
+                    reviewing = args.command == role_for_work("review", raw)
+                    notes = model_warnings(raw) if reviewing else []
                     result = dispatch(
                         DispatchRequest(
                             role=args.command,
@@ -909,11 +917,6 @@ def main(argv: list[str] | None = None) -> int:
                         settings=settings,
                     )
                     result = {**result, "role": args.command}
-                    # Additive, and only where a reader exists: the orchestrator
-                    # reads the reviewer's dispatch line, so that is where a
-                    # warning about the reviewer's model gets seen. `ok` is
-                    # untouched -- a shared model is a warning, never a refusal.
-                    notes = model_warnings(raw) if args.command == "reviewer" else []
                     if notes:
                         result = {**result, "warnings": notes}
     except UsageError as exc:
