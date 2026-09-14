@@ -113,11 +113,11 @@ Offen für die Specs von TP2 und TP3, hier bewusst nicht entschieden:
   prüft keine Länge.
 - Nachweis des Plan-Reviews über Bus-Posts (`LeanCtx.post` / `bus.parse_registry`).
 - Umgang der Plan-Rezepte mit dem mitgerenderten Beschreibungskommentar.
-- Skill-Anbindung der Rollen-Prompts: welcher lean-md-Skill je Rolle (Builder etwa
-  `lmd-test-driven-development`, Reviewer eine Review-Disziplin), genannt im Prompt
-  statt in der Config (B5); dazu die Messung, ob und wie ein opencode-Pane Skills lädt.
-  TP1 hält die Tür offen: kein `--setting-sources`, keine `Skill`-Sperre in den
-  `deny`-Listen (B4, B9).
+- Skill-Anbindung der Rollen-Prompts: offen ist nur, welcher lean-md-Skill je Rolle
+  (Builder etwa `lmd-test-driven-development`, Reviewer eine Review-Disziplin); der Ort
+  steht fest, der Prompt statt der Config (B5). Dazu die Messung, ob und wie ein
+  opencode-Pane Skills lädt. TP1 hält die Tür offen: kein `--setting-sources`, keine
+  `Skill`-Sperre in den `deny`-Listen der claude-Rollen (B4, B9).
 
 ---
 
