@@ -6,7 +6,11 @@
 #
 # Installs BOTH the pre-commit and pre-push stages on `pre-commit install`, so
 # the docs -> main guard below is active without an extra --hook-type flag.
-# Tests and lint stay in worktrunk's pre-merge gate (.config/wt.toml).
+#
+# ruff and ty run on every commit that touches Python or pyproject.toml, pytest
+# on every push. All of them go through `uv run`, so they use the versions of
+# the dev group -- the same ruff and pytest worktrunk's pre-merge gate
+# (.config/wt.toml) runs before a merge.
 default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: local
@@ -27,3 +31,31 @@ repos:
         always_run: true
         stages: [pre-push]
         description: reject any push to main/master whose tree carries docs/specs or docs/lean-md
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        pass_filenames: false
+        files: '\.py$|^pyproject\.toml$'
+        stages: [pre-commit]
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run ruff format --check
+        language: system
+        pass_filenames: false
+        files: '\.py$|^pyproject\.toml$'
+        stages: [pre-commit]
+      - id: ty
+        name: ty check
+        entry: uv run ty check
+        language: system
+        pass_filenames: false
+        files: '\.py$|^pyproject\.toml$'
+        stages: [pre-commit]
+      - id: pytest
+        name: pytest
+        entry: uv run pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]

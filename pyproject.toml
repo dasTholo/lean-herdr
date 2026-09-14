@@ -9,7 +9,7 @@ dependencies = []
 lean-herdr = "lean_herdr.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "ruff>=0.6"]
+dev = ["pytest>=8", "ruff>=0.6", "ty==0.0.80"]
 
 [build-system]
 requires = ["hatchling"]
@@ -21,6 +21,13 @@ packages = ["lean_herdr"]
 [tool.ruff]
 line-length = 100
 target-version = "py314"
+# docs/ holds the specs and plans as written, probes included -- ruff formats
+# the Python blocks inside Markdown, and a record is not rewritten for style.
+extend-exclude = ["docs"]
+
+[tool.ruff.lint]
+# T10: a forgotten breakpoint() or pdb import fails the commit.
+extend-select = ["T10"]
 
 [tool.ruff.lint.per-file-ignores]
 # PGH005 takes FakeProc.called_with(...) for a mock assertion. FakeProc is no
