@@ -5,7 +5,7 @@
 #     pre-commit install
 #
 # Installs BOTH the pre-commit and pre-push stages on `pre-commit install`, so
-# the docs -> main guard below is active without an extra --hook-type flag.
+# the pytest hook below is active without an extra --hook-type flag.
 #
 # ruff and ty run on every commit that touches Python or pyproject.toml, pytest
 # on every push. All of them go through `uv run`, so they use the versions of
@@ -15,22 +15,6 @@ default_install_hook_types: [pre-commit, pre-push]
 repos:
   - repo: local
     hooks:
-      - id: no-plans-on-main-commit
-        name: block docs/specs + docs/lean-md on main (commit)
-        entry: .githooks/guard-plans-on-main.sh commit
-        language: script
-        pass_filenames: false
-        always_run: true
-        stages: [pre-commit]
-        description: dev specs and plans must never be committed on main/master
-      - id: no-plans-on-main-push
-        name: block docs/specs + docs/lean-md on main (push)
-        entry: .githooks/guard-plans-on-main.sh push
-        language: script
-        pass_filenames: false
-        always_run: true
-        stages: [pre-push]
-        description: reject any push to main/master whose tree carries docs/specs or docs/lean-md
       - id: ruff-check
         name: ruff check
         entry: uv run ruff check

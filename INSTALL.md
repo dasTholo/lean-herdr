@@ -131,8 +131,7 @@ path; `check` then prints the new `herdr plugin link` line.
 
 `pre-commit install` sets up both hook stages of `.pre-commit-config.yaml`:
 ruff, ruff format and ty on every commit that touches Python or
-`pyproject.toml`, pytest on every push, and a guard that keeps
-`docs/specs/` and `docs/lean-md/` off `main`.
+`pyproject.toml`, and pytest on every push.
 
 `uv run lean-herdr …` runs this checkout; the bare `lean-herdr` is the
 installed snapshot. `uv run lean-herdr workspace check` therefore warns that
