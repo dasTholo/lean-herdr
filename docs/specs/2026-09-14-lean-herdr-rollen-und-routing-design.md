@@ -113,6 +113,11 @@ Offen für die Specs von TP2 und TP3, hier bewusst nicht entschieden:
   prüft keine Länge.
 - Nachweis des Plan-Reviews über Bus-Posts (`LeanCtx.post` / `bus.parse_registry`).
 - Umgang der Plan-Rezepte mit dem mitgerenderten Beschreibungskommentar.
+- Skill-Anbindung der Rollen-Prompts: welcher lean-md-Skill je Rolle (Builder etwa
+  `lmd-test-driven-development`, Reviewer eine Review-Disziplin), genannt im Prompt
+  statt in der Config (B5); dazu die Messung, ob und wie ein opencode-Pane Skills lädt.
+  TP1 hält die Tür offen: kein `--setting-sources`, keine `Skill`-Sperre in den
+  `deny`-Listen (B4, B9).
 
 ---
 
@@ -236,6 +241,8 @@ eine eigene, frühe Task des Plans gegen opencode 1.18.29, bevor ein Test sie fe
 - `deny` gewinnt über jedes `allow` aus jeder Quelle (A3), deshalb reicht die Datei zum
   Einschränken.
 - `--setting-sources` wird nicht verwendet (A3: schaltet Projekt-`CLAUDE.md` und Skills ab).
+- Keine `deny`-Liste sperrt das `Skill`-Werkzeug; Skills bleiben für jede claude-Rolle
+  ladbar (A5).
 - Beide Dateien sind Templates mit Lock wie die übrigen (`initcmd`, `templating`).
 
 **Bekannte Lücke, nicht Teil von TP1:** `ctx_shell` bleibt für Prüfer offen, weil sie
@@ -246,7 +253,9 @@ lean-ctx ist global, nicht je Rolle. Dieselbe Lücke besteht heute für opencode
 
 - Bleiben je Rolle eine vollständige Datei. Kein Zusammensetzen aus Bausteinen; die
   Wiederholung von Trust, `report`-Ablauf und BOUNDARY bleibt und wird abgesichert (B8).
-- Kein Skill-Feld in der Config; ein Prompt nennt seinen lean-md-Skill selbst.
+- Kein Skill-Feld in der Config; nennt eine Rolle einen lean-md-Skill, dann in ihrem
+  Prompt. Heute tut das kein Worker-Prompt (`builder.md` sagt nur „TDD"); die
+  Anbindung bleibt offen für TP2 und TP3 (A5).
 - `orchestrator.md`, nur der Tooling-Teil und die Stellen mit Rollennamen:
   - Schritt 1 wird `lean-herdr dispatch --work <art> [--worktree <branch>]`; kein
     `--role-file`, keine Rollennamen.
@@ -318,10 +327,11 @@ Alle Antworten bleiben eine JSON-Zeile mit `ok`, Exit 0.
 - `agent_args`: claude enthält `--settings <.lean-ctx/lean-herdr/claude/<rolle>.json>`.
 - Rechte: die `deny`-Liste jeder nicht schreibenden claude-Rolle enthält `Edit`, `Write`,
   `NotebookEdit`, die drei lean-ctx-Schreibwerkzeuge und jede Regel aus
-  `.claude/settings.json` außer den `lean-herdr report`-Befehlen und den beiden
-  Gate-Befehlen (`{test}`/`{lint}` des Templates); der bestehende Test „kein Worker bekommt `dispatch`" läuft über
-  alle Rollen-Dateien beider Arten; die opencode-Sperre der lean-ctx-Schreibwerkzeuge für
-  `orchestrator` und `reviewer`.
+  `.claude/settings.json` außer den `lean-herdr report`-Befehlen, den beiden
+  Gate-Befehlen (`{test}`/`{lint}` des Templates) und `Skill`-Regeln; keine `deny`-Liste
+  einer claude-Rolle enthält `Skill` oder `Skill(…)` (B4); der bestehende Test „kein
+  Worker bekommt `dispatch`" läuft über alle Rollen-Dateien beider Arten; die
+  opencode-Sperre der lean-ctx-Schreibwerkzeuge für `orchestrator` und `reviewer`.
 - `model_warnings`: Paare `review` gegen `implement` und gegen eine eigene Arbeitsart;
   Opt-out `shares_reviewed_model`; leeres Modell warnt nicht; dieselbe Rolle auf beiden
   Seiten warnt nicht; bestehende Tests mit `shares_builder_model` (`test_settings.py`,
@@ -338,6 +348,7 @@ Alle Antworten bleiben eine JSON-Zeile mit `ok`, Exit 0.
 
 - Kein lean-ctx-Kontext-Profil (`LEAN_CTX_PROFILE`) je Rolle.
 - Kein Skill-Feld in `[roles.*]`.
+- Keine Skill-Anbindung der Rollen-Prompts (offen für TP2/TP3, A5).
 - Keine aus Bausteinen gerenderten Rollen-Prompts.
 - Keine neuen Rollen (plan-writer, plan-reviewer, integrator — TP2/TP3).
 - Keine Änderung an Teardown, Merge oder Push (TP3).
