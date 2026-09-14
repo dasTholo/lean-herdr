@@ -921,6 +921,108 @@ def test_without_a_role_file_the_role_brings_its_own_prompt(monkeypatch, tmp_pat
     assert [r.role_file for r in seen] == [role_prompt_path(root, "builder")]
 
 
+#: A work of the project's own, and the role [routing] names for it.
+RENAME_CONFIG = (
+    '[routing]\nrename = "refactorer"\n\n[roles.refactorer]\nkind = "claude"\nmodel = "haiku"\n'
+)
+
+
+def test_work_resolves_the_role_with_its_prompt_kind_and_model(monkeypatch, tmp_path, capsys):
+    """`--work` behaves exactly like the call by the role it resolves to."""
+    root = tmp_path / "repo"
+    _write_config(root, RENAME_CONFIG)
+    write_role_fixture(root, "refactorer")
+    seen = _spy_dispatch(monkeypatch)
+
+    got = _line(["--work", "rename"], root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert got["role"] == "refactorer", got
+    assert [(r.role, r.kind, r.model, r.role_file) for r in seen] == [
+        ("refactorer", "claude", "haiku", role_prompt_path(root, "refactorer"))
+    ]
+
+
+def test_work_implement_needs_no_routing_table(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
+    seen = _spy_dispatch(monkeypatch)
+
+    got = _line(["--work", "implement"], root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert [r.role for r in seen] == ["builder"]
+
+
+def test_work_under_await_rings_the_role_it_resolves_to(monkeypatch, tmp_path, capsys):
+    """The wait mode must name the agent the build mode started -- same role, same name."""
+    root = tmp_path / "repo"
+    _write_config(root, RENAME_CONFIG)
+    seen = _spy_dispatch(monkeypatch)
+
+    _line(["--work", "rename", "--await", "--task-id", "o-1"], root, monkeypatch, capsys)
+
+    assert [(r.role, r.kind) for r in seen] == [("refactorer", "claude")]
+
+
+def test_a_work_nobody_routed_is_a_config_error(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    _no_launch(monkeypatch)
+
+    got = _line(["--work", "plan", "--kind", "claude", "--model", "m"], root, monkeypatch, capsys)
+
+    assert got == {"ok": False, "error": "config_error: no role for work 'plan'"}
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        pytest.param(
+            ["builder", "--work", "implement"],
+            "usage_error: name a role or --work, not both",
+            id="both",
+        ),
+        pytest.param(["--kind", "claude"], "usage_error: name a role or --work", id="neither"),
+        pytest.param(
+            ["order", "--to", "b", "--message", "x", "--work", "implement"],
+            "usage_error: `order` does not take --work",
+            id="with a log command",
+        ),
+    ],
+)
+def test_a_role_and_work_exclude_each_other(monkeypatch, tmp_path, capsys, argv, expected):
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    _no_launch(monkeypatch)
+    monkeypatch.setattr(
+        "lean_herdr.dispatch.create_order", lambda *a, **kw: pytest.fail("an order was written")
+    )
+
+    got = _line(argv, root, monkeypatch, capsys)
+
+    assert got["ok"] is False
+    assert got["error"].startswith(expected), got
+
+
+def test_a_work_routed_to_a_log_command_is_a_config_error(monkeypatch, tmp_path, capsys):
+    """`order` takes the positional slot instead of a role, so it can never be one."""
+    root = tmp_path / "repo"
+    _write_config(root, '[routing]\nsend = "order"\n')
+    _no_launch(monkeypatch)
+    monkeypatch.setattr(
+        "lean_herdr.dispatch.create_order", lambda *a, **kw: pytest.fail("an order was written")
+    )
+
+    got = _line(["--work", "send", "--to", "b", "--message", "x"], root, monkeypatch, capsys)
+
+    assert got == {
+        "ok": False,
+        "error": "config_error: routing.send: 'order' is a log command, not a role",
+    }
+
+
 def test_neither_flag_nor_file_is_still_a_usage_error(monkeypatch, tmp_path, capsys):
     """The duty stays a duty.
 

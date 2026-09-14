@@ -65,6 +65,7 @@ from lean_herdr.settings import (
     llm_settings_layered,
     model_warnings,
     read_settings,
+    role_for_work,
     role_problem,
     role_prompt_path,
     settings_for,
@@ -578,8 +579,13 @@ def build_parser() -> argparse.ArgumentParser:
     p = _Parser(prog="lean-herdr dispatch", description="Build or wait -- one call.")
     p.add_argument(
         "command",
-        help="builder | reviewer | orchestrator | order | answer | cancel | remember",
+        nargs="?",
+        default=None,
+        help="a role -- builder | reviewer | orchestrator | … -- or order | answer | cancel | remember",
     )
+    # A role or --work, exactly one; role_or_work() says which is wrong. Not
+    # argparse: a JSON line, not exit 2.
+    p.add_argument("--work", default=None, help="a kind of work; [routing] names its role")
     # No longer `required=True`: `order` and `cancel` take no kind, and
     # argparse would refuse a perfectly valid call. missing_flags() enforces it
     # for the two modes that DO need it -- there it answers with a JSON line
@@ -634,6 +640,22 @@ def build_parser() -> argparse.ArgumentParser:
 def _given(*pairs: tuple[str, Any]) -> str:
     """The flags of that list that were actually given, as one phrase."""
     return " and ".join(flag for flag, value in pairs if value is not None)
+
+
+def role_or_work(args: argparse.Namespace) -> str | None:
+    """A role name or `--work`, exactly one. The complaint, or None.
+
+    Checked before the config is read, unlike missing_flags(): no file can
+    answer it, and `--work` has to become a role before settings_for() can read
+    that role's table. With a log command `--work` is a stray flag like any other.
+    """
+    if args.command in LOG_COMMANDS:
+        return f"`{args.command}` does not take --work" if args.work is not None else None
+    if args.command is None and args.work is None:
+        return "name a role or --work"
+    if args.command is not None and args.work is not None:
+        return f"name a role or --work, not both: {args.command} and --work {args.work}"
+    return None
 
 
 def missing_flags(args: argparse.Namespace) -> str | None:
@@ -757,6 +779,9 @@ def main(argv: list[str] | None = None) -> int:
     result: dict[str, Any]
     try:
         args = build_parser().parse_args(argv)
+        clash = role_or_work(args)
+        if clash:
+            raise UsageError(clash)
         # Read once, hand to both modes: the wait mode has to ring the agent
         # the build mode started, and the name comes from here. SETTINGS_PATH
         # is RELATIVE -- anchored on anything but the canonical root the file
@@ -771,6 +796,16 @@ def main(argv: list[str] | None = None) -> int:
         # one that would otherwise stay silent.
         root = canonical_root()
         raw = read_settings(root / SETTINGS_PATH)
+        if args.work is not None:
+            # From here on the resolved role IS the command: settings_for,
+            # missing_flags(), both modes and the warning read one name.
+            args.command = role_for_work(args.work, raw)
+            # `order`, `answer`, `cancel` and `remember` take the positional slot
+            # INSTEAD of a role -- a routed one would turn --work into a log write.
+            if args.command in LOG_COMMANDS:
+                raise SettingsError(
+                    f"routing.{args.work}: {args.command!r} is a log command, not a role"
+                )
         settings = settings_for(args.command, raw)
         # `[llm]` is validated for EVERY command, in the one consumer that has a
         # reader for the complaint: a SettingsError here leaves main() as
