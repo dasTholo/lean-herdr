@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NoReturn
 
+from lean_herdr.settings import claude_settings_path, role_prompt_path
 from lean_herdr.templating import DEFAULT_VALUES, render
 
 
@@ -32,6 +33,23 @@ def write_opencode_config(root: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(render("opencode.jsonc", DEFAULT_VALUES))
     return path
+
+
+def write_role_fixture(root: Path, *roles: str) -> None:
+    """Everything `dispatch` checks before it splits a pane, for these roles and both kinds.
+
+    The prompt under `.lean-ctx/lean-herdr/roles/`, an empty claude settings file, and
+    `opencode.jsonc` from the shipped template -- which names the orchestrator, the
+    builder and the reviewer, and no other role.
+    """
+    for role in roles:
+        prompt = role_prompt_path(root, role)
+        prompt.parent.mkdir(parents=True, exist_ok=True)
+        prompt.write_text(f"# Role: {role}\n", encoding="utf-8")
+        claude = claude_settings_path(root, role)
+        claude.parent.mkdir(parents=True, exist_ok=True)
+        claude.write_text("{}\n", encoding="utf-8")
+    write_opencode_config(root)
 
 
 @dataclass

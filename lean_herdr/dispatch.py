@@ -60,10 +60,13 @@ from lean_herdr.settings import (
     LlmSettings,
     RoleSettings,
     SettingsError,
+    claude_settings_path,
     llm_settings,
     llm_settings_layered,
     model_warnings,
     read_settings,
+    role_problem,
+    role_prompt_path,
     settings_for,
 )
 from lean_herdr.worktree import (
@@ -158,14 +161,27 @@ def agent_name(
     return template.format(role=role, branch=slug)
 
 
-def agent_args(kind: str, model: str, role_file: Path) -> list[str]:
-    """Native arguments. Role prompts travel as a FILE, never as text (H2)."""
+def agent_args(kind: str, model: str, role_file: Path, role: str, *, root: Path) -> list[str]:
+    """Native arguments. Role prompts travel as a FILE, never as text (H2).
+
+    Both runtimes are told the ROLE, never the prompt file's stem: an `--role-file`
+    override changes the prompt and nothing else. A claude worker also gets its
+    role's settings file -- `deny` beats every `allow` from every source, so that
+    file can only narrow what `.claude/settings.json` grants.
+    """
     if kind == "claude":
-        return ["--model", model, "--append-system-prompt-file", str(role_file)]
+        return [
+            "--model",
+            model,
+            "--append-system-prompt-file",
+            str(role_file),
+            "--settings",
+            str(claude_settings_path(root, role)),
+        ]
     if kind == "opencode":
-        # With opencode the role prompt hangs on agent.<name>.prompt in
+        # With opencode the role prompt hangs on agent.<role>.prompt in
         # opencode.jsonc; here only the agent is picked.
-        return ["--model", model, "--agent", role_file.stem]
+        return ["--model", model, "--agent", role]
     raise ValueError(f"unknown kind: {kind}")
 
 
@@ -302,7 +318,7 @@ def dispatch(
             name,
             kind=req.kind,
             pane=pane,
-            agent_args=agent_args(req.kind, req.model, req.role_file),
+            agent_args=agent_args(req.kind, req.model, req.role_file, req.role, root=root),
             first_timeout_ms=FIRST_START_TIMEOUT_MS,
             retry_timeout_ms=timeout_ms_for(cfg.ready_timeout_s),
         )
@@ -579,7 +595,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--task-id", default=None, help="required with --await")
     p.add_argument("--model", default=None, help="required in build mode")
-    p.add_argument("--role-file", default=None, type=Path, help="required in build mode")
+    p.add_argument(
+        "--role-file",
+        default=None,
+        type=Path,
+        help="build mode: the prompt file; default .lean-ctx/lean-herdr/roles/<role>.md",
+    )
     p.add_argument("--worktree", default=None, help="branch; the pane runs in its worktree")
     p.add_argument(
         "--prereview",
@@ -715,13 +736,8 @@ def missing_flags(args: argparse.Namespace) -> str | None:
         if args.prereview and not args.worktree:
             return "--prereview needs --worktree"
         return None
-    missing = [
-        flag
-        for flag, value in (("--model", args.model), ("--role-file", args.role_file))
-        if not value
-    ]
-    if missing:
-        return f"build mode needs {' and '.join(missing)}"
+    if not args.model:
+        return "build mode needs --model"
     # `--task-id` belongs to `--await`; in build mode argparse takes it and
     # the mode drops it without a word. Last gap of the stray-flag doctrine.
     stray = _given(
@@ -828,27 +844,43 @@ def main(argv: list[str] | None = None) -> int:
                     llm_cfg=llm_cfg,
                 )
             else:
-                result = dispatch(
-                    DispatchRequest(
-                        role=args.command,
-                        kind=args.kind,
-                        model=args.model,
-                        role_file=args.role_file,
-                        worktree=args.worktree,
-                        profile=args.profile,
-                    ),
-                    herdr=Herdr(),
-                    root=root,
-                    cwd=root,
-                    settings=settings,
+                # Against the ROOT, not $PWD: claude resolves a relative prompt path in
+                # the pane's cwd, and that is the worktree, which need not carry the
+                # file. An absolute --role-file passes through `/` untouched.
+                prompt = (
+                    root / args.role_file
+                    if args.role_file
+                    else role_prompt_path(root, args.command)
                 )
-                # Additive, and only where a reader exists: the orchestrator
-                # reads the reviewer's dispatch line, so that is where a
-                # warning about the reviewer's model gets seen. `ok` is
-                # untouched -- a shared model is a warning, never a refusal.
-                notes = model_warnings(raw) if args.command == "reviewer" else []
-                if notes:
-                    result = {**result, "warnings": notes}
+                # Before dispatch(), so before ensure_worktree and `pane split`: a
+                # worker without its prompt or its runtime's file is a pane that
+                # starts, never reports, and costs the orchestrator a `no_reply`.
+                problem = role_problem(root, args.command, args.kind, prompt)
+                if problem:
+                    result = {"ok": False, "error": f"config_error: {problem}"}
+                else:
+                    result = dispatch(
+                        DispatchRequest(
+                            role=args.command,
+                            kind=args.kind,
+                            model=args.model,
+                            role_file=prompt,
+                            worktree=args.worktree,
+                            profile=args.profile,
+                        ),
+                        herdr=Herdr(),
+                        root=root,
+                        cwd=root,
+                        settings=settings,
+                    )
+                    result = {**result, "role": args.command}
+                    # Additive, and only where a reader exists: the orchestrator
+                    # reads the reviewer's dispatch line, so that is where a
+                    # warning about the reviewer's model gets seen. `ok` is
+                    # untouched -- a shared model is a warning, never a refusal.
+                    notes = model_warnings(raw) if args.command == "reviewer" else []
+                    if notes:
+                        result = {**result, "warnings": notes}
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}
     except SettingsError as exc:

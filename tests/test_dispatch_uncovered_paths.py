@@ -30,7 +30,7 @@ from lean_herdr.dispatch import (
     wait_for_agent_id,
 )
 from lean_herdr.herdr import Herdr
-from tests.doubles import FakeProc, agent_started, which_stub
+from tests.doubles import FakeProc, agent_started, which_stub, write_role_fixture
 
 ROOT = Path("/repo")
 
@@ -98,7 +98,7 @@ def test_dispatch_forwards_explicit_cwd_to_pane_split_not_root(world):
 # -- Gap 2: main()'s success path stays hermetic ---------------------------
 
 
-def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
+def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, tmp_path, capsys):
     """main()'s normal path (canonical_root() does NOT raise) was only ever
     covered via the crash branch. This test proves the success path both
     produces a correct result and stays hermetic even if a future change
@@ -114,7 +114,9 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
     monkeypatch.setattr("subprocess.Popen", _forbidden)
 
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
-    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: ROOT)
+    root = tmp_path / "repo"
+    write_role_fixture(root, "builder")
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
 
     h_proc = FakeProc()
     h_proc.replies = {
@@ -125,23 +127,19 @@ def test_main_success_path_never_touches_a_real_subprocess(monkeypatch, capsys):
     monkeypatch.setattr("lean_herdr.dispatch.Herdr", lambda *a, **kw: Herdr(runner=h_proc))
     monkeypatch.setattr("lean_herdr.dispatch.read_registry", lambda *a, **kw: registry)
 
-    code = main(
-        [
-            "builder",
-            "--kind",
-            "claude",
-            "--model",
-            "sonnet",
-            "--role-file",
-            "roles/builder.md",
-        ]
-    )
+    code = main(["builder", "--kind", "claude", "--model", "sonnet"])
 
     assert code == 0
     lines = capsys.readouterr().out.strip().splitlines()
     assert len(lines) == 1
     result = json.loads(lines[0])
-    assert result == {"ok": True, "pane": "w1:p6", "agent_id": AGENT_ID, "agent": "builder"}
+    assert result == {
+        "ok": True,
+        "pane": "w1:p6",
+        "agent_id": AGENT_ID,
+        "agent": "builder",
+        "role": "builder",
+    }
 
 
 # -- Gap 3: wait_for_agent_id() run for real -------------------------------

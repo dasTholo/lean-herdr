@@ -181,6 +181,15 @@ Without the flags the gate is `uv run pytest` and `uv run ruff check`. A value
 is a whole command of letters, digits, spaces and `._/=+,@-`; how far it opens
 the builder's gate is your call.
 
+A claude worker also gets `--settings .lean-ctx/lean-herdr/claude/<role>.json`
+beside `.claude/settings.json`. Claude Code merges the permission lists of
+every source and a `deny` beats every `allow`, so a role file can only
+narrow: `builder.json` is empty, `reviewer.json` takes back the editors,
+`git add`, `git commit`, `wt step commit` and lean-ctx's three write tools.
+An opencode worker gets the same per role from its block in
+`opencode.jsonc`. `dispatch` refuses a role whose prompt, opencode block or
+claude file is missing, before it opens a worktree or a pane.
+
 `init` records what it wrote in `.lean-ctx/lean-herdr/templates.lock.json` --
 commit it, like the role prompts. With it, `lean-herdr workspace init --update`
 rewrites only the files nobody edited since, and leaves a hand edit where it

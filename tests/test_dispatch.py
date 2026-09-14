@@ -21,10 +21,12 @@ from lean_herdr.settings import (
     OVERLAY_PATH,
     SETTINGS_PATH,
     RoleSettings,
+    claude_settings_path,
     read_settings,
+    role_prompt_path,
     settings_for,
 )
-from tests.doubles import FakeProc, agent_started, which_stub
+from tests.doubles import FakeProc, agent_started, which_stub, write_role_fixture
 
 ROOT = Path("/repo")
 AGENT_ID = "mcp-2018183-70c877bf"
@@ -126,9 +128,23 @@ def test_agent_name_is_branch_AND_role():
 
 
 def test_the_role_prompt_travels_as_a_file_never_as_text():
-    args = agent_args("claude", "sonnet", Path("roles/builder.md"))
-    assert args == ["--model", "sonnet", "--append-system-prompt-file", "roles/builder.md"]
+    prompt = ROOT / ".lean-ctx" / "lean-herdr" / "roles" / "builder.md"
+    args = agent_args("claude", "sonnet", prompt, "builder", root=ROOT)
+    assert args == [
+        "--model",
+        "sonnet",
+        "--append-system-prompt-file",
+        "/repo/.lean-ctx/lean-herdr/roles/builder.md",
+        "--settings",
+        "/repo/.lean-ctx/lean-herdr/claude/builder.json",
+    ]
     assert not any("\n" in a for a in args), "Herdr rejects multi-line arguments (H2)"
+
+
+def test_opencode_is_told_the_role_not_the_prompt_files_stem():
+    """An `--role-file` override changes the prompt, never the agent opencode resolves."""
+    args = agent_args("opencode", "m", Path("/elsewhere/strict.md"), "reviewer", root=ROOT)
+    assert args == ["--model", "m", "--agent", "reviewer"]
 
 
 def test_build_mode_returns_pane_and_agent_id_and_creates_nothing(world):
@@ -448,6 +464,7 @@ def test_main_loads_the_config_once_for_both_modes(monkeypatch, tmp_path):
     """
     root = tmp_path / "repo"
     _write_config(root, '[default]\nname_template = "{branch}.{role}"\n')
+    write_role_fixture(root, "builder")
     elsewhere = tmp_path / "elsewhere"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
@@ -462,7 +479,7 @@ def test_main_loads_the_config_once_for_both_modes(monkeypatch, tmp_path):
     monkeypatch.setattr("lean_herdr.dispatch.await_task", spy)
 
     base = ["builder", "--kind", "claude", "--worktree", "feat/auth"]
-    main([*base, "--model", "sonnet", "--role-file", "roles/builder.md"])
+    main([*base, "--model", "sonnet"])
     main([*base, "--await", "--task-id", "T1"])
 
     assert [s.name_template for s in seen] == ["{branch}.{role}"] * 2, (
@@ -486,6 +503,7 @@ def test_main_reads_config_toml_exactly_once_per_call(monkeypatch, tmp_path, cap
     """
     root = tmp_path / "repo"
     _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
     reads: list[str] = []
     real = dispatch_module.read_settings
 
@@ -713,8 +731,9 @@ def test_a_broken_config_wins_over_a_usage_error(monkeypatch, tmp_path, capsys):
 #: on the command line, and the build still runs.
 BUILDER_CONFIG = '[roles.builder]\nkind = "claude"\nmodel = "sonnet"\n'
 
-#: Everything a builder build needs BESIDE the two flags under test.
-BUILD_ARGS = ["builder", "--role-file", "roles/builder.md"]
+#: Everything a builder build needs BESIDE the two flags under test -- the prompt
+#: now comes with the role.
+BUILD_ARGS = ["builder"]
 
 #: Same model under both roles -- legal, and exactly what earns the warning.
 SHARED_MODEL_CONFIG = (
@@ -762,14 +781,10 @@ def test_only_the_orchestrator_has_a_kind_without_a_file(monkeypatch, tmp_path, 
     """
     root = tmp_path / "repo"
     _write_config(root, "")
+    write_role_fixture(root, "orchestrator", "builder")
     _spy_dispatch(monkeypatch)
 
-    orch = _line(
-        ["orchestrator", "--role-file", "roles/orchestrator.md", "--model", "x"],
-        root,
-        monkeypatch,
-        capsys,
-    )
+    orch = _line(["orchestrator", "--model", "x"], root, monkeypatch, capsys)
     work = _line([*BUILD_ARGS, "--model", "x"], root, monkeypatch, capsys)
 
     assert orch["ok"] is True, orch
@@ -783,12 +798,7 @@ def test_the_orchestrators_built_in_kind_does_not_excuse_a_model(monkeypatch, tm
     _write_config(root, "")
     _spy_dispatch(monkeypatch)
 
-    got = _line(
-        ["orchestrator", "--role-file", "roles/orchestrator.md"],
-        root,
-        monkeypatch,
-        capsys,
-    )
+    got = _line(["orchestrator"], root, monkeypatch, capsys)
 
     assert got["ok"] is False
     assert got["error"].startswith("usage_error: build mode needs --model"), got
@@ -798,6 +808,7 @@ def test_the_model_flag_beats_the_file(monkeypatch, tmp_path, capsys):
     """CLI > file, the precedence settings.py already promises."""
     root = tmp_path / "repo"
     _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
     seen = _spy_dispatch(monkeypatch)
 
     _line([*BUILD_ARGS, "--model", "opus"], root, monkeypatch, capsys)
@@ -810,6 +821,7 @@ def test_the_config_fills_a_missing_model_flag(monkeypatch, tmp_path, capsys):
     dispatch() in the request, and the call is not a usage error."""
     root = tmp_path / "repo"
     _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
     seen = _spy_dispatch(monkeypatch)
 
     got = _line(BUILD_ARGS, root, monkeypatch, capsys)
@@ -821,6 +833,7 @@ def test_the_config_fills_a_missing_model_flag(monkeypatch, tmp_path, capsys):
 def test_the_kind_flag_beats_the_file(monkeypatch, tmp_path, capsys):
     root = tmp_path / "repo"
     _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
     seen = _spy_dispatch(monkeypatch)
 
     _line([*BUILD_ARGS, "--kind", "opencode"], root, monkeypatch, capsys)
@@ -832,12 +845,80 @@ def test_the_config_fills_a_missing_kind_flag(monkeypatch, tmp_path, capsys):
     """Workers have no built-in kind, so the file is the only other source."""
     root = tmp_path / "repo"
     _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
     seen = _spy_dispatch(monkeypatch)
 
     got = _line(BUILD_ARGS, root, monkeypatch, capsys)
 
     assert got["ok"] is True, got
     assert [r.kind for r in seen] == ["claude"]
+
+
+@pytest.mark.parametrize(
+    ("kind", "drop", "expected"),
+    [
+        pytest.param("claude", "prompt", "config_error: no role prompt at ", id="prompt"),
+        pytest.param("opencode", "block", "config_error: opencode.jsonc in ", id="block"),
+        pytest.param("claude", "claude file", "config_error: no claude settings at ", id="claude"),
+    ],
+)
+def test_a_role_that_cannot_run_is_refused_before_any_pane(
+    monkeypatch, tmp_path, capsys, kind, drop, expected
+):
+    """All three are checked before `pane split`, and none of them starts anything.
+
+    Herdr is a recording fake, not a stop sign: without the check dispatch() would
+    run on, and its calls would show up in `proc.calls`.
+    """
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    write_role_fixture(root, "builder")
+    if drop == "prompt":
+        role_prompt_path(root, "builder").unlink()
+    elif drop == "claude file":
+        claude_settings_path(root, "builder").unlink()
+    else:
+        (root / "opencode.jsonc").write_text('{"agent": {"reviewer": {}}}\n', encoding="utf-8")
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    proc = FakeProc()
+    monkeypatch.setattr("lean_herdr.dispatch.Herdr", lambda *a, **kw: Herdr(runner=proc))
+
+    got = _line(["builder", "--kind", kind, "--model", "sonnet"], root, monkeypatch, capsys)
+
+    assert got["ok"] is False
+    assert got["error"].startswith(expected), got
+    assert proc.calls == [], proc.flat()
+
+
+def test_a_relative_role_file_is_resolved_against_the_repo_root(monkeypatch, tmp_path, capsys):
+    """Handed on as typed, it would resolve in the pane's worktree, which may lack it."""
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
+    (root / "prompts").mkdir()
+    (root / "prompts" / "strict.md").write_text("# Role: builder\n", encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    seen = _spy_dispatch(monkeypatch)
+
+    got = _line([*BUILD_ARGS, "--role-file", "prompts/strict.md"], root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert [r.role_file for r in seen] == [root / "prompts" / "strict.md"]
+
+
+def test_without_a_role_file_the_role_brings_its_own_prompt(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "repo"
+    _write_config(root, BUILDER_CONFIG)
+    write_role_fixture(root, "builder")
+    seen = _spy_dispatch(monkeypatch)
+
+    got = _line(BUILD_ARGS, root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert got["role"] == "builder", got
+    assert [r.role_file for r in seen] == [role_prompt_path(root, "builder")]
 
 
 def test_neither_flag_nor_file_is_still_a_usage_error(monkeypatch, tmp_path, capsys):
@@ -900,9 +981,10 @@ def test_a_reviewer_build_carries_the_shared_model_warning(monkeypatch, tmp_path
     """
     root = tmp_path / "repo"
     _write_config(root, SHARED_MODEL_CONFIG)
+    write_role_fixture(root, "reviewer")
     _spy_dispatch(monkeypatch)
 
-    got = _line(["reviewer", "--role-file", "roles/reviewer.md"], root, monkeypatch, capsys)
+    got = _line(["reviewer"], root, monkeypatch, capsys)
 
     assert got["ok"] is True, got
     assert len(got["warnings"]) == 1, got
@@ -913,6 +995,7 @@ def test_a_builder_build_of_the_same_config_carries_no_warning(monkeypatch, tmp_
     """Same file, no reader: nothing reads the builder's line for this."""
     root = tmp_path / "repo"
     _write_config(root, SHARED_MODEL_CONFIG)
+    write_role_fixture(root, "builder")
     _spy_dispatch(monkeypatch)
 
     got = _line(BUILD_ARGS, root, monkeypatch, capsys)

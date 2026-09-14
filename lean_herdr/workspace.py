@@ -222,8 +222,8 @@ def start_orchestrator(
     if not pane:
         return {"ok": False, "error": "pane_split_failed", "workspace": target}
 
-    # NOT agent_args(): that helper always sets --model and derives the
-    # agent name from a role FILE stem. Here the agent is named directly
+    # NOT agent_args(): that helper always sets --model and hands a claude
+    # worker its role's settings file. Here the agent is named directly
     # and --model is omitted entirely when the config leaves it empty --
     # exactly what handle_bootstrap does today.
     agent_args = ["--agent", OPENCODE_ORCHESTRATOR]
