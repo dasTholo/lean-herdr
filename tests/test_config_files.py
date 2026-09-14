@@ -62,8 +62,8 @@ def test_wt_toml_has_the_pre_merge_gate_with_test_and_lint():
     assert "list" not in cfg, "wt ignores list.json-schema in a project config"
 
 
-def test_readme_names_every_runtime_dependency():
-    text = (ROOT / "README.md").read_text(encoding="utf-8")
+def test_install_names_every_runtime_dependency():
+    text = (ROOT / "INSTALL.md").read_text(encoding="utf-8")
     for requirement in (
         "uv",
         "python3",
@@ -75,26 +75,43 @@ def test_readme_names_every_runtime_dependency():
         "lean-ctx allow wt",
         # The path form was never able to match: the gate normalises to the
         # basename and every allowlist entry is a bare name (measured on
-        # lean-ctx 3.10.1). The README names the spelling that CAN match.
+        # lean-ctx 3.10.1). INSTALL.md names the spelling that CAN match.
         "lean-ctx allow lean-herdr",
         "wt config approvals",
         "warning:",
-        # The work-order path, both halves of it. `ctx_task` used to stand
-        # here; it is gone from the project, so requiring it would pin the
-        # README to a tool that no longer exists.
-        "lean-herdr dispatch order",
-        "lean-herdr report",
-        "ORCHESTRATOR = orch",
         # One snapshot for every project: the generator worktrunk runs, the one
         # command that says whether it all fits, and the gesture that updates it.
         "lean-herdr llm generate",
         "lean-herdr workspace check",
         "--reinstall",
+        # The hooks this repository gates its own commits and pushes with.
+        "pre-commit install",
+    ):
+        assert requirement in text, f"INSTALL.md does not name {requirement!r}"
+
+
+def test_readme_names_the_work_order_path():
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    for requirement in (
+        # Both halves of it. `ctx_task` used to stand here; it is gone from the
+        # project, so requiring it would pin the README to a tool that no
+        # longer exists.
+        "lean-herdr dispatch order",
+        "lean-herdr report",
+        "ORCHESTRATOR = orch",
     ):
         assert requirement in text, f"README does not name {requirement!r}"
 
 
-def test_readme_no_longer_names_the_old_generator_script():
-    """`bin/herdr-llm` is gone; a README line naming it sends the operator nowhere."""
+def test_readme_leaves_the_installation_to_install_md():
+    """README.md is for using lean-herdr; what a machine needs lives in INSTALL.md."""
     text = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "bin/herdr-llm" not in text
+    assert "INSTALL.md" in text
+    for install_only in ("## Runtime dependencies", "uv tool install", "lean-ctx allow"):
+        assert install_only not in text, f"README still carries {install_only!r}"
+
+
+def test_no_operator_doc_names_the_old_generator_script():
+    """`bin/herdr-llm` is gone; a line naming it sends the operator nowhere."""
+    for doc in ("README.md", "INSTALL.md"):
+        assert "bin/herdr-llm" not in (ROOT / doc).read_text(encoding="utf-8"), doc

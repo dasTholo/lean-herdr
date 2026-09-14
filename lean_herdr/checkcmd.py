@@ -335,12 +335,12 @@ def install_report(
     if not tool:
         lines.append(
             f"{base} is no uv tool venv (no uv-receipt.toml) -- this lean-herdr is not "
-            "the installed snapshot; see README, Updating"
+            "the installed snapshot; see INSTALL.md, Updating"
         )
     if editable:
         lines.append(
             "lean-herdr is installed editable -- every project runs whatever branch the "
-            "checkout has; reinstall the snapshot from main, see README, Updating"
+            "checkout has; reinstall the snapshot from main, see INSTALL.md, Updating"
         )
     if not here.is_relative_to(base):
         shadow = env.get("PYTHONPATH")
