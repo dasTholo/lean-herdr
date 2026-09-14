@@ -489,14 +489,15 @@ def _config_errors(root: Path) -> tuple[list[str], dict[str, Any], bool]:
 
 def _misrouted_role(work: str, role: str) -> str | None:
     """A line when `role` cannot become a worker at all -- `dispatch --work {work}` is refused
-    for a log command, or would silence the running orchestrator for its own agent name.
+    for a log command, or for the orchestrator's own agent name.
 
     Both are legal `[routing]` lines: `_check_routing` only holds a role to `ROLE_RE`, and
-    neither name is reserved there. `dispatch.main` refuses the first outright (`LOG_COMMANDS`
-    take the positional slot INSTEAD of a role); the second it never catches at all --
-    `dispatch()` reuses ANY running agent under the name it is given (dispatch.py, `existing`),
-    and that name is `ORCHESTRATOR_AGENT` for the one agent every worker prompt trusts as the
-    sender. A dispatch under that name finds it and sends it `/clear`.
+    neither name is reserved there. `dispatch.main` refuses both outright now (`LOG_COMMANDS`
+    take the positional slot INSTEAD of a role; `ORCHESTRATOR_AGENT` is the one agent every
+    worker prompt trusts as the sender, and `dispatch()` reuses ANY running agent under the
+    name it is given -- dispatch.py, `existing` -- so a build under it would send `/clear`
+    to the orchestrator, not start a worker). This warning only gets there first, before an
+    order is ever written for a work `--work` cannot dispatch anyway.
     """
     if role in LOG_COMMANDS:
         return f"routing.{work}: {role!r} is a log command, not a role -- `dispatch --work {work}` fails"

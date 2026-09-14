@@ -56,6 +56,7 @@ from lean_herdr.settings import (
     DEFAULT_PROFILE,
     KINDS,
     PROFILE_BY_ROLE,
+    ROLE_RE,
     SETTINGS_PATH,
     LlmSettings,
     RoleSettings,
@@ -658,6 +659,25 @@ def role_or_work(args: argparse.Namespace) -> str | None:
     return None
 
 
+def _check_role_name(role: str) -> None:
+    """`role` names a worker `dispatch` could build -- or a UsageError.
+
+    Neither the positional slot nor a role `--work` resolves to is held to
+    `ROLE_RE` anywhere upstream, and the role becomes part of two paths
+    (`role_prompt_path`, `claude_settings_path`) before `dispatch()` ever
+    opens a worktree or a pane -- a `../../..` in it reaches outside them.
+    Equal to `ORCHESTRATOR_AGENT`, it would additionally name the started
+    agent like the running orchestrator: `dispatch()` reuses ANY existing
+    agent under the name it is given and sends it `/clear` (this module,
+    `existing`), so a build under that name would silence the orchestrator
+    instead of starting a worker.
+    """
+    if not ROLE_RE.fullmatch(role):
+        raise UsageError(f"'{role}' is no role name")
+    if role == ORCHESTRATOR_AGENT:
+        raise UsageError(f"'{role}' is the orchestrator's agent name, not a role")
+
+
 def missing_flags(args: argparse.Namespace) -> str | None:
     """Mode-dependent flag validation -- deliberately NOT via argparse.
 
@@ -855,6 +875,11 @@ def main(argv: list[str] | None = None) -> int:
                 raise SettingsError(
                     f"routing.{args.work}: {args.command!r} is a log command, not a role"
                 )
+        # By now `args.command` carries the role either way -- typed or
+        # resolved from `--work` -- and nothing before this point has put it
+        # into a path or started a worktree, a pane or an agent.
+        if args.command not in LOG_COMMANDS:
+            _check_role_name(args.command)
         settings = settings_for(args.command, raw)
         # `[llm]` is validated for EVERY command, in the one consumer that has a
         # reader for the complaint: a SettingsError here leaves main() as

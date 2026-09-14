@@ -1023,6 +1023,78 @@ def test_a_work_routed_to_a_log_command_is_a_config_error(monkeypatch, tmp_path,
     }
 
 
+@pytest.mark.parametrize(
+    ("argv", "expected"),
+    [
+        pytest.param(
+            ["../../../.claude/settings", "--kind", "claude", "--model", "m"],
+            "usage_error: '../../../.claude/settings' is no role name",
+            id="path-traversal",
+        ),
+        pytest.param(
+            ["orch", "--kind", "claude", "--model", "m"],
+            "usage_error: 'orch' is the orchestrator's agent name, not a role",
+            id="the-orchestrators-own-agent-name",
+        ),
+    ],
+)
+def test_a_role_that_is_no_role_name_is_refused_before_any_pane(
+    monkeypatch, tmp_path, capsys, argv, expected
+):
+    """Neither reaches `role_prompt_path`, `claude_settings_path`, or a worktree/pane/agent."""
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    _no_launch(monkeypatch)
+
+    got = _line(argv, root, monkeypatch, capsys)
+
+    assert got == {"ok": False, "error": expected}
+
+
+def test_a_work_routed_to_the_orchestrators_agent_name_is_a_usage_error(
+    monkeypatch, tmp_path, capsys
+):
+    """The same refusal reaches a role resolved from `--work`, not only a typed one."""
+    root = tmp_path / "repo"
+    _write_config(root, '[routing]\nsilence = "orch"\n')
+    _no_launch(monkeypatch)
+
+    got = _line(
+        ["--work", "silence", "--kind", "claude", "--model", "m"], root, monkeypatch, capsys
+    )
+
+    assert got == {
+        "ok": False,
+        "error": "usage_error: 'orch' is the orchestrator's agent name, not a role",
+    }
+
+
+@pytest.mark.parametrize("role", ["builder", "reviewer", "orchestrator"])
+def test_a_builtin_role_still_dispatches_past_the_role_name_check(
+    monkeypatch, tmp_path, capsys, role
+):
+    root = tmp_path / "repo"
+    _write_config(root, "")
+    write_role_fixture(root, role)
+    seen = _spy_dispatch(monkeypatch)
+
+    got = _line([role, "--kind", "claude", "--model", "m"], root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+    assert [r.role for r in seen] == [role]
+
+
+def test_a_log_command_is_unaffected_by_the_role_name_check(monkeypatch, tmp_path, capsys):
+    """`order` never reaches `_check_role_name` -- it takes the positional slot
+    INSTEAD of a role, like every other log command."""
+    root = tmp_path / "repo"
+    _write_config(root, "")
+
+    got = _line(["order", "--to", "b", "--message", "x"], root, monkeypatch, capsys)
+
+    assert got["ok"] is True, got
+
+
 def test_neither_flag_nor_file_is_still_a_usage_error(monkeypatch, tmp_path, capsys):
     """The duty stays a duty.
 
