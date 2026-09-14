@@ -1193,6 +1193,55 @@ def test_a_worktree_dispatch_splits_a_pane_of_that_workspace(world):
     assert "--current" not in split
 
 
+def test_a_worktree_dispatch_hands_the_roots_claude_settings_not_the_worktrees(
+    monkeypatch, tmp_path
+):
+    """`agent_args()` is built with `root=root` (the canonical root), never the worktree's
+    own cwd -- a worktree need not carry `.lean-ctx/lean-herdr/claude/<role>.json` at all,
+    and the file dispatch() hands the agent is named by the ROLE, not by the branch-qualified
+    agent name Herdr sees.
+    """
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    write_role_fixture(tmp_path, "builder")
+    worktree_path = tmp_path.parent / "repo.feat-auth"
+    h_proc = FakeProc(
+        replies={
+            **STARTED,
+            ("pane", "split"): {"result": {"pane": {"pane_id": "w2:p2"}}},
+            ("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}},
+            ("worktree", "list"): {
+                "result": {
+                    "source": {"repo_root": str(tmp_path)},
+                    "worktrees": [
+                        {
+                            "branch": "feat/auth",
+                            "path": str(worktree_path),
+                            "open_workspace_id": "w2",
+                        }
+                    ],
+                }
+            },
+        }
+    )
+    registry_path = tmp_path / "registry.json"
+    registry_path.write_text(json.dumps(registry()), encoding="utf-8")
+
+    result = dispatch(
+        req(worktree="feat/auth"),
+        herdr=Herdr(runner=h_proc),
+        root=tmp_path,
+        registry_path=registry_path,
+        waiter=lambda *a, **kw: AGENT_ID,
+    )
+
+    assert result["ok"] is True
+    start = next(c for c in h_proc.calls if c[1:3] == ["agent", "start"])
+    assert "builder-feat-auth" in start, "named by role AND branch on the herdr agent name"
+    settings_arg = start[start.index("--settings") + 1]
+    assert settings_arg == str(claude_settings_path(tmp_path, "builder")), start
+    assert settings_arg != str(claude_settings_path(worktree_path, "builder"))
+
+
 def test_a_worktree_without_an_anchor_pane_aborts(world):
     h_proc, _ = world
     h_proc.replies = {
