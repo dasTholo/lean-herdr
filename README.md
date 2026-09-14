@@ -165,13 +165,13 @@ In a repository that has never seen lean-herdr:
 
     lean-herdr workspace init
 
-It writes eight files -- the config and the three role prompts under
+It writes ten files -- the config, the three role prompts and two claude role settings under
 `.lean-ctx/lean-herdr/`, and `opencode.jsonc`, `.claude/settings.json`,
 `.config/wt.toml` and `.opencode/plugins/lean-ctx-policy.js` where their
 owners look for them. An existing file is skipped and named in the result;
 `--force` overwrites. It needs a git repository and does not create one.
 
-Three of the eight carry this project's own commands: `.config/wt.toml` runs
+Three of the ten carry this project's own commands: `.config/wt.toml` runs
 them as the pre-merge gate, and `.claude/settings.json` and `opencode.jsonc`
 let the builder run the same two first. Name them on the first run:
 
@@ -196,7 +196,7 @@ generator and the ignore rules.
 
 It also spends one aborted opencode bootstrap in the project, up to eight
 seconds. opencode's first bootstrap in a project that carries a project
-plugin hangs -- and one of the eight files is such a plugin. The aborted
+plugin hangs -- and one of the ten files is such a plugin. The aborted
 run is the cure: every start after it takes about three seconds. The
 result reports it as `warmed` once the warm-up RAN -- not that it
 succeeded: a project whose `opencode.jsonc` never named the orchestrator

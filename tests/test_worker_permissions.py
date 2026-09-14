@@ -19,7 +19,7 @@ import pytest
 
 from lean_herdr.report import SUBCOMMANDS
 from lean_herdr.settings import load_jsonc
-from lean_herdr.templating import LAYOUT, render
+from lean_herdr.templating import LAYOUT, read_lock, render, resolve_values
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ("builder", "reviewer")
@@ -31,6 +31,31 @@ LEAN_CTX_WRITERS = ("lean-ctx_ctx_patch", "lean-ctx_ctx_edit", "lean-ctx_ctx_ref
 
 #: The opencode agents that change no file.
 NON_WRITING = ("orchestrator", "reviewer")
+
+#: The claude roles that ship a settings file `dispatch` hands over as `--settings`.
+CLAUDE_ROLES = ("builder", "reviewer")
+
+#: The claude roles that change no file. Their `deny` outranks every `allow` from
+#: every source, the shared `.claude/settings.json` included.
+CLAUDE_NON_WRITING = ("reviewer",)
+
+#: What writes, whatever `.claude/settings.json` says: Claude Code's own editors
+#: and lean-ctx's three write tools.
+CLAUDE_WRITERS = (
+    "Edit",
+    "Write",
+    "NotebookEdit",
+    "mcp__lean-ctx__ctx_patch",
+    "mcp__lean-ctx__ctx_edit",
+    "mcp__lean-ctx__ctx_refactor",
+)
+
+
+def claude_rules(role: str, key: str, root: Path = ROOT) -> list[str]:
+    """`permissions.<key>` of `.lean-ctx/lean-herdr/claude/<role>.json`; absent is empty."""
+    data = json.loads((root / LAYOUT[f"claude/{role}.json"]).read_text(encoding="utf-8"))
+    return data.get("permissions", {}).get(key, [])
+
 
 #: Another project's gate. The permission files are rendered with these too, so
 #: a render that shifted a line fails here even where this repo's copy passes.
@@ -85,7 +110,7 @@ def opencode(root: Path = ROOT) -> dict:
 def foreign_root(tmp_path_factory) -> Path:
     """opencode.jsonc and .claude/settings.json, rendered with FOREIGN."""
     root = tmp_path_factory.mktemp("foreign")
-    for name in ("opencode.jsonc", "settings.json"):
+    for name in ("opencode.jsonc", "settings.json", "claude/builder.json", "claude/reviewer.json"):
         target = root / LAYOUT[name]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(render(name, FOREIGN))
@@ -139,6 +164,9 @@ def test_no_worker_gate_ever_names_the_dispatch_verb(gate_root):
         assert not offenders, f"{role} may run the dispatch verb: {offenders}"
     offenders = [key for key in claude_allow(gate_root) if "dispatch" in key]
     assert not offenders, f".claude/settings.json: {offenders}"
+    for role in CLAUDE_ROLES:
+        offenders = [rule for rule in claude_rules(role, "allow", gate_root) if "dispatch" in rule]
+        assert not offenders, f"claude/{role}.json: {offenders}"
 
 
 def test_the_repo_ships_the_claude_permissions_too():
@@ -290,3 +318,37 @@ def test_the_builder_keeps_lean_ctxs_write_tools(gate_root):
     agent = opencode(gate_root)["agent"]["builder"]
     named = set(agent["permission"]) | set(agent.get("tools", {}))
     assert not named & set(LEAN_CTX_WRITERS), sorted(named & set(LEAN_CTX_WRITERS))
+
+
+def test_every_worker_ships_a_claude_role_file():
+    for role in WORKERS:
+        assert f"claude/{role}.json" in LAYOUT, f"{role} has no claude settings template"
+
+
+@pytest.mark.parametrize("role", CLAUDE_NON_WRITING)
+def test_a_claude_role_that_writes_nothing_is_denied_every_writing_grant(role):
+    """The shared allowlist hands every claude worker `git add` and `wt step commit`.
+
+    Everything in it but the report path, the gate's own two commands and skills
+    has to be taken back here, together with the editors and lean-ctx's tools.
+    """
+    values = resolve_values(read_lock(ROOT)["values"])
+    kept = {f"Bash({values['test']}:*)", f"Bash({values['lint']}:*)"}
+    shared = [
+        rule
+        for rule in claude_allow()
+        if not rule.startswith("Bash(lean-herdr report")
+        and rule not in kept
+        and not rule.startswith("Skill")
+    ]
+    deny = claude_rules(role, "deny")
+    for rule in (*CLAUDE_WRITERS, *shared):
+        assert rule in deny, f"claude/{role}.json does not deny {rule}"
+
+
+@pytest.mark.parametrize("role", CLAUDE_ROLES)
+def test_no_claude_role_takes_the_skill_tool_away(role):
+    """Skills stay loadable for every claude role; which one a role loads is TP2's."""
+    denied = claude_rules(role, "deny")
+    offenders = [rule for rule in denied if rule == "Skill" or rule.startswith("Skill(")]
+    assert not offenders, f"claude/{role}.json denies {offenders}"

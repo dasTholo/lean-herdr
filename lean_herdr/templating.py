@@ -34,7 +34,7 @@ TEMPLATES = Path(__file__).resolve().parent / "templates"
 #: THE one truth: tests/test_templates.py imports this table to hold each
 #: rendered template byte-identical against this repo's own copy.
 #:
-#: Only the first four are movable. `opencode.jsonc`,
+#: Only the first six are movable. `opencode.jsonc`,
 #: `.claude/settings.json`, `.config/wt.toml` and the opencode plugin sit
 #: where their owners look for them. `.config/wt.toml` could in theory move
 #: via WORKTRUNK_PROJECT_CONFIG_PATH -- but that variable would have to be
@@ -46,6 +46,8 @@ LAYOUT = {
     "roles/orchestrator.md": ".lean-ctx/lean-herdr/roles/orchestrator.md",
     "roles/builder.md": ".lean-ctx/lean-herdr/roles/builder.md",
     "roles/reviewer.md": ".lean-ctx/lean-herdr/roles/reviewer.md",
+    "claude/builder.json": ".lean-ctx/lean-herdr/claude/builder.json",
+    "claude/reviewer.json": ".lean-ctx/lean-herdr/claude/reviewer.json",
     "opencode.jsonc": "opencode.jsonc",
     "settings.json": ".claude/settings.json",
     "wt.toml": ".config/wt.toml",
