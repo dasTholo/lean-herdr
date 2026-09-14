@@ -7,7 +7,7 @@
     ".lean-ctx/lean-herdr/roles/orchestrator.md": "17c46abeb154c0b0076f66fed8acc1be6ba34ac230046ee48e6c1d2af0c46ca6",
     ".lean-ctx/lean-herdr/roles/reviewer.md": "d2ec2c76e005a39d5e1422f11fd62ff1c1d0accfbfd52967c2f8946ff35bceed",
     ".opencode/plugins/lean-ctx-policy.js": "1094a4f71b8ffb0028952123f973be3a436e1a4b7135ec52b012a1d904ccaa1b",
-    "opencode.jsonc": "d2dd2fb0740ba3f5101e1f38f24a79a3ebc4dca7471bb908768b41499de1cd8d"
+    "opencode.jsonc": "04c6483277d14667151a1ab51ee330a6e83fbc2a18577502c04612d4834d49d5"
   },
   "values": {
     "lint": "uv run ruff check",

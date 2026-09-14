@@ -24,6 +24,14 @@ from lean_herdr.templating import LAYOUT, render
 ROOT = Path(__file__).resolve().parents[1]
 WORKERS = ("builder", "reviewer")
 
+#: lean-ctx's own write tools, under the names opencode gives an MCP tool --
+#: measured against opencode 1.18.29 (plan 2026-09-14, task 1). `edit` and
+#: `write` deny opencode's built-in tools only; these three pass both.
+LEAN_CTX_WRITERS = ("lean-ctx_ctx_patch", "lean-ctx_ctx_edit", "lean-ctx_ctx_refactor")
+
+#: The opencode agents that change no file.
+NON_WRITING = ("orchestrator", "reviewer")
+
 #: Another project's gate. The permission files are rendered with these too, so
 #: a render that shifted a line fails here even where this repo's copy passes.
 FOREIGN = {"test": "cargo test", "lint": "cargo clippy"}
@@ -267,3 +275,18 @@ def test_the_reviewer_still_may_not_write():
     permission = opencode()["agent"]["reviewer"]["permission"]
     assert permission["edit"] == "deny"
     assert permission["write"] == "deny"
+
+
+@pytest.mark.parametrize("role", NON_WRITING)
+def test_a_role_that_writes_nothing_cannot_reach_lean_ctxs_write_tools(role, gate_root):
+    """`edit: deny` stops opencode's own editor, not an MCP tool with a name of its own."""
+    permission = opencode(gate_root)["agent"][role]["permission"]
+    for tool in LEAN_CTX_WRITERS:
+        assert permission.get(tool) == "deny", f"{role} may still call {tool}"
+
+
+def test_the_builder_keeps_lean_ctxs_write_tools(gate_root):
+    """The block is for the roles that write nothing -- the builder writes."""
+    agent = opencode(gate_root)["agent"]["builder"]
+    named = set(agent["permission"]) | set(agent.get("tools", {}))
+    assert not named & set(LEAN_CTX_WRITERS), sorted(named & set(LEAN_CTX_WRITERS))

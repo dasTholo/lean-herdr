@@ -26,6 +26,13 @@
       "permission": {
         "edit": "deny",
         "write": "deny",
+        // lean-ctx writes through MCP tools of its own, and `edit`/`write` do
+        // not reach them: opencode gates an MCP tool by its own name (measured
+        // against opencode 1.18.29). `ctx_shell` stays open -- a reading role
+        // needs it, and lean-ctx's shell allowlist is not per role.
+        "lean-ctx_ctx_patch": "deny",
+        "lean-ctx_ctx_edit": "deny",
+        "lean-ctx_ctx_refactor": "deny",
         "bash": {
           "*": "deny",
           "lean-herdr dispatch *": "allow",
@@ -84,6 +91,13 @@
       "permission": {
         "edit": "deny",
         "write": "deny",
+        // lean-ctx writes through MCP tools of its own, and `edit`/`write` do
+        // not reach them: opencode gates an MCP tool by its own name (measured
+        // against opencode 1.18.29). `ctx_shell` stays open -- a reading role
+        // needs it, and lean-ctx's shell allowlist is not per role.
+        "lean-ctx_ctx_patch": "deny",
+        "lean-ctx_ctx_edit": "deny",
+        "lean-ctx_ctx_refactor": "deny",
         "bash": {
           "*": "deny",
           "lean-herdr report next": "allow",
