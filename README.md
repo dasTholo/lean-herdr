@@ -7,6 +7,45 @@ bus, timing over Herdr, isolation over Git worktrees.
 Installing it, keeping it current and working on this repository:
 [INSTALL.md](INSTALL.md).
 
+## How it works
+
+Three roles, each an agent in a Herdr pane of its own:
+
+| Role | Runtime as set up here | Job |
+|---|---|---|
+| orchestrator | opencode, a cheap model | takes the task from you, hands out orders, merges -- writes no code, reads no project files |
+| builder | Claude Code | carries out one order in a worktree of its own |
+| reviewer | opencode, another model than the builder's | rules on the builder's branch: `result` or `reject` |
+
+One task, start to finish:
+
+1. `lean-herdr workspace up` starts the orchestrator in this repository's
+   Herdr workspace. You give it the task in its terminal.
+2. It builds a worker with `lean-herdr dispatch builder --worktree <branch>`:
+   worktrunk creates the worktree, Herdr opens a workspace on it, and the
+   agent starts in a pane there.
+3. It writes the order into the event log (`lean-herdr dispatch order`) and
+   waits with `--await`. The wait runs inside the script, not inside the
+   model, so a long run costs the orchestrator one step. The worker takes its
+   order and reports back with `lean-herdr report`; a question comes back as
+   `input_required` and gets a `dispatch answer`.
+4. On request a small model pre-reviews the diff (`--prereview`). It can send
+   the builder into a second round before any reviewer is built -- it can
+   reject, never approve.
+5. The reviewer runs on the same branch. On `result` the orchestrator
+   squashes, closes the worktree's workspace and merges into `main` with
+   `wt merge`, whose pre-merge gate runs the project's test and lint
+   commands. The commit message comes from `lean-herdr llm generate`.
+   Pushing stays with you.
+6. Once the branch is done, one or two sentences about it go into lean-ctx's
+   project memory (`lean-herdr dispatch remember`).
+
+Two rejections, an agent error or a failed gate end in an escalation to you,
+not in a retry. lean-ctx gives both agent runtimes the same tool discipline;
+the Herdr plugin shows each pane's context and starts the orchestrator with
+one keystroke. Which runtime and model each role gets is set in
+`.lean-ctx/lean-herdr/config.toml`, see [Configuration](#configuration).
+
 ## The work-order path
 
 Orders live in an append-only, hash-chained event log under
