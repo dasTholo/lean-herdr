@@ -1041,12 +1041,26 @@ def test_a_work_routed_to_a_log_command_is_a_config_error(monkeypatch, tmp_path,
 def test_a_role_that_is_no_role_name_is_refused_before_any_pane(
     monkeypatch, tmp_path, capsys, argv, expected
 ):
-    """Neither reaches `role_prompt_path`, `claude_settings_path`, or a worktree/pane/agent."""
+    """Neither reaches `role_prompt_path`, `claude_settings_path`, or a worktree/pane/agent.
+
+    Both a real prompt (via --role-file) AND the claude-settings file
+    `role_problem` would look up for THIS role name are put in place first --
+    for the traversal case that is `<root>/.claude/settings.json`, exactly the
+    file the closed exploit used to hand `claude` as `--settings`. Without
+    them, removing `_check_role_name` would still turn this red, but on the
+    wrong line: `role_problem`'s incidental "no role prompt"/"no claude
+    settings" pre-check, never the guard this test is about.
+    """
     root = tmp_path / "repo"
     _write_config(root, "")
+    write_role_fixture(root, "builder")
+    claude = claude_settings_path(root, argv[0])
+    claude.parent.mkdir(parents=True, exist_ok=True)
+    claude.write_text("{}\n", encoding="utf-8")
     _no_launch(monkeypatch)
 
-    got = _line(argv, root, monkeypatch, capsys)
+    prompt = role_prompt_path(root, "builder").relative_to(root)
+    got = _line([*argv, "--role-file", str(prompt)], root, monkeypatch, capsys)
 
     assert got == {"ok": False, "error": expected}
 
@@ -1054,9 +1068,16 @@ def test_a_role_that_is_no_role_name_is_refused_before_any_pane(
 def test_a_work_routed_to_the_orchestrators_agent_name_is_a_usage_error(
     monkeypatch, tmp_path, capsys
 ):
-    """The same refusal reaches a role resolved from `--work`, not only a typed one."""
+    """The same refusal reaches a role resolved from `--work`, not only a typed one.
+
+    `write_role_fixture` puts a real prompt and claude-settings file at
+    `orch`'s own paths -- the same incidental-failure gap as its neighbour
+    above: without it, removing `_check_role_name` would still answer
+    `config_error: no role prompt at ...`, not reach the guard.
+    """
     root = tmp_path / "repo"
     _write_config(root, '[routing]\nsilence = "orch"\n')
+    write_role_fixture(root, "orch")
     _no_launch(monkeypatch)
 
     got = _line(
