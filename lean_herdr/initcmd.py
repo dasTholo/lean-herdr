@@ -27,7 +27,7 @@ from pathlib import Path
 from typing import Any
 
 from lean_herdr.bus import BusError, GitUnusable, canonical_root
-from lean_herdr.checkcmd import machine_report
+from lean_herdr.checkcmd import ROLES, machine_report
 from lean_herdr.settings import (
     SETTINGS_PATH,
     SettingsError,
@@ -263,13 +263,14 @@ def workspace_init(
         data = read_settings(base / SETTINGS_PATH)
         kind = settings_for("orchestrator", data).kind
         # `settings_for("orchestrator", ...)` reads two tables of four. The
-        # other worker tables -- `[roles.builder]`, `[roles.reviewer]`, and
-        # every role `[routing]` points at -- are validated by the loop
-        # below, not by `model_warnings`: that call can return before it
-        # ever calls `settings_for` on a role it did not need for its own
-        # comparison, so a broken table can hide behind an unset or shared
-        # model. `[workspace]` is read here too, by the `up` and keystroke
-        # routes that run against this same file next.
+        # other worker tables -- `[roles.builder]` and `[roles.reviewer]`,
+        # ALWAYS, whether or not `[routing]` sends `implement`/`review`
+        # elsewhere, plus every role `[routing]` points at -- are validated
+        # by the loop below, not by `model_warnings`: that call can return
+        # before it ever calls `settings_for` on a role it did not need for
+        # its own comparison, so a broken table can hide behind an unset or
+        # shared model. `[workspace]` is read here too, by the `up` and
+        # keystroke routes that run against this same file next.
         # Validating them HERE is what keeps the promise the except branch
         # makes: a config we cannot read costs the warm-up, not the
         # written/skipped report -- and `init` is the run that is supposed to
@@ -277,7 +278,7 @@ def workspace_init(
         # and lets `up` refuse it later. All of this is free: it reads
         # already-parsed tables and touches nothing.
         model_warnings(data)
-        for role in sorted(set(work_roles(data).values())):
+        for role in sorted({*ROLES, *work_roles(data).values()}):
             settings_for(role, data)
         workspace_settings(data)
         # `[models]` is read here too, because `machine_report` acts on it: `auto`
