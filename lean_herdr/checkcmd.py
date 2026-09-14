@@ -524,10 +524,11 @@ def _role_warnings(root: Path, data: dict[str, Any]) -> list[str]:
             lines.append(misrouted)
             continue
         prompt = role_prompt_path(root, role)
-        if not prompt.is_file():
-            lines.append(f"no role prompt at {prompt} -- `dispatch --work {work}` fails")
-            continue
         kind = settings_for(role, data).kind
+        if not prompt.is_file():
+            problem = role_problem(root, role, kind or "", prompt)
+            lines.append(f"{problem} -- `dispatch --work {work}` fails")
+            continue
         if not kind:
             # The normal case after `init`: workers have no built-in kind.
             lines.append(f"[roles.{role}].kind unset: `dispatch --work {work}` needs --kind")
