@@ -490,20 +490,31 @@ def test_a_malformed_config_skips_the_warm_up_and_says_why(monkeypatch, repo):
     assert any(w.startswith("no warm-up: ") for w in answer["warnings"])
 
 
-def test_a_broken_worker_block_costs_the_warm_up_and_not_the_report(monkeypatch, repo):
+@pytest.mark.parametrize(
+    "toml",
+    [
+        pytest.param('[roles.builder]\ndirection = "links"\n', id="builder"),
+        pytest.param('[roles.reviewer]\ndirection = "links"\n', id="reviewer"),
+        pytest.param(
+            '[routing]\nrefactor = "refactorer"\n\n[roles.refactorer]\ndirection = "links"\n',
+            id="a routed role",
+        ),
+    ],
+)
+def test_a_broken_worker_block_costs_the_warm_up_and_not_the_report(monkeypatch, repo, toml):
     """`[roles.orchestrator]` alone is not the whole config `init` reads.
 
-    `machine_report` hands `data` on to `settings.model_warnings`, which reads
-    `[roles.builder]` and `[roles.reviewer]` -- tables
-    `settings_for("orchestrator", ...)` never validates. Before the guard,
-    a broken worker block raised out of `workspace_init` AFTER the files
-    were written, and `main()` turned that into a bare `config_error:`:
-    the written/skipped report was lost for a fault in a table `init`
-    does not even act on.
+    `workspace_init` validates every worker role's table -- `[roles.builder]`,
+    `[roles.reviewer]`, and every role `[routing]` points at -- tables
+    `settings_for("orchestrator", ...)` never touches and `model_warnings` can
+    return before it ever reaches. Before the guard, a broken worker block
+    raised out of `workspace_init` AFTER the files were written, and `main()`
+    turned that into a bare `config_error:`: the written/skipped report was
+    lost for a fault in a table `init` does not even act on.
     """
     quiet(monkeypatch)
     (repo / SETTINGS_PATH).parent.mkdir(parents=True, exist_ok=True)
-    (repo / SETTINGS_PATH).write_text('[roles.reviewer]\ndirection = "links"\n', encoding="utf-8")
+    (repo / SETTINGS_PATH).write_text(toml, encoding="utf-8")
     answer = workspace_init(root=repo)
     assert answer["ok"] is True
     assert answer["written"] or answer["skipped"], "the report must survive"

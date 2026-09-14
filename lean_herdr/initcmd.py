@@ -35,6 +35,7 @@ from lean_herdr.settings import (
     models_settings,
     read_settings,
     settings_for,
+    work_roles,
     workspace_settings,
 )
 from lean_herdr.templating import (
@@ -262,16 +263,22 @@ def workspace_init(
         data = read_settings(base / SETTINGS_PATH)
         kind = settings_for("orchestrator", data).kind
         # `settings_for("orchestrator", ...)` reads two tables of four. The
-        # other two are read anyway -- `[roles.builder]`/`[roles.reviewer]`
-        # by `model_warnings` inside `machine_report` below, `[workspace]` by the
-        # `up` and keystroke routes that run against this same file next.
+        # other worker tables -- `[roles.builder]`, `[roles.reviewer]`, and
+        # every role `[routing]` points at -- are validated by the loop
+        # below, not by `model_warnings`: that call can return before it
+        # ever calls `settings_for` on a role it did not need for its own
+        # comparison, so a broken table can hide behind an unset or shared
+        # model. `[workspace]` is read here too, by the `up` and keystroke
+        # routes that run against this same file next.
         # Validating them HERE is what keeps the promise the except branch
         # makes: a config we cannot read costs the warm-up, not the
         # written/skipped report -- and `init` is the run that is supposed to
         # tell the operator the file is wrong, not the one that stays quiet
-        # and lets `up` refuse it later. Both calls are free: they read
-        # already-parsed tables and touch nothing.
+        # and lets `up` refuse it later. All of this is free: it reads
+        # already-parsed tables and touches nothing.
         model_warnings(data)
+        for role in sorted(set(work_roles(data).values())):
+            settings_for(role, data)
         workspace_settings(data)
         # `[models]` is read here too, because `machine_report` acts on it: `auto`
         # decides whether the overlay's ignore rule is checked at all. Read
