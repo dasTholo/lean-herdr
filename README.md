@@ -166,13 +166,13 @@ In a repository that has never seen lean-herdr:
 
     lean-herdr workspace init
 
-It writes ten files -- the config, the three role prompts and two claude role settings under
+It writes eleven files -- the config, the three role prompts and three claude role settings under
 `.lean-ctx/lean-herdr/`, and `opencode.jsonc`, `.claude/settings.json`,
 `.config/wt.toml` and `.opencode/plugins/lean-ctx-policy.js` where their
 owners look for them. An existing file is skipped and named in the result;
 `--force` overwrites. It needs a git repository and does not create one.
 
-Three of the ten carry this project's own commands: `.config/wt.toml` runs
+Three of the eleven carry this project's own commands: `.config/wt.toml` runs
 them as the pre-merge gate, and `.claude/settings.json` and `opencode.jsonc`
 let the builder run the same two first. Name them on the first run:
 
@@ -186,7 +186,9 @@ A claude worker also gets `--settings .lean-ctx/lean-herdr/claude/<role>.json`
 beside `.claude/settings.json`. Claude Code merges the permission lists of
 every source and a `deny` beats every `allow`, so a role file can only
 narrow: `builder.json` is empty, `reviewer.json` takes back the editors,
-`git add`, `git commit`, `wt step commit` and lean-ctx's three write tools.
+`git add`, `git commit`, `wt step commit` and lean-ctx's three write tools, and
+`orchestrator.json` takes back the editors and lean-ctx's three write tools
+too, leaving Bash open for `lean-herdr dispatch` and `report`.
 An opencode worker gets the same per role from its block in
 `opencode.jsonc`. `dispatch` refuses a role whose prompt, opencode block or
 claude file is missing, before it opens a worktree or a pane.
@@ -206,7 +208,7 @@ generator and the ignore rules.
 
 It also spends one aborted opencode bootstrap in the project, up to eight
 seconds. opencode's first bootstrap in a project that carries a project
-plugin hangs -- and one of the ten files is such a plugin. The aborted
+plugin hangs -- and one of the eleven files is such a plugin. The aborted
 run is the cure: every start after it takes about three seconds. The
 result reports it as `warmed` once the warm-up RAN -- not that it
 succeeded: a project whose `opencode.jsonc` never named the orchestrator

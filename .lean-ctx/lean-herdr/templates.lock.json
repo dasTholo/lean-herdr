@@ -3,6 +3,7 @@
     ".claude/settings.json": "d5f12f3b6e591a0131feca8ad4b8c4ed6da5c244be441b404d8ba8b4dc01582a",
     ".config/wt.toml": "106f44990549fd06a4d88e6d100f691eaa6c155ab513e458ece75a1ccf2c5e7e",
     ".lean-ctx/lean-herdr/claude/builder.json": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+    ".lean-ctx/lean-herdr/claude/orchestrator.json": "48a9ae56f49ea1362f4a96c7bd81034a95c8c34992436b19d8c38ccb7da87700",
     ".lean-ctx/lean-herdr/claude/reviewer.json": "9476941f8c51c1c3b3c1467b57b3349559e1e71a4832c14b2996c09d8e5d80f0",
     ".lean-ctx/lean-herdr/config.toml": "b73723539fa5f5d2d89f6bfb2e2fbb150e16b45f2a1d4dda39a52a447ef4f7a7",
     ".lean-ctx/lean-herdr/roles/builder.md": "5c874f24d204d7b3b31f4d43e81112db4a9e637dbf107e6d8d43dcf296ff3e53",

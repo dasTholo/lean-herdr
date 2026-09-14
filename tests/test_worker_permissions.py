@@ -33,7 +33,7 @@ LEAN_CTX_WRITERS = ("lean-ctx_ctx_patch", "lean-ctx_ctx_edit", "lean-ctx_ctx_ref
 NON_WRITING = ("orchestrator", "reviewer")
 
 #: The claude roles that ship a settings file `dispatch` hands over as `--settings`.
-CLAUDE_ROLES = ("builder", "reviewer")
+CLAUDE_ROLES = ("builder", "reviewer", "orchestrator")
 
 #: The claude roles that change no file. Their `deny` outranks every `allow` from
 #: every source, the shared `.claude/settings.json` included.
@@ -110,7 +110,13 @@ def opencode(root: Path = ROOT) -> dict:
 def foreign_root(tmp_path_factory) -> Path:
     """opencode.jsonc and .claude/settings.json, rendered with FOREIGN."""
     root = tmp_path_factory.mktemp("foreign")
-    for name in ("opencode.jsonc", "settings.json", "claude/builder.json", "claude/reviewer.json"):
+    for name in (
+        "opencode.jsonc",
+        "settings.json",
+        "claude/builder.json",
+        "claude/reviewer.json",
+        "claude/orchestrator.json",
+    ):
         target = root / LAYOUT[name]
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(render(name, FOREIGN))
@@ -352,3 +358,17 @@ def test_no_claude_role_takes_the_skill_tool_away(role):
     denied = claude_rules(role, "deny")
     offenders = [rule for rule in denied if rule == "Skill" or rule.startswith("Skill(")]
     assert not offenders, f"claude/{role}.json denies {offenders}"
+
+
+def test_the_claude_orchestrator_writes_nothing(gate_root):
+    """`claude/orchestrator.json`: the editors and lean-ctx's three write tools,
+    denied -- unlike reviewer.json, nothing here narrows Bash: the orchestrator's
+    whole job is running `lean-herdr dispatch`/`report` through it.
+    """
+    denied = claude_rules("orchestrator", "deny", gate_root)
+    for rule in CLAUDE_WRITERS:
+        assert rule in denied, f"claude/orchestrator.json does not deny {rule}"
+
+
+def test_the_claude_builder_still_blocks_nothing(gate_root):
+    assert claude_rules("builder", "deny", gate_root) == []
