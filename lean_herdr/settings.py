@@ -122,14 +122,29 @@ _NO_BOOL = ("ratio", "ready_timeout_s")
 
 ALLOWED = frozenset(f.name for f in fields(RoleSettings))
 
-#: The only five keys the top level of the file may carry.
-ROOT_KEYS = ("default", "roles", "llm", "workspace", "models")
+#: The only six keys the top level of the file may carry.
+ROOT_KEYS = ("default", "roles", "llm", "workspace", "models", "routing")
 
 #: The two runtimes a role prompt is written for. `dispatch --kind` and
 #: `[roles.<role>].kind` read the SAME tuple -- two lists would let a
 #: value pass one gate and fail the other (M3).
 KINDS = ("claude", "opencode")
 
+#: The two works TP1 builds in. `[routing]` lays itself over them, so a project
+#: without the table dispatches exactly as it did by role name.
+ROUTING_BUILTIN = {"implement": "builder", "review": "reviewer"}
+
+#: Works that are stages of a run, not work a plan hands out. `plan`,
+#: `plan-review` and `integrate` get their built-in roles with TP2 and TP3;
+#: until then a call without a `[routing]` line for one is a SettingsError.
+#: `model_warnings` pairs the role behind `review` with the role behind every
+#: work that is NOT one of these.
+STAGES = ("plan", "plan-review", "review", "integrate")
+
+#: A work name, and a role name. The role becomes part of the herdr agent
+#: name, so it is held to what that name may carry; its length is TP3's.
+WORK_RE = re.compile(r"[a-z][a-z0-9-]*")
+ROLE_RE = re.compile(r"[a-z][a-z0-9_-]*")
 #: The herdr agent name of the orchestrator, and the sender the workers
 #: trust. Deliberately NOT a config key: three places must agree on it --
 #: this constant, the line `ORCHESTRATOR = orch` in both role prompts, and
@@ -202,8 +217,23 @@ def _overlay(base: RoleSettings, block: Any, role: str) -> RoleSettings:
     return merged
 
 
+def _check_routing(routing: Any) -> None:
+    """`[routing]`: work name -> role name, each spelled the way its pattern allows.
+
+    Called from `_check_root`, so EVERY reader of the file meets a broken line --
+    a call by role name as much as `--work`.
+    """
+    if not isinstance(routing, dict):
+        raise SettingsError(f"routing: section is not a table, but {type(routing).__name__}")
+    for work, role in routing.items():
+        if not WORK_RE.fullmatch(work):
+            raise SettingsError(f"routing: work {work!r} does not match {WORK_RE.pattern}")
+        if not isinstance(role, str) or not ROLE_RE.fullmatch(role):
+            raise SettingsError(f"routing.{work}: {role!r} is no role name ({ROLE_RE.pattern})")
+
+
 def _check_root(table: Any) -> dict[str, Any]:
-    """Top level: everything in `ROOT_KEYS`, and `roles` a table if present.
+    """Top level: everything in `ROOT_KEYS`, `roles` a table, `routing` checked line by line.
 
     Reading just the known sections would let `[defaults]`, `[role.x]` or
     a key without any section header evaporate in silence -- the operator gets
@@ -220,6 +250,9 @@ def _check_root(table: Any) -> dict[str, Any]:
     roles = table.get("roles")
     if roles is not None and not isinstance(roles, dict):
         raise SettingsError(f"settings: roles is not a table, but {type(roles).__name__}")
+    routing = table.get("routing")
+    if routing is not None:
+        _check_routing(routing)
     return table
 
 
@@ -238,6 +271,20 @@ def settings_for(role: str, data: dict[str, Any] | None = None) -> RoleSettings:
         if block is not None:
             values = _overlay(values, block, role)
     return values
+
+
+def work_roles(data: dict[str, Any] | None = None) -> dict[str, str]:
+    """Every work that has a role: the built-in ones, `[routing]` laid over them."""
+    table = _check_root({} if data is None else data)
+    return {**ROUTING_BUILTIN, **(table.get("routing") or {})}
+
+
+def role_for_work(work: str, data: dict[str, Any] | None = None) -> str:
+    """`[routing]` > built-in > SettingsError -- one resolution for dispatch and check."""
+    role = work_roles(data).get(work)
+    if role is None:
+        raise SettingsError(f"no role for work {work!r}")
+    return role
 
 
 def model_warnings(data: dict[str, Any] | None = None) -> list[str]:

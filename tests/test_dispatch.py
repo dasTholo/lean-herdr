@@ -599,6 +599,20 @@ def test_a_broken_llm_block_is_a_config_error_too(monkeypatch, tmp_path, capsys)
     assert "effort" in result["error"], result["error"]
 
 
+def test_a_broken_routing_line_fails_a_call_by_role_name_too(monkeypatch, tmp_path, capsys):
+    """`[routing]` is checked on load, so the builder call meets the broken line."""
+    root = tmp_path / "repo"
+    _write_config(root, '[routing]\nrename = "Refactorer"\n')
+    monkeypatch.setattr("lean_herdr.dispatch.canonical_root", lambda *a, **kw: root)
+    _no_launch(monkeypatch)
+
+    assert main(["builder", "--kind", "claude", "--model", "sonnet"]) == 0
+
+    result = json.loads(capsys.readouterr().out.strip())
+    assert result["ok"] is False
+    assert result["error"].startswith("config_error: routing.rename: "), result["error"]
+
+
 def test_a_broken_overlay_is_a_config_error_too(monkeypatch, tmp_path, capsys):
     """`models.auto.toml` is read in the wait mode through the SAME function as in
     llm.file_settings() -- and here, unlike there, it has a reader.

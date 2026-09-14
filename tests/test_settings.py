@@ -5,13 +5,16 @@ from pathlib import Path
 import pytest
 
 from lean_herdr.settings import (
+    ROOT_KEYS,
     RoleSettings,
     SettingsError,
     WorkspaceSettings,
     load_jsonc,
     model_warnings,
     read_settings,
+    role_for_work,
     settings_for,
+    work_roles,
     workspace_settings,
 )
 
@@ -618,3 +621,63 @@ def test_a_directory_where_the_file_belongs_is_not_an_exception_either(tmp_path)
     """The OSError that is not FileNotFoundError -- total means total."""
     (tmp_path / "opencode.jsonc").mkdir()
     assert "unreadable" in load_jsonc(tmp_path / "opencode.jsonc").error
+
+
+# -- routing: [routing] -------------------------------------------------
+
+
+def test_routing_is_a_known_root_key():
+    assert "routing" in ROOT_KEYS
+    assert settings_for("builder", {"routing": {"rename": "refactorer"}}).profile == "standard"
+
+
+def test_routing_without_a_table_keeps_the_built_in_works():
+    """Without `[routing]` the project dispatches exactly as it did by role name."""
+    assert role_for_work("implement", {}) == "builder"
+    assert role_for_work("review", None) == "reviewer"
+
+
+def test_routing_overrides_a_built_in_work_and_adds_its_own():
+    data = {"routing": {"implement": "coder", "rename": "refactorer"}}
+    assert role_for_work("implement", data) == "coder"
+    assert role_for_work("rename", data) == "refactorer"
+    assert role_for_work("review", data) == "reviewer"
+
+
+def test_routing_lists_the_built_in_works_under_the_table():
+    assert work_roles({"routing": {"rename": "refactorer"}}) == {
+        "implement": "builder",
+        "review": "reviewer",
+        "rename": "refactorer",
+    }
+
+
+@pytest.mark.parametrize("work", ["plan", "plan-review", "integrate", "deploy"])
+def test_routing_knows_no_role_for_a_work_nobody_named(work):
+    """The stages get their built-in roles with TP2 and TP3 -- until then, no guess."""
+    with pytest.raises(SettingsError) as caught:
+        role_for_work(work, {})
+    assert str(caught.value) == f"no role for work {work!r}"
+
+
+@pytest.mark.parametrize(
+    "routing",
+    [
+        pytest.param({"Rename": "refactorer"}, id="work with a capital"),
+        pytest.param({"re_name": "refactorer"}, id="work with an underscore"),
+        pytest.param({"1st": "refactorer"}, id="work starting with a digit"),
+        pytest.param({"rename": "Refactorer"}, id="role with a capital"),
+        pytest.param({"rename": "re factorer"}, id="role with a space"),
+        pytest.param({"rename": ""}, id="empty role"),
+        pytest.param({"rename": 5}, id="role not a string"),
+    ],
+)
+def test_routing_with_a_malformed_line_fails_every_reader(routing):
+    """Checked in `_check_root`: a call by role name meets the broken line too."""
+    with pytest.raises(SettingsError, match="routing"):
+        settings_for("builder", {"routing": routing})
+
+
+def test_routing_that_is_no_table_is_a_settings_error():
+    with pytest.raises(SettingsError, match="routing: section is not a table"):
+        settings_for("builder", {"routing": "builder"})
