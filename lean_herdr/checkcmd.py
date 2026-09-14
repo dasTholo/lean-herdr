@@ -29,6 +29,7 @@ from typing import Any
 
 import lean_herdr
 from lean_herdr.bus import BusError, GitUnusable, canonical_root
+from lean_herdr.dispatch import LOG_COMMANDS
 from lean_herdr.settings import (
     ORCHESTRATOR_AGENT,
     OVERLAY_PATH,
@@ -486,6 +487,27 @@ def _config_errors(root: Path) -> tuple[list[str], dict[str, Any], bool]:
     return errors, data, auto
 
 
+def _misrouted_role(work: str, role: str) -> str | None:
+    """A line when `role` cannot become a worker at all -- `dispatch --work {work}` is refused
+    for a log command, or would silence the running orchestrator for its own agent name.
+
+    Both are legal `[routing]` lines: `_check_routing` only holds a role to `ROLE_RE`, and
+    neither name is reserved there. `dispatch.main` refuses the first outright (`LOG_COMMANDS`
+    take the positional slot INSTEAD of a role); the second it never catches at all --
+    `dispatch()` reuses ANY running agent under the name it is given (dispatch.py, `existing`),
+    and that name is `ORCHESTRATOR_AGENT` for the one agent every worker prompt trusts as the
+    sender. A dispatch under that name finds it and sends it `/clear`.
+    """
+    if role in LOG_COMMANDS:
+        return f"routing.{work}: {role!r} is a log command, not a role -- `dispatch --work {work}` fails"
+    if role == ORCHESTRATOR_AGENT:
+        return (
+            f"routing.{work}: role {role!r} is the orchestrator's own agent name -- "
+            f"`dispatch --work {work}` would /clear the running orchestrator, not build a worker"
+        )
+    return None
+
+
 def _role_warnings(root: Path, data: dict[str, Any]) -> list[str]:
     """What `dispatch --work <work>` would refuse, or run blind, for every work with a role.
 
@@ -496,6 +518,10 @@ def _role_warnings(root: Path, data: dict[str, Any]) -> list[str]:
     """
     lines: list[str] = []
     for work, role in sorted(work_roles(data).items()):
+        misrouted = _misrouted_role(work, role)
+        if misrouted:
+            lines.append(misrouted)
+            continue
         prompt = role_prompt_path(root, role)
         if not prompt.is_file():
             lines.append(f"no role prompt at {prompt} -- `dispatch --work {work}` fails")

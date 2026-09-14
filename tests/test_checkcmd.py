@@ -684,3 +684,34 @@ def test_a_role_only_routing_names_is_validated_too(monkeypatch, repo, snapshot)
     assert any(e.startswith("config_error: refactorer: direction") for e in answer["errors"]), (
         answer["errors"]
     )
+
+
+def test_a_work_routed_to_a_log_command_is_named(monkeypatch, repo, snapshot):
+    """`dispatch --work` refuses a work routed to a log command; `check` says so first."""
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text('[routing]\ncleanup = "order"\n', encoding="utf-8")
+
+    answer = workspace_check(root=repo)
+
+    assert answer["errors"] == [], answer["errors"]
+    assert (
+        "routing.cleanup: 'order' is a log command, not a role -- "
+        "`dispatch --work cleanup` fails" in answer["warnings"]
+    ), answer["warnings"]
+
+
+def test_a_work_routed_to_the_orchestrators_agent_name_is_named(monkeypatch, repo, snapshot):
+    """A real `dispatch --work` here would find the running orchestrator and `/clear` it."""
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text('[routing]\ncleanup = "orch"\n', encoding="utf-8")
+
+    answer = workspace_check(root=repo)
+
+    assert answer["errors"] == [], answer["errors"]
+    assert (
+        "routing.cleanup: role 'orch' is the orchestrator's own agent name -- "
+        "`dispatch --work cleanup` would /clear the running orchestrator, not build a worker"
+        in answer["warnings"]
+    ), answer["warnings"]
