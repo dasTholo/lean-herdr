@@ -35,6 +35,7 @@ from lean_herdr.settings import (
     OverlayError,
     SettingsError,
     llm_settings_layered,
+    missing_agent_config,
     model_warnings,
     models_settings,
     read_settings,
@@ -52,7 +53,7 @@ from lean_herdr.templating import (
     resolve_values,
     state_warnings,
 )
-from lean_herdr.workspace import INIT_HINT, missing_agent_config
+from lean_herdr.workspace import INIT_HINT, OPENCODE_ORCHESTRATOR
 
 #: The binaries a lean-herdr project leans on, and what each one is for.
 BINARIES = (
@@ -464,7 +465,8 @@ def _config_errors(root: Path) -> tuple[list[str], dict[str, Any], bool]:
         except SettingsError as exc:
             errors.append(f"config_error: {exc}")
             data, auto = {}, False
-    problem = missing_agent_config(root, settings_for("orchestrator", data).kind)
+    orchestrator = settings_for("orchestrator", data).kind
+    problem = missing_agent_config(root, orchestrator, OPENCODE_ORCHESTRATOR)
     if problem:
         errors.append(f"no_agent_config: {problem} -- {INIT_HINT}")
     return errors, data, auto

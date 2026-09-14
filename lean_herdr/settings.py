@@ -45,6 +45,12 @@ SETTINGS_PATH = Path(".lean-ctx") / "lean-herdr" / "config.toml"
 #: one name (task 9).
 OVERLAY_PATH = Path(".lean-ctx") / "lean-herdr" / "models.auto.toml"
 
+#: RELATIVE to the repo root, like SETTINGS_PATH. `dispatch` joins them onto
+#: canonical_root() before it checks a file or hands one to a pane: a relative
+#: path would resolve in the pane's cwd -- the worktree, which need not carry it.
+ROLE_PROMPTS = Path(".lean-ctx") / "lean-herdr" / "roles"
+CLAUDE_SETTINGS = Path(".lean-ctx") / "lean-herdr" / "claude"
+
 #: Per-role default -- measured fixed cost per step:
 #: minimal 2,711 / standard 4,920 / power 11,559 tokens.
 PROFILE_BY_ROLE = {"orchestrator": "minimal"}
@@ -669,3 +675,72 @@ def load_jsonc(path: str | Path) -> JsoncFile:
             error=f"not an object at the top level, but a {type(data).__name__}",
         )
     return JsoncFile(data=data, found=True)
+
+
+# -- role files --------------------------------------------------------
+
+#: opencode reads its project configuration from this file, at the repo
+#: root. Not configurable: opencode looks for exactly this name.
+OPENCODE_CONFIG = "opencode.jsonc"
+
+
+def role_prompt_path(root: Path, role: str) -> Path:
+    """The prompt a role brings along when `--role-file` names none."""
+    return root / ROLE_PROMPTS / f"{role}.md"
+
+
+def claude_settings_path(root: Path, role: str) -> Path:
+    """The file a claude worker of this role gets as `--settings`."""
+    return root / CLAUDE_SETTINGS / f"{role}.json"
+
+
+def missing_agent_config(root: Path, kind: str, agent: str) -> str | None:
+    """Why opencode could not resolve `--agent <agent>` here. None: it can.
+
+    Measured 2026-09-04. The agent is a NAME, and opencode resolves it out of
+    the project's own `opencode.jsonc`. Where that file or its block is missing,
+    opencode starts, prints "Agent not found", never becomes an agent and never
+    registers its MCP server -- and the caller sat out the full `ready_timeout_s`
+    for an agent id that could not arrive, then answered the misleading
+    `no_agent_id`. Look first instead.
+
+    Only opencode resolves a project-level agent name, so only opencode is
+    checked; a claude worker's role travels as files (dispatch.agent_args).
+
+    Three answers, because they are three repairs: absent (init has not run),
+    present but unparseable (an editor), parsed without this agent (a config
+    written for other roles).
+
+    It lives here and not in workspace.py, where it started: `workspace`
+    imports `dispatch`, and `dispatch` needs this guard for every role.
+    """
+    if kind != "opencode":
+        return None
+    config = load_jsonc(root / OPENCODE_CONFIG)
+    if not config.found:
+        return f"no {OPENCODE_CONFIG} in {root}"
+    if config.error:
+        return f"{OPENCODE_CONFIG} in {root} is {config.error}"
+    agents = config.data.get("agent")
+    if not isinstance(agents, dict) or not isinstance(agents.get(agent), dict):
+        return f"{OPENCODE_CONFIG} in {root} defines no agent.{agent}"
+    return None
+
+
+def role_problem(root: Path, role: str, kind: str, prompt: Path) -> str | None:
+    """Why a worker of this role could not run here. None: nothing found.
+
+    The three checks `dispatch` makes before it splits a pane, in this order and
+    each in its own words: the prompt, then the artefact of the runtime --
+    opencode's agent block or claude's settings file. `workspace check` reads
+    the same answer as a warning; one producer for both (M3).
+    """
+    if not prompt.is_file():
+        return f"no role prompt at {prompt}"
+    problem = missing_agent_config(root, kind, role)
+    if problem:
+        return problem
+    claude = claude_settings_path(root, role)
+    if kind == "claude" and not claude.is_file():
+        return f"no claude settings at {claude}"
+    return None

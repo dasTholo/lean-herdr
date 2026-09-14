@@ -5,14 +5,19 @@ from pathlib import Path
 import pytest
 
 from lean_herdr.settings import (
+    KINDS,
     ROOT_KEYS,
     RoleSettings,
     SettingsError,
     WorkspaceSettings,
+    claude_settings_path,
     load_jsonc,
+    missing_agent_config,
     model_warnings,
     read_settings,
     role_for_work,
+    role_problem,
+    role_prompt_path,
     settings_for,
     work_roles,
     workspace_settings,
@@ -681,3 +686,41 @@ def test_routing_with_a_malformed_line_fails_every_reader(routing):
 def test_routing_that_is_no_table_is_a_settings_error():
     with pytest.raises(SettingsError, match="routing: section is not a table"):
         settings_for("builder", {"routing": "builder"})
+
+
+# -- role files ----------------------------------------------------------
+
+
+def test_the_opencode_guard_asks_for_the_agent_it_is_given(tmp_path):
+    """One guard for every role now, not only the orchestrator."""
+    (tmp_path / "opencode.jsonc").write_text('{"agent": {"refactorer": {}}}\n', encoding="utf-8")
+    assert missing_agent_config(tmp_path, "opencode", "refactorer") is None
+    assert missing_agent_config(tmp_path, "opencode", "orchestrator") == (
+        f"opencode.jsonc in {tmp_path} defines no agent.orchestrator"
+    )
+    assert missing_agent_config(tmp_path, "claude", "orchestrator") is None
+
+
+def test_a_role_problem_is_named_in_the_order_dispatch_checks(tmp_path):
+    """Prompt first, then the artefact of the runtime -- each in its own words."""
+    prompt = role_prompt_path(tmp_path, "refactorer")
+    claude = claude_settings_path(tmp_path, "refactorer")
+    assert prompt == tmp_path / ".lean-ctx" / "lean-herdr" / "roles" / "refactorer.md"
+    assert claude == tmp_path / ".lean-ctx" / "lean-herdr" / "claude" / "refactorer.json"
+    for kind in KINDS:
+        assert role_problem(tmp_path, "refactorer", kind, prompt) == f"no role prompt at {prompt}"
+
+    prompt.parent.mkdir(parents=True)
+    prompt.write_text("# Role: refactorer\n", encoding="utf-8")
+    assert role_problem(tmp_path, "refactorer", "claude", prompt) == (
+        f"no claude settings at {claude}"
+    )
+    assert role_problem(tmp_path, "refactorer", "opencode", prompt) == (
+        f"no opencode.jsonc in {tmp_path}"
+    )
+
+    claude.parent.mkdir(parents=True)
+    claude.write_text("{}\n", encoding="utf-8")
+    (tmp_path / "opencode.jsonc").write_text('{"agent": {"refactorer": {}}}\n', encoding="utf-8")
+    for kind in KINDS:
+        assert role_problem(tmp_path, "refactorer", kind, prompt) is None
