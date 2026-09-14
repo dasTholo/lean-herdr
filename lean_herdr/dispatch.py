@@ -770,6 +770,52 @@ def missing_flags(args: argparse.Namespace) -> str | None:
     return f"build mode does not take {stray}" if stray else None
 
 
+def _build(
+    args: argparse.Namespace, root: Path, raw: dict[str, Any], settings: RoleSettings
+) -> dict[str, Any]:
+    """`main`'s build branch: resolve the prompt, check it can run, then dispatch.
+
+    A PURE move out of `main` (M3) -- the file had grown past comfort with the
+    build branch nested five levels deep. Identical behavior, identical answers.
+    """
+    # Against the ROOT, not $PWD: claude resolves a relative prompt path in
+    # the pane's cwd, and that is the worktree, which need not carry the
+    # file. An absolute --role-file passes through `/` untouched.
+    prompt = root / args.role_file if args.role_file else role_prompt_path(root, args.command)
+    # Before dispatch(), so before ensure_worktree and `pane split`: a
+    # worker without its prompt or its runtime's file is a pane that
+    # starts, never reports, and costs the orchestrator a `no_reply`.
+    problem = role_problem(root, args.command, args.kind, prompt)
+    if problem:
+        return {"ok": False, "error": f"config_error: {problem}"}
+    # Additive, and only where a reader exists: the orchestrator reads
+    # the dispatch line of the role behind `review` -- by `--work review`
+    # or by that role's name. `ok` is untouched: a warning, never a
+    # refusal. Computed BEFORE dispatch(): it reads the table of every
+    # routed role, and a broken one must stop the call while no pane
+    # exists yet, not cost the answer of a worker already started.
+    reviewing = args.command == role_for_work("review", raw)
+    notes = model_warnings(raw) if reviewing else []
+    result = dispatch(
+        DispatchRequest(
+            role=args.command,
+            kind=args.kind,
+            model=args.model,
+            role_file=prompt,
+            worktree=args.worktree,
+            profile=args.profile,
+        ),
+        herdr=Herdr(),
+        root=root,
+        cwd=root,
+        settings=settings,
+    )
+    result = {**result, "role": args.command}
+    if notes:
+        result = {**result, "warnings": notes}
+    return result
+
+
 def main(argv: list[str] | None = None) -> int:
     """Output: one JSON line on stdout. Exit ALWAYS 0.
 
@@ -879,46 +925,7 @@ def main(argv: list[str] | None = None) -> int:
                     llm_cfg=llm_cfg,
                 )
             else:
-                # Against the ROOT, not $PWD: claude resolves a relative prompt path in
-                # the pane's cwd, and that is the worktree, which need not carry the
-                # file. An absolute --role-file passes through `/` untouched.
-                prompt = (
-                    root / args.role_file
-                    if args.role_file
-                    else role_prompt_path(root, args.command)
-                )
-                # Before dispatch(), so before ensure_worktree and `pane split`: a
-                # worker without its prompt or its runtime's file is a pane that
-                # starts, never reports, and costs the orchestrator a `no_reply`.
-                problem = role_problem(root, args.command, args.kind, prompt)
-                if problem:
-                    result = {"ok": False, "error": f"config_error: {problem}"}
-                else:
-                    # Additive, and only where a reader exists: the orchestrator reads
-                    # the dispatch line of the role behind `review` -- by `--work review`
-                    # or by that role's name. `ok` is untouched: a warning, never a
-                    # refusal. Computed BEFORE dispatch(): it reads the table of every
-                    # routed role, and a broken one must stop the call while no pane
-                    # exists yet, not cost the answer of a worker already started.
-                    reviewing = args.command == role_for_work("review", raw)
-                    notes = model_warnings(raw) if reviewing else []
-                    result = dispatch(
-                        DispatchRequest(
-                            role=args.command,
-                            kind=args.kind,
-                            model=args.model,
-                            role_file=prompt,
-                            worktree=args.worktree,
-                            profile=args.profile,
-                        ),
-                        herdr=Herdr(),
-                        root=root,
-                        cwd=root,
-                        settings=settings,
-                    )
-                    result = {**result, "role": args.command}
-                    if notes:
-                        result = {**result, "warnings": notes}
+                result = _build(args, root, raw, settings)
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}
     except SettingsError as exc:
