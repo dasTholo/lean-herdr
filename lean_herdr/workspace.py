@@ -127,7 +127,8 @@ def create_workspace(
     for key, value in env.items():
         args += ["--env", f"{key}={value}"]
     result = herdr.run(*args).get("result") or {}
-    nested = result.get("workspace") if isinstance(result.get("workspace"), dict) else {}
+    nested = result.get("workspace")
+    nested = nested if isinstance(nested, dict) else {}
     workspace = nested.get("workspace_id") or result.get("workspace_id")
     return str(workspace) if workspace else None
 

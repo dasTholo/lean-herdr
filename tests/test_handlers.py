@@ -74,7 +74,7 @@ def world(monkeypatch, tmp_path):
     write_opencode_config(project(tmp_path))
     monkeypatch.setattr("lean_herdr.handlers.canonical_root", lambda cwd: project(tmp_path))
     h_proc, l_proc = FakeProc(), FakeProc()
-    h_proc.replies = dict(STARTED)
+    h_proc.replies = {**STARTED}
     l_proc.replies = {
         ("call", "ctx_session"): RESUME,
         ("call", "ctx_handoff"): LEDGER,

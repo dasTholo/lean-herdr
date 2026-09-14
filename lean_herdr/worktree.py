@@ -150,10 +150,10 @@ def _open_workspace(herdr: Herdr, *, repo_root: Path, path: Path, branch: str) -
     """
     opened = herdr.worktree_open(cwd=repo_root, path=path, label=branch)
     result = opened.get("result") or {}
-    workspace_obj = result.get("workspace") if isinstance(result.get("workspace"), dict) else {}
-    worktree_obj = result.get("worktree") if isinstance(result.get("worktree"), dict) else {}
-    root_pane = result.get("root_pane") if isinstance(result.get("root_pane"), dict) else {}
-    tab = result.get("tab") if isinstance(result.get("tab"), dict) else {}
+    workspace_obj = _object(result, "workspace")
+    worktree_obj = _object(result, "worktree")
+    root_pane = _object(result, "root_pane")
+    tab = _object(result, "tab")
     # `tab.workspace_id` is deliberately NOT in this ladder. In tab mode that
     # id names whatever workspace already hosts the tab (e.g. the caller's
     # own) — not a new workspace for this worktree. Treating it as a hit
@@ -179,6 +179,12 @@ def _open_workspace(herdr: Herdr, *, repo_root: Path, path: Path, branch: str) -
             reason = "no workspace_id"
         raise WorktreeOpenFailed(f"worktree open for {branch}: {reason}")
     return str(workspace)
+
+
+def _object(result: dict[str, Any], key: str) -> dict[str, Any]:
+    """`result[key]` if it is an object, else an empty one -- read once, then checked."""
+    value = result.get(key)
+    return value if isinstance(value, dict) else {}
 
 
 def anchor_pane(herdr: Herdr, workspace_id: str) -> str | None:

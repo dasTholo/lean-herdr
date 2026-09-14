@@ -163,7 +163,7 @@ def test_the_temp_check_probes_the_lock_writer_as_well(monkeypatch, repo, rule, 
     line = _check_temp_ignored(repo, subprocess.run)
     assert (line is not None) is warned, line
     if warned:
-        assert ".tmp-templates.lock.json" in line
+        assert line is not None and ".tmp-templates.lock.json" in line
 
 
 #: A child that answers with a byte no codec takes.

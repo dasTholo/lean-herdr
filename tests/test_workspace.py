@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -70,7 +71,7 @@ def herdr_with(monkeypatch, replies, *, available=True):
 
 
 def core(herdr, **rest):
-    defaults = {
+    defaults: dict[str, Any] = {
         "root": ROOT,
         "settings": WorkspaceSettings(),
         "profile": "minimal",

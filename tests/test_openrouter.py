@@ -5,6 +5,7 @@ import json
 import subprocess
 import sys
 import urllib.error
+from email.message import Message
 
 import pytest
 
@@ -12,14 +13,10 @@ from lean_herdr import openrouter
 
 
 class FakeResponse(io.BytesIO):
-    """What urlopen's context manager yields: a readable with a close."""
+    """What urlopen's context manager yields: a readable with a close.
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        self.close()
-        return False
+    BytesIO is that context manager already -- its `__exit__` closes it.
+    """
 
 
 def urlopen_returning(raw: bytes, recorder: dict):
@@ -58,6 +55,7 @@ def test_a_post_carries_headers_and_an_encoded_body(monkeypatch):
         body='{"model": "m"}',
         timeout_s=20.0,
     )
+    assert got is not None
     assert json.loads(got) == {"ok": True}
     assert seen["method"] == "POST"
     assert seen["body"] == b'{"model": "m"}'
@@ -69,7 +67,7 @@ def test_a_post_carries_headers_and_an_encoded_body(monkeypatch):
     "boom",
     [
         urllib.error.URLError("no route"),
-        urllib.error.HTTPError("https://x", 400, "Bad Request", {}, None),
+        urllib.error.HTTPError("https://x", 400, "Bad Request", Message(), None),
         TimeoutError("timed out"),
         ValueError("unknown url type"),
     ],

@@ -3,6 +3,7 @@
 import json
 import subprocess
 import tomllib
+from typing import Any
 
 import pytest
 
@@ -248,7 +249,7 @@ def test_a_git_that_cannot_answer_stops_init_without_asking_for_git_init(
 
 def test_every_missing_precondition_becomes_one_line(monkeypatch, repo):
     monkeypatch.setattr("shutil.which", which_stub(True))
-    replies = {
+    replies: dict[tuple[str, ...], Any] = {
         ("allow", "--list"): "Mode: restricted -- 73 command(s) permitted",
         ("config", "approvals"): '{"state": "approval_required"}',
         ("plugin", "list"): "- lean.herdr enabled\n  warning: unknown event\n",
@@ -262,7 +263,7 @@ def test_every_missing_precondition_becomes_one_line(monkeypatch, repo):
 
 def test_a_healthy_machine_warns_about_nothing(monkeypatch, repo):
     monkeypatch.setattr("shutil.which", which_stub(True))
-    replies = {
+    replies: dict[tuple[str, ...], Any] = {
         ("allow", "--list"): "Extra (additive, via `lean-ctx allow`): lean-herdr",
         ("config", "approvals"): '{"state": "approved"}',
         ("plugin", "list"): (

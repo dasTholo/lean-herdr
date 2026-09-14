@@ -100,7 +100,7 @@ def test_a_verb_whose_main_raises_is_caught_too(monkeypatch, capsys):
     def explode(argv: list[str]) -> int:
         raise RuntimeError("the delegate let one through")
 
-    module.main = explode
+    module.__dict__["main"] = explode
     monkeypatch.setitem(sys.modules, "lean_herdr.exploding_verb", module)
     monkeypatch.setitem(cli.VERBS, "boom", "lean_herdr.exploding_verb")
     assert cli.main(["boom"]) == 0

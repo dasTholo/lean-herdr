@@ -785,12 +785,12 @@ def main(argv: list[str] | None = None) -> int:
             # they REFUSE --kind and --model as stray flags, and a
             # `[default].kind` would otherwise turn every one of them into a
             # usage error nobody typed.
-            args.kind = args.kind or settings.kind or None
+            args.kind = args.kind or settings.kind
             if not args.waiting:
                 # Build mode only. Under --await a --model is itself a stray
                 # flag, so filling it from the file would break a valid wait
                 # call -- with a value the wait mode never even reads.
-                args.model = args.model or settings.model or None
+                args.model = args.model or settings.model
         missing = missing_flags(args)
         if missing:
             result = {"ok": False, "error": f"usage_error: {missing}"}

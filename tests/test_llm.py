@@ -93,6 +93,12 @@ class SpyRequest:
             raise self.raises
         return None if self.reply is None else json.dumps(self.reply)
 
+    def json_body(self, index: int = 0) -> dict:
+        """The payload of one call, decoded. A call that sent none fails here, loud."""
+        body = self.bodies[index]
+        assert body is not None, f"call {index} sent no body"
+        return json.loads(body)
+
 
 #: What CPython raises when `text=True` meets a byte that is not UTF-8:
 #: a ValueError, which is neither an OSError nor a SubprocessError. Built
@@ -172,7 +178,7 @@ def test_the_body_carries_model_and_effort(no_store):
         env={openrouter.KEY_ENV: "k"},
         auth_path=no_store,
     )
-    body = json.loads(spy.bodies[0])
+    body = spy.json_body()
     assert body["model"] == "some/other-model"
     assert body["reasoning"] == {"effort": "minimal"}
     assert body["messages"] == [{"role": "user", "content": "prompt"}]
@@ -193,7 +199,7 @@ def test_the_precedence_runs_flag_environment_file_constant(no_store):
             settings=cfg,
             **kw,
         )
-        return json.loads(spy.bodies[0])
+        return spy.json_body()
 
     assert sent(model="flag/model")["model"] == "flag/model"
     assert sent()["model"] == "env/model", "the environment beats the file"
@@ -210,7 +216,7 @@ def test_without_a_file_and_without_an_environment_the_constants_win(no_store):
         auth_path=no_store,
         settings=LlmSettings(),
     )
-    body = json.loads(spy.bodies[0])
+    body = spy.json_body()
     assert body["model"] == llm.DEFAULT_MODEL
     assert body["reasoning"] == {"effort": llm.GENERATE_EFFORT}
 
@@ -421,7 +427,7 @@ def test_generate_passes_the_measured_effort_by_default(no_store):
         auth_path=no_store,
         settings=NO_FILE,
     )
-    assert json.loads(spy.bodies[0])["reasoning"] == {"effort": "minimal"}
+    assert spy.json_body()["reasoning"] == {"effort": "minimal"}
 
 
 def test_generate_writes_the_message_and_exits_zero(monkeypatch, capsys, tmp_path):
@@ -634,7 +640,7 @@ def judged(no_store, *, cfg=None, env=None, **kw):
         env={openrouter.KEY_ENV: "k", **(env or {})},
         **kw,
     )
-    return json.loads(spy.bodies[0])
+    return spy.json_body()
 
 
 def test_the_judges_precedence_runs_all_six_levels(no_store):
@@ -924,7 +930,7 @@ def test_a_foreign_byte_in_the_diff_is_judged_and_not_crashed_on(no_store):
         auth_path=no_store,
     )
     assert got == {"prereview": "reject", "prereview_note": "no test"}
-    assert "caf�" in json.loads(spy.bodies[0])["messages"][0]["content"]
+    assert "caf�" in spy.json_body()["messages"][0]["content"]
 
 
 def test_a_decode_error_the_replacement_missed_is_skipped_not_a_crash(no_store):

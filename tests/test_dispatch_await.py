@@ -17,7 +17,7 @@ from lean_herdr.dispatch import (
     verdict,
 )
 from lean_herdr.herdr import Herdr
-from lean_herdr.leanctx import CtxResponse
+from lean_herdr.leanctx import CtxResponse, LeanCtx
 from lean_herdr.orderlog import append, read_events, state_dir
 from lean_herdr.orders import fold, message_from
 from tests.doubles import FakeProc, which_stub
@@ -869,11 +869,11 @@ def test_main_routes_remember_into_remember_branch(main_root, capsys, monkeypatc
 def test_remember_reports_success_even_when_lean_ctx_is_missing():
     """A memory entry is not the deliverable -- a green branch stays green."""
 
-    class Absent:
+    class Absent(LeanCtx):
         def knowledge_remember(self, **_kwargs):
             return CtxResponse(False, error="unavailable")
 
-    result = remember_branch("lean-herdr/feat-x", "one sentence", root=ROOT, client=Absent())
+    result = remember_branch("lean-herdr/feat-x", "one sentence", root=ROOT, client=Absent(ROOT))
     assert result["ok"] is True
     assert result["remembered"] is False
     assert result["reason"] == "unavailable"

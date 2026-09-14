@@ -69,7 +69,7 @@ def test_an_event_is_immutable(tmp_path):
     """
     event = append(TASK, "created", "orchestrator", orders=tmp_path)
     with pytest.raises(FrozenInstanceError):
-        event.digest = "0" * 64
+        event.digest = "0" * 64  # ty: ignore[invalid-assignment]
 
 
 def test_a_missing_log_is_empty_and_not_an_error(tmp_path):

@@ -124,7 +124,8 @@ def test_newest_open_takes_the_first_open_order_for_this_agent():
     mine_done = Order(id="o-1", to_agent=WORKER, state="completed")
     theirs = Order(id="o-2", to_agent="reviewer-feat-x", state="created")
     mine_open = Order(id="o-3", to_agent=WORKER, state="created")
-    assert newest_open([mine_open, theirs, mine_done], WORKER).id == "o-3"
+    found = newest_open([mine_open, theirs, mine_done], WORKER)
+    assert found is not None and found.id == "o-3"
     assert newest_open([mine_done, theirs], WORKER) is None
 
 
@@ -140,7 +141,7 @@ def test_an_order_is_immutable():
     """
     order = fold([created()])
     with pytest.raises(FrozenInstanceError):
-        order.state = "completed"
+        order.state = "completed"  # ty: ignore[invalid-assignment]
 
 
 def test_every_kind_of_the_design_is_known():
