@@ -30,6 +30,7 @@ from typing import Any
 import lean_herdr
 from lean_herdr.bus import BusError, GitUnusable, canonical_root
 from lean_herdr.settings import (
+    ORCHESTRATOR_AGENT,
     OVERLAY_PATH,
     SETTINGS_PATH,
     OverlayError,
@@ -39,7 +40,10 @@ from lean_herdr.settings import (
     model_warnings,
     models_settings,
     read_settings,
+    role_problem,
+    role_prompt_path,
     settings_for,
+    work_roles,
     workspace_settings,
 )
 from lean_herdr.templating import (
@@ -62,8 +66,18 @@ BINARIES = (
     ("lean-ctx", "agent bus, project memory, tool profiles"),
 )
 
-#: The tables `up` and `dispatch` read roles out of.
+#: The tables `up` and `dispatch` read roles out of -- _config_errors adds every role [routing] names.
 ROLES = ("default", "orchestrator", "builder", "reviewer")
+
+#: What every worker prompt has to say, or its run breaks without a word: the
+#: order is never accepted, the sender never trusted, or an event is written
+#: under another name. tests/test_role_prohibitions.py and tests/test_roles.py pin
+#: them for the shipped prompts; this reaches a prompt of the project's own.
+WORKER_SENTENCES = (
+    "lean-herdr report start",
+    f"ORCHESTRATOR = {ORCHESTRATOR_AGENT}",
+    "Never pass `--agent`.",
+)
 
 #: What worktrunk's `commit.generation.command` has to start with. Flags behind
 #: it are the operator's.
@@ -454,7 +468,7 @@ def _config_errors(root: Path) -> tuple[list[str], dict[str, Any], bool]:
     else:
         try:
             data = read_settings(path)
-            for role in ROLES:
+            for role in (*ROLES, *work_roles(data).values()):
                 settings_for(role, data)
             workspace_settings(data)
             auto = models_settings(data).auto
@@ -470,6 +484,43 @@ def _config_errors(root: Path) -> tuple[list[str], dict[str, Any], bool]:
     if problem:
         errors.append(f"no_agent_config: {problem} -- {INIT_HINT}")
     return errors, data, auto
+
+
+def _role_warnings(root: Path, data: dict[str, Any]) -> list[str]:
+    """What `dispatch --work <work>` would refuse, or run blind, for every work with a role.
+
+    Warnings, never errors: `up` runs without any of it, and a work nobody
+    dispatches costs nothing. `data` is config.toml already read and valid, `{}`
+    otherwise -- the built-in works are checked either way. The artefact check is
+    `role_problem`, the one `dispatch` refuses with (one producer per rule, M3).
+    """
+    lines: list[str] = []
+    for work, role in sorted(work_roles(data).items()):
+        prompt = role_prompt_path(root, role)
+        if not prompt.is_file():
+            lines.append(f"no role prompt at {prompt} -- `dispatch --work {work}` fails")
+            continue
+        kind = settings_for(role, data).kind
+        if not kind:
+            # The normal case after `init`: workers have no built-in kind.
+            lines.append(f"[roles.{role}].kind unset: `dispatch --work {work}` needs --kind")
+        else:
+            problem = role_problem(root, role, kind, prompt)
+            if problem:
+                lines.append(f"{problem} -- `dispatch --work {work}` fails")
+        if role == "orchestrator":
+            continue
+        try:
+            text = " ".join(prompt.read_text(encoding="utf-8").split())
+        except (OSError, UnicodeDecodeError) as exc:
+            lines.append(f"{prompt} cannot be read: {exc}")
+            continue
+        missing = [sentence for sentence in WORKER_SENTENCES if sentence not in text]
+        if missing:
+            lines.append(
+                f"{prompt} lacks {missing} -- a worker without them cannot take or answer an order"
+            )
+    return lines
 
 
 def _template_report(root: Path) -> tuple[dict[str, str], list[str]]:
@@ -534,7 +585,7 @@ def workspace_check(*, root: Path | None = None, runner: Any = subprocess.run) -
         "ok": not errors,
         "root": str(base),
         "errors": errors,
-        "warnings": warnings + template_lines,
+        "warnings": warnings + _role_warnings(base, data) + template_lines,
         "install": install,
         "templates": templates,
     }

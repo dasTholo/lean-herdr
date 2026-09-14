@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ from lean_herdr.checkcmd import (
     workspace_check,
 )
 from lean_herdr.initcmd import workspace_init
-from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH
+from lean_herdr.settings import OVERLAY_PATH, SETTINGS_PATH, claude_settings_path, role_prompt_path
 from lean_herdr.templating import LAYOUT, LOCK_PATH
 from tests.doubles import Completed, FakeProc, undecodable, which_stub
 
@@ -436,7 +437,11 @@ def test_an_initialised_project_on_a_healthy_machine_is_ok_and_all_current(
     answer = workspace_check(root=repo, runner=healthy_machine())
     assert answer["ok"] is True, answer
     assert answer["errors"] == []
-    assert answer["warnings"] == []
+    # After `init` no worker has a kind -- the normal case, and check names it.
+    assert answer["warnings"] == [
+        _kind_unset("builder", "implement"),
+        _kind_unset("reviewer", "review"),
+    ]
     assert answer["root"] == str(repo)
     assert answer["templates"] == {relative: "current" for relative in LAYOUT.values()}
     assert answer["install"]["plugin"] == "/snap/lean_herdr/plugin"
@@ -601,3 +606,81 @@ def test_only_the_overlay_ignored_names_the_temp_line_whatever_auto_says(
     answer = workspace_check(root=repo, runner=proc)
     assert any(TEMP_IGNORE in w for w in answer["warnings"]), answer["warnings"]
     assert not any(f"does not ignore {OVERLAY_PATH}" in w for w in answer["warnings"])
+
+
+def _kind_unset(role: str, work: str) -> str:
+    return f"[roles.{role}].kind unset: `dispatch --work {work}` needs --kind"
+
+
+#: A work of the project's own, routed to a role `init` never wrote.
+REFACTORER = '[routing]\nrename = "refactorer"\n\n[roles.refactorer]\nkind = "{kind}"\n'
+
+
+def _refactorer(repo: Path, kind: str, *, prompt: bool = True) -> Path:
+    """The config for `rename`, and -- unless told not to -- the builder's prompt as its own."""
+    (repo / SETTINGS_PATH).write_text(REFACTORER.format(kind=kind), encoding="utf-8")
+    path = role_prompt_path(repo, "refactorer")
+    if prompt:
+        path.write_bytes(role_prompt_path(repo, "builder").read_bytes())
+    return path
+
+
+@pytest.mark.parametrize(
+    ("kind", "prompt", "expected"),
+    [
+        pytest.param("claude", False, "no role prompt at {path}", id="no prompt"),
+        pytest.param(
+            "opencode",
+            True,
+            "opencode.jsonc in {repo} defines no agent.refactorer",
+            id="no opencode block",
+        ),
+        pytest.param("claude", True, "no claude settings at {claude}", id="no claude file"),
+    ],
+)
+def test_a_routed_role_dispatch_would_refuse_is_named(
+    monkeypatch, repo, snapshot, kind, prompt, expected
+):
+    """A warning, not an error: `up` runs without it, and an unused work costs nothing."""
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    path = _refactorer(repo, kind, prompt=prompt)
+    line = expected.format(path=path, repo=repo, claude=claude_settings_path(repo, "refactorer"))
+
+    answer = workspace_check(root=repo)
+
+    assert answer["errors"] == [], answer["errors"]
+    assert f"{line} -- `dispatch --work rename` fails" in answer["warnings"], answer["warnings"]
+
+
+def test_a_worker_prompt_without_its_mandatory_sentences_is_named(monkeypatch, repo, snapshot):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    prompt = role_prompt_path(repo, "reviewer")
+    text = re.sub(r"Never pass\s+`--agent`\.", "", prompt.read_text(encoding="utf-8"))
+    prompt.write_text(text, encoding="utf-8")
+
+    warnings = workspace_check(root=repo)["warnings"]
+
+    expected = (
+        f"{prompt} lacks ['Never pass `--agent`.'] -- "
+        "a worker without them cannot take or answer an order"
+    )
+    assert expected in warnings, warnings
+
+
+def test_a_role_only_routing_names_is_validated_too(monkeypatch, repo, snapshot):
+    """`checkcmd.ROLES` knows four tables; a role behind `[routing]` is one more."""
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text(
+        '[routing]\nrename = "refactorer"\n\n[roles.refactorer]\ndirection = "links"\n',
+        encoding="utf-8",
+    )
+
+    answer = workspace_check(root=repo)
+
+    assert answer["ok"] is False
+    assert any(e.startswith("config_error: refactorer: direction") for e in answer["errors"]), (
+        answer["errors"]
+    )
