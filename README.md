@@ -21,9 +21,10 @@ One task, start to finish:
 
 1. `lean-herdr workspace up` starts the orchestrator in this repository's
    Herdr workspace. You give it the task in its terminal.
-2. It builds a worker with `lean-herdr dispatch builder --worktree <branch>`:
-   worktrunk creates the worktree, Herdr opens a workspace on it, and the
-   agent starts in a pane there.
+2. It builds a worker with `lean-herdr dispatch --work implement --worktree <branch>`:
+   `[routing]` in the config names the role for that work -- the builder,
+   unless you route it elsewhere. worktrunk creates the worktree, Herdr opens
+   a workspace on it, and the agent starts in a pane there.
 3. It writes the order into the event log (`lean-herdr dispatch order`) and
    waits with `--await`. The wait runs inside the script, not inside the
    model, so a long run costs the orchestrator one step. The worker takes its
@@ -32,7 +33,7 @@ One task, start to finish:
 4. On request a small model pre-reviews the diff (`--prereview`). It can send
    the builder into a second round before any reviewer is built -- it can
    reject, never approve.
-5. The reviewer runs on the same branch. On `result` the orchestrator
+5. The reviewer runs on the same branch (`--work review`). On `result` the orchestrator
    squashes, closes the worktree's workspace and merges into `main` with
    `wt merge`, whose pre-merge gate runs the project's test and lint
    commands. The commit message comes from `lean-herdr llm generate`.
@@ -265,7 +266,8 @@ edit the project behaves exactly as it does without the file. Precedence is
 **CLI flag > file > built-in default**; `[default]` applies to every role,
 `[roles.<role>]` beats `[default]`.
 
-Five sections: `[default]` and `[roles.<role>]` describe how a pane is
+Six sections: `[routing]` names the role behind each kind of work, `[default]` and
+`[roles.<role>]` describe how a pane is
 split, `[llm]` the commit generator and the pre-review judge, and
 `[workspace]` the pane `lean-herdr workspace up` opens for the
 orchestrator — `label` alone, and that one optional. `[models]` decides
@@ -306,6 +308,27 @@ one exception, and only where it is started: an empty `model` means no
 `--model` at all for `lean-herdr workspace up` and for the keystroke, which
 is what the keystroke has always done. `dispatch orchestrator` is not a
 start and has no such exception — it needs `--model` or a set `model`.
+
+Which role does which kind of work is set in `[routing]`. Without the table
+the two built-in works apply -- `implement` goes to `builder`, `review` to
+`reviewer` -- and a work of your own needs a line and a role:
+
+    [routing]
+    rename = "refactorer"
+
+    [roles.refactorer]
+    kind  = "opencode"
+    model = "<a model>"
+
+`lean-herdr dispatch --work rename` then builds the `refactorer` with
+`.lean-ctx/lean-herdr/roles/refactorer.md`; an opencode role also needs its
+block under `agent` in `opencode.jsonc`, a claude role its
+`.lean-ctx/lean-herdr/claude/refactorer.json`. `plan`, `plan-review` and
+`integrate` are reserved and have no built-in role yet: a call without a
+`[routing]` line for one is `config_error: no role for work 'plan'`. A work
+is spelled `[a-z][a-z0-9-]*`, a role `[a-z][a-z0-9_-]*`.
+`lean-herdr workspace check` names every work whose role lacks its prompt,
+its runtime, its file or a sentence the worker cannot run without.
 
 An unknown key, a wrong direction or a `name_template` without `{role}` and
 `{branch}` are errors and are reported — never silently reset to the default.

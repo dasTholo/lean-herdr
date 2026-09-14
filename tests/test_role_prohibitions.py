@@ -85,6 +85,11 @@ PROHIBITIONS = [
         "Do not pipe the answer through another program.",
         "M5: the old jq notation invited a call that no allow pattern covers",
     ),
+    (
+        "orchestrator.md",
+        "You pass no role name and no prompt file.",
+        "the config picks the role behind a work, not the orchestrator",
+    ),
     # --- Builder ------------------------------------------------------------
     (
         "builder.md",
@@ -172,6 +177,21 @@ MANDATORY_SENTENCES = [
     # --- Orchestrator -------------------------------------------------------
     (
         "orchestrator.md",
+        "lean-herdr dispatch --work <work> [--worktree <branch>]",
+        "the build names the kind of work; [routing] names the role behind it",
+    ),
+    (
+        "orchestrator.md",
+        "lean-herdr dispatch --work <work> --await",
+        "the wait call names the same work as the build, or it rings nobody",
+    ),
+    (
+        "orchestrator.md",
+        "Then the same three steps with `--work review` on the same branch.",
+        "the review stays mandatory -- only the role behind it moved into the config",
+    ),
+    (
+        "orchestrator.md",
         "MUST be the `agent` value step 1 returned",
         "the worker resolves that very string from its environment; anything else reaches nobody",
     ),
@@ -250,21 +270,15 @@ def test_remember_key_carries_no_trailing_segment():
     )
 
 
-def test_the_role_file_path_the_orchestrator_types_actually_resolves():
-    """A stale --role-file is a GREEN suite and a dead run.
+def test_the_orchestrator_dispatches_by_work_and_names_no_role():
+    """Since `[routing]` the config picks the role behind a work.
 
-    dispatch hands this path straight to `--append-system-prompt-file`
-    (claude) or reads its stem as the agent name (opencode). Pointing
-    nowhere, the worker starts without a prompt, never reports, and the
-    orchestrator hits the wait-mode timeout with `no_reply`. Every other
-    test in this file pins a COMMAND; this one pins a path, and nothing
-    else did.
+    A role name or a `--role-file` left in this prompt would be a second place
+    that decides it -- one no config line can overrule, and one a renamed role
+    turns into a dead run.
     """
-    text = (ROLES / "orchestrator.md").read_text(encoding="utf-8")
-    hit = re.search(r"--role-file (\S+)", text)
-    assert hit, "the orchestrator prompt no longer names a --role-file path"
-    template = hit.group(1)
-    assert "<role>" in template, f"{template!r} names no role placeholder"
-    for role in ("orchestrator", "builder", "reviewer"):
-        path = ROOT / template.replace("<role>", role)
-        assert path.is_file(), f"{template} does not resolve for {role}: {path}"
+    text = _normalized("orchestrator.md")
+    assert "--work" in text
+    assert "--role-file" not in text
+    named = re.findall(r"\b(?:builder|reviewer)\b", text)
+    assert not named, f"orchestrator.md still names roles: {named}"

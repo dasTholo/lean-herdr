@@ -32,6 +32,19 @@
 #                      # blind spots is the whole point of the second pass
 # shares_reviewed_model = false  # true: a role it reviews shares its model, meant
 
+# [routing] names the role behind each kind of work: `lean-herdr dispatch
+# --work <work>` builds that role, with its prompt under roles/ and its
+# [roles.<role>] table. Built in: implement = builder, review = reviewer.
+# Reserved, with no built-in role yet: plan, plan-review, integrate.
+# A work is [a-z][a-z0-9-]*, a role [a-z][a-z0-9_-]*.
+
+# [routing]
+# implement = "builder"
+# review    = "reviewer"
+# rename    = "refactorer"   # a work of your own: needs [roles.refactorer],
+#                            # roles/refactorer.md, and its opencode agent
+#                            # block or claude/refactorer.json
+
 # [llm]
 # Read by lean_herdr/llm.py alone: the commit generator worktrunk calls
 # through lean-herdr llm generate, and the pre-review judge behind --prereview.

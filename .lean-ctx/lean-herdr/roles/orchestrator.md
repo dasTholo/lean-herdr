@@ -10,12 +10,14 @@ other way.
 
 ### 1. Build the worker
 
-    lean-herdr dispatch <role> \
-      --role-file .lean-ctx/lean-herdr/roles/<role>.md \
-      [--worktree <branch>] [--profile <p>]
+    lean-herdr dispatch --work <work> [--worktree <branch>] [--profile <p>]
+
+`<work>` names the kind of work, not who does it: `implement` for the code,
+`review` for the ruling on it. The config decides which role does a work,
+and with which prompt. You pass no role name and no prompt file.
 
 The output is one JSON line. Read `ok`, never the exit code. On success it
-carries `pane`, `agent_id` and `agent`.
+carries `pane`, `agent_id`, `agent` and `role`.
 
 ### 2. Create the order
 
@@ -35,45 +37,48 @@ it, it appears in every further step.
 
 ### 3. Let it wait
 
-    lean-herdr dispatch <role> --await \
+    lean-herdr dispatch --work <work> --await \
       --task-id o-… [--worktree <branch>] [--timeout-ms 300000]
 
-This call rings the worker and then waits inside the script, not inside you.
+The same `--work` as in step 1: that is how this call finds the worker it
+rings. It rings the worker and then waits inside the script, not inside you.
 It costs you one model step, however long the work takes.
 
 ## Model and runtime — not your choice
 
-Which model and which runtime a worker gets stands in
-`.lean-ctx/lean-herdr/config.toml`, under `[roles.builder]` and
-`[roles.reviewer]`. **Leave `--kind` and `--model` off your dispatch
-calls** -- the file fills them in. Pass one only to override the file for
-a single call, and say why when you do.
+`.lean-ctx/lean-herdr/config.toml` decides who does a work: `[routing]`
+names the role behind it, `[roles.<role>]` that role's model and runtime.
+**Leave `--kind` and `--model` off your dispatch calls**
+-- the file fills them in. Pass one only to override the file for a single
+call, and say why when you do.
 
 If the file names no model for a role, `dispatch` answers
 `usage_error: build mode needs --model` and builds nothing. That is
 deliberate: a worker quietly running on its runtime's default model costs
 real money and nobody sees it.
 
-The reviewer earns its keep by having **different blind spots** than the
-builder -- a different model, not a second opinion from the same one. If
-the config gives both the same model, your reviewer dispatch line carries
-a `warnings` entry saying so. It is a warning, not a refusal: report it
-and carry on.
+The review earns its keep by having **different blind spots** than the work
+it checks -- a different model, not a second opinion from the same one. If
+the config gives both the same model, your `--work review` dispatch line
+carries a `warnings` entry saying so. It is a warning, not a refusal: report
+it and carry on.
 
-The pre-review is not a third worker: it is a flag on the builder's wait
-call, and the model behind it is small and cheap. It may block, it may
-never approve -- the strong reviewer runs in every case, `pass` or not.
+The pre-review is not a third worker: it is a flag on the wait call of
+`--work implement`, and the model behind it is small and cheap. It may
+block, it may never approve -- the strong review runs in every case, `pass`
+or not.
 
 ## Sequence per task
 
 1. Settle the branch name.
-2. Build the builder (step 1) — with `--worktree <branch>` if code is
-   produced. Create the order (step 2), let it wait (step 3).
+2. Build the worker for `--work implement` (step 1) — with
+   `--worktree <branch>` if code is produced. Create the order (step 2), let
+   it wait (step 3).
 3. `ok: true`? Read `prereview` first, if you asked for it.
 
-   The builder's wait call may carry `--prereview`:
+   The wait call of `--work implement` may carry `--prereview`:
 
-       lean-herdr dispatch builder --await --task-id o-… \
+       lean-herdr dispatch --work implement --await --task-id o-… \
          --worktree <branch> --prereview
 
    It costs you nothing extra -- you read that JSON line anyway. The key
@@ -82,21 +87,21 @@ never approve -- the strong reviewer runs in every case, `pass` or not.
 
    | `prereview` | What you do |
    |---|---|
-   | `reject` | round 2 with the builder, BEFORE any reviewer is built |
-   | `pass` | build the reviewer -- `pass` is not an approval |
-   | `skipped` | build the reviewer -- the pre-review withheld its ruling |
+   | `reject` | round 2 of `--work implement`, BEFORE any review worker is built |
+   | `pass` | build the review worker -- `pass` is not an approval |
+   | `skipped` | build the review worker -- the pre-review withheld its ruling |
 
-   A `reject` is one follow-up order to the same builder, with `--after o-…`,
+   A `reject` is one follow-up order to the same worker, with `--after o-…`,
    carrying `prereview_note` verbatim. On THAT round you do **not** pass
    `--prereview` again: that limits a stubborn small model to exactly one
    rejection, without a counter anywhere.
 
-   Then the same three steps for the reviewer on the same branch.
-4. The reviewer's ruling is in `verdict`: `result` or `reject`. No prose
-   parsing — if nothing is there, the reviewer broke its format; treat that
-   like `reject` and tell it so.
-5. On `result`: tear down and merge (below). On `reject`: round 2 with the
-   builder, then escalate.
+   Then the same three steps with `--work review` on the same branch.
+4. The review's ruling is in `verdict`: `result` or `reject`. No prose
+   parsing — if nothing is there, the review worker broke its format; treat
+   that like `reject` and tell it so.
+5. On `result`: tear down and merge (below). On `reject`: round 2 of
+   `--work implement`, then escalate.
 
 ### When the worker asks back
 
@@ -145,7 +150,7 @@ state.
 **`--no-commit` skips the commit AND the squash.** That is why step 3 is not
 a luxury: it is the only place the squash still happens, and from two commits
 on the squashed message is the one that lands in `main` (with exactly one,
-`wt` leaves the builder's message alone and says so). What `--no-commit` buys
+`wt` leaves the worker's message alone and says so). What `--no-commit` buys
 is step 5's refusal: if anything unfinished is left in the worktree, the
 merge stops before `main` moves at all. It skips the commit, not the gates —
 the `pre-merge` hook still runs and its exit code still reaches you.
