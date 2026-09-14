@@ -791,9 +791,12 @@ def _build(
     # Additive, and only where a reader exists: the orchestrator reads
     # the dispatch line of the role behind `review` -- by `--work review`
     # or by that role's name. `ok` is untouched: a warning, never a
-    # refusal. Computed BEFORE dispatch(): it reads the table of every
-    # routed role, and a broken one must stop the call while no pane
-    # exists yet, not cost the answer of a worker already started.
+    # refusal. Computed BEFORE dispatch(): `model_warnings` reads the table
+    # of every OTHER routed role too, but only when the role behind
+    # `review` has a model AND does not set `shares_reviewed_model` --
+    # otherwise it returns before touching them. Only then can a broken
+    # routed table stop the call while no pane exists yet, instead of
+    # costing the answer of a worker already started.
     reviewing = args.command == role_for_work("review", raw)
     notes = model_warnings(raw) if reviewing else []
     result = dispatch(

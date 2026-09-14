@@ -152,6 +152,7 @@ STAGES = ("plan", "plan-review", "review", "integrate")
 #: name, so it is held to what that name may carry; its length is TP3's.
 WORK_RE = re.compile(r"[a-z][a-z0-9-]*")
 ROLE_RE = re.compile(r"[a-z][a-z0-9_-]*")
+
 #: The herdr agent name of the orchestrator, and the sender the workers
 #: trust. Deliberately NOT a config key: three places must agree on it --
 #: this constant, the line `ORCHESTRATOR = orch` in both role prompts, and
