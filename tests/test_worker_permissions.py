@@ -246,6 +246,30 @@ def test_the_builders_gate_is_not_a_blank_cheque(gate_root):
         assert forbidden not in allowed, f"{forbidden} widens the builder's gate"
 
 
+#: The gate's formatter and type check (plan C final review, F1): the builder
+#: needs both to follow herdr-recipes' `gate()` and the Python pack's `ty check`.
+GATE_FORMATTER_AND_TYPES = ("uv run ruff format*", "uv run ty check*")
+
+
+def test_the_opencode_builder_may_run_the_formatter_and_ty_check():
+    """The gate's first and third lines, both hard-coded by the Python pack.
+
+    Without these the builder is stopped at `uv run ruff format` and
+    `uv run ty check` exactly like it was at `uv run pytest` before F1.
+    """
+    allowed = opencode()["agent"]["builder"]["permission"]["bash"]
+    for pattern in GATE_FORMATTER_AND_TYPES:
+        assert allowed.get(pattern) == "allow", f"the builder cannot run `{pattern}`"
+
+
+@pytest.mark.parametrize("role", ("reviewer", "plan-reviewer"))
+def test_opencode_reviewer_roles_may_not_run_the_formatter_or_ty_check(role):
+    """Neither judge writes, and `ruff format`/`ty check` are not theirs to run."""
+    allowed = opencode()["agent"][role]["permission"]["bash"]
+    for pattern in GATE_FORMATTER_AND_TYPES:
+        assert pattern not in allowed, f"{role} may run `{pattern}`"
+
+
 def test_the_claude_builder_may_commit_through_worktrunk():
     """The same gate as the opencode builder, on the other harness.
 
@@ -304,6 +328,15 @@ def test_the_claude_builders_gate_is_not_a_blank_cheque(gate_root):
         assert forbidden not in allow, f"{forbidden} widens the builder's gate"
 
 
+def test_claude_settings_allow_the_formatter_and_ty_check(gate_root):
+    """`.claude/settings.json` grants every claude worker both, same as the builder's
+    opencode block -- fixed literal commands, not the `{{lean-herdr:...}}` tokens,
+    since `--lang python` pins the formatter and `ty check` reads only (F1)."""
+    allow = claude_allow(gate_root)
+    assert "Bash(uv run ruff format:*)" in allow
+    assert "Bash(uv run ty check:*)" in allow
+
+
 def test_no_permission_file_hands_out_worktrunk_wholesale(gate_root):
     """`wt *` on a worker is the whole tool, merge and push included."""
     for entry in claude_allow(gate_root):
@@ -342,11 +375,13 @@ def test_a_claude_role_that_writes_nothing_is_denied_every_writing_grant(role):
 
     The four `plan` commands and `wt step diff` only read, and stay as well.
 
-    Everything in it but the report path, the gate's own two commands and skills
-    has to be taken back here, together with the editors and lean-ctx's tools.
+    Everything in it but the report path, the test command, `ty check` and skills
+    has to be taken back here, together with the editors and lean-ctx's tools. The
+    lint command and the formatter write too now (`ruff check --fix`, `ruff format`),
+    so they join the writing grants this role denies.
     """
     values = resolve_values(read_lock(ROOT)["values"])
-    kept = {f"Bash({values['test']}:*)", f"Bash({values['lint']}:*)"}
+    kept = {f"Bash({values['test']}:*)", "Bash(uv run ty check:*)"}
     shared = [
         rule
         for rule in claude_allow()

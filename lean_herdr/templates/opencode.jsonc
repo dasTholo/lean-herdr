@@ -81,6 +81,8 @@
           // the builder may run exactly what the merge is measured against.
           "{{lean-herdr:test}}*": "allow",
           "{{lean-herdr:lint}}*": "allow",
+          "uv run ruff format*": "allow",
+          "uv run ty check*": "allow",
           "git add*": "allow",
           "git commit*": "allow",
           "git diff*": "allow",

@@ -10,6 +10,8 @@
       "Bash(git push:*)",
       "Bash(wt merge:*)",
       "Bash(wt step push:*)",
+      "Bash({{lean-herdr:lint}}:*)",
+      "Bash(uv run ruff format:*)",
       "mcp__lean-ctx__ctx_patch",
       "mcp__lean-ctx__ctx_edit",
       "mcp__lean-ctx__ctx_refactor"

@@ -4,7 +4,6 @@ crp: compact
 
 @var test_cmd default="uv run pytest" desc="project test runner command"
 @var lint_cmd default="uv run ruff check" desc="project lint gate"
-@var fmt_cmd default="uv run ruff format" desc="project formatter"
 @import .lean-ctx/lean-md/herdr-recipes /
 
 # <Feature> — lean-herdr plan

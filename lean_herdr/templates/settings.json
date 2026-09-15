@@ -10,6 +10,8 @@
       "Bash(git add:*)",
       "Bash({{lean-herdr:test}}:*)",
       "Bash({{lean-herdr:lint}}:*)",
+      "Bash(uv run ruff format:*)",
+      "Bash(uv run ty check:*)",
       "Bash(wt step commit:*)",
       "Bash(wt step diff:*)",
       "Bash(lean-herdr plan brief:*)",
