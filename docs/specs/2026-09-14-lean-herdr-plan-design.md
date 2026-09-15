@@ -1,6 +1,6 @@
 # lean-herdr: Planausführung — Teilprojekt 2 „Plan“ — Design v1.0
 
-**Stand:** 2026-09-14, TP0-Nachtrag 2026-09-15, `PATH`-Nachtrag 2026-09-15 · **Status:** beschlossen, nicht implementiert
+**Stand:** 2026-09-14, TP0-Nachtrag 2026-09-15, `PATH`-Nachtrag 2026-09-15, Final-Review-Plan-B-Nachtrag 2026-09-15 · **Status:** beschlossen, nicht implementiert
 **Anlass:** Der Orchestrator soll einen Plan schreiben lassen, ihn prüfen und reviewen lassen
 und ihn danach Task für Task von Agents ausführen lassen. TP1 („Rollen und Routing“) hat die
 Grundlage gelegt; lauffähig ist heute nur die Kette `--work implement` → `--work review` →
