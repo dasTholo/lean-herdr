@@ -1,6 +1,6 @@
 # lean-herdr: Planausführung — Teilprojekt 2 „Plan“ — Design v1.0
 
-**Stand:** 2026-09-14, TP0-Nachtrag 2026-09-15 · **Status:** beschlossen, nicht implementiert
+**Stand:** 2026-09-14, TP0-Nachtrag 2026-09-15, `PATH`-Nachtrag 2026-09-15 · **Status:** beschlossen, nicht implementiert
 **Anlass:** Der Orchestrator soll einen Plan schreiben lassen, ihn prüfen und reviewen lassen
 und ihn danach Task für Task von Agents ausführen lassen. TP1 („Rollen und Routing“) hat die
 Grundlage gelegt; lauffähig ist heute nur die Kette `--work implement` → `--work review` →
@@ -242,9 +242,13 @@ und `branch_touches_tooling`, wenn `plan/<slug>` gegenüber `main` etwas unter
 
 ### 5.5 `PATH` für Worker
 
-Existiert `<root>/.lean-ctx/lean-herdr/bin`, hängt `dispatch` beim `pane split` zusätzlich
-`--env PATH=<root>/.lean-ctx/lean-herdr/bin:<PATH des aufrufenden Prozesses>` an
-(ausgeschrieben, `root` aus `canonical_root()`). Der lean-ctx-Server im Pane erbt ihn.
+Existiert `<root>/.lean-ctx/lean-herdr/bin`, schickt `dispatch` nach dem `pane split` und vor
+`agent start` die Zeile `export PATH=<root>/.lean-ctx/lean-herdr/bin:"$PATH"` über
+`herdr pane run` in die Shell des Panes (Pfad ausgeschrieben und für die Shell gequotet, `root`
+aus `canonical_root()`). Ein `--env PATH=…` beim `pane split` reicht nicht: zsh stellt beim Start
+eigene Verzeichnisse davor (§11). Die getippte Zeile läuft nach den Startdateien; der Agent und
+der lean-ctx-Server im Pane erben den `PATH`. Scheitert `pane run`, endet `dispatch` mit
+`pane_run_failed`, bevor ein Agent startet.
 
 ## 6. CLI und Datenfluss
 
@@ -421,6 +425,7 @@ Einzelaufgaben ohne Plan laufen unverändert. Pro Session ein Plan.
 | `wt list` scheitert bei `report` | `ok: true`, Event mit `wt_error` |
 | Agent-Name über 32 Zeichen | `config_error` vor dem Pane |
 | `.lean-ctx/lean-herdr/bin` fehlt | kein `PATH`-Zusatz, kein Fehler |
+| `pane run` für den `PATH` scheitert | `pane_run_failed`, kein Agent im Pane |
 
 Alle JSON-Befehle: eine Zeile mit `ok`, Exit 0, nie eine Exception zum Aufrufer.
 
@@ -431,7 +436,7 @@ Alle JSON-Befehle: eine Zeile mit `ok`, Exit 0, nie eine Exception zum Aufrufer.
 | `plan.py` | jede Regel aus §3 mit Outline-JSON als Fixture; Durchreichen der `outline`-Fehler; Fallback auf `main`; `config_error` ohne `outline` |
 | `planrun.py` | jede Zeile aus §6.4, rein, ohne I/O |
 | `plancmd.py` | JSON-Vertrag; Klartext und Exit 1 bei `brief`; Briefs je `step` mit Doubles für `git show`, `lean-md` und `wt` |
-| `dispatch` / `ordercmd` / `orders` | `--plan/--step/--plan-task/--spec`-Prüfung, Payload, `Order`-Felder; Namenslänge; `PATH` im `--env` nur bei vorhandenem `bin` |
+| `dispatch` / `ordercmd` / `orders` | `--plan/--step/--plan-task/--spec`-Prüfung, Payload, `Order`-Felder; Namenslänge; `export PATH` über `Herdr.pane_run` nur bei vorhandenem `bin`, vor `agent start` |
 | `report` | `head`/`changes` über ein `wt`-Double; `wt_error` |
 | `llm` | `prereview_result` mit `base` (Diff ab SHA) und Prompt-Wahl; `PLAN_PREREVIEW_PROMPT`; `llm prereview --base --plan`; `await_task` nutzt `plancmd.prereview_input` nur bei Plan-Aufträgen; Grenze für Diff und Auftragsbild |
 | `settings` | eingebaute Zuordnung `plan`/`plan-review`; Modell-Warnung `plan-review` gegen `plan` |
@@ -446,8 +451,12 @@ Alle JSON-Befehle: eine Zeile mit `ok`, Exit 0, nie eine Exception zum Aufrufer.
    seit dem Commit — danach als Test festgeschrieben.
 2. Ein lokales `@define commit` in `herdr-recipes` gewinnt gegen das `@define` aus dem
    `@import` von `plan-recipes`.
-3. `herdr pane split --env PATH=…`: Das Verzeichnis steht nach dem Start von zsh im Pane
-   noch vorn im `PATH`.
+3. `PATH` im Pane. Gemessen 2026-09-15: Ein `--env PATH=<bin>:…` beim `pane split` steht nach
+   dem Start von zsh nicht mehr vorn (`~/.bun/bin`, `~/.npm-global/bin`, `~/.local/bin`,
+   `~/.cargo/bin` davor). `herdr pane run <pane> 'export PATH=<bin>:"$PATH"'` direkt nach dem
+   Split läuft nach den Startdateien: `<bin>` steht vorn, `command -v` findet dort ein Programm
+   vor `~/.local/bin`; `pane run` endet bei Erfolg mit Exit 0 und leerer Ausgabe. Daraus §5.5
+   (Entscheidung des Betreibers).
 4. `lean-md outline --json` 0.2.4 ist über den Shim erreichbar (Voraussetzung TP0).
 
 Scheitert eine Messung, endet die Task mit BLOCKED; nichts wird geraten.

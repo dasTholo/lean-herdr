@@ -41,12 +41,13 @@ lean_herdr/orders.py    + PLAN_STEPS, PLAN_SLUG_RE, _text; Order.plan/step/plan_
 lean_herdr/ordercmd.py  + OrderRequest.plan/step/plan_task/spec, plan_flag_problem;
                           create_order prüft und schreibt die Felder                      (Task 2)
 lean_herdr/dispatch.py  + --plan/--step/--plan-task/--spec; missing_flags; main           (Task 2)
-                        + import os, HERDR_NAME_MAX, WORKER_BIN; _build prüft die Länge;
-                          dispatch() setzt PATH                                            (Task 4)
+                        + import shlex, HERDR_NAME_MAX, WORKER_BIN; _build prüft die Länge;
+                          dispatch() tippt export PATH ins Pane (Herdr.pane_run)           (Task 4)
+lean_herdr/herdr.py     + Herdr.pane_run                                                   (Task 4)
 lean_herdr/report.py    + WT_TIMEOUT_S, CHANGE_FLAGS, STAMPED, worktree_stamp;
                           report(..., stamper=); main übergibt worktree_stamp               (Task 3)
 tests/test_orders.py, tests/test_ordercmd.py (neu), tests/test_dispatch_await.py,
-tests/test_report.py, tests/test_dispatch.py
+tests/test_report.py, tests/test_dispatch.py, tests/test_herdr.py
 ```
 
 Bestand, auf den die Tasks bauen: `orders._apply` (`lean_herdr/orders.py:96-118`),
@@ -56,8 +57,8 @@ Bestand, auf den die Tasks bauen: `orders._apply` (`lean_herdr/orders.py:96-118`
 `report.report` (`lean_herdr/report.py:213-244`), `report.main` (`:292-330`).
 Test-Muster: `tests/test_orders.py` (`event`, `created`), `tests/test_dispatch_await.py`
 (`main_root`, `_one_json_line`), `tests/test_report.py` (`order`), `tests/test_dispatch.py`
-(`world`, `req`, `registry`, `_line`, `_no_launch`, `_spy_dispatch`), `tests/doubles.py`
-(`FakeProc`, `Completed`, `write_role_fixture`).
+(`world`, `req`, `registry`, `_line`, `_no_launch`, `_spy_dispatch`), `tests/test_herdr.py` (`fake`, `h`),
+`tests/doubles.py` (`FakeProc`, `Completed`, `write_role_fixture`).
 
 ## Global Constraints
 
@@ -109,14 +110,23 @@ sind vorhanden.
 
 ### Schritt 4 — `PATH` im Pane (nur in einer laufenden Herdr-Sitzung, `HERDR_ENV=1`)
 
-1. `uv run python -c 'from pathlib import Path; Path("/tmp/lh-measure/bin").mkdir(exist_ok=True)'`
-2. `herdr pane split --direction down --cwd /tmp/lh-measure --env PATH=/tmp/lh-measure/bin:$PATH`
-   — `$PATH` expandiert die aufrufende Shell. Aus der JSON-Antwort `result.pane.pane_id` als `PANE`.
-3. `herdr pane run <PANE> 'echo LH_PATH=$PATH'` — einfache Quotes: die Shell im Pane expandiert.
-4. `herdr pane read <PANE> --source recent --lines 20`
-5. `herdr pane close <PANE>`
+Die erste Fassung dieses Schritts (`pane split --env PATH=…`) scheiterte am 2026-09-15: zsh stellt
+beim Start `~/.bun/bin`, `~/.npm-global/bin`, `~/.local/bin` und `~/.cargo/bin` vor den übergebenen
+Wert. Entscheidung des Betreibers: `dispatch` tippt `export PATH` nach dem Split in die Shell des
+Panes (Spec §5.5, §11). Dieser Schritt misst genau diesen Weg.
 
-Expected in Schritt 4.4: eine Zeile, die mit `LH_PATH=/tmp/lh-measure/bin:` beginnt.
+1. `uv run python -c 'from pathlib import Path; b = Path("/tmp/lh-measure/bin"); b.mkdir(exist_ok=True); (b / "ty").write_text("#!/bin/sh\necho LH_SHIM_TY\n"); (b / "ty").chmod(0o755)'`
+   — `ty` liegt auch in `~/.local/bin`; der Stub zeigt, wer gewinnt.
+2. `herdr pane split --direction down --no-focus --cwd /tmp/lh-measure` — aus der JSON-Antwort
+   `result.pane.pane_id` als `PANE`.
+3. Sofort, ohne zu warten: `herdr pane run <PANE> 'export PATH=/tmp/lh-measure/bin:"$PATH"'` —
+   einfache Quotes: die Shell im Pane expandiert. Exit-Code und Ausgabe notieren.
+4. `herdr pane run <PANE> 'echo LH_FIRST=${PATH%%:*}; echo LH_TY=$(command -v ty)'`
+5. `herdr pane read <PANE> --source recent --lines 20`
+6. `herdr pane close <PANE>`
+
+Expected: Schritt 4.3 endet mit Exit 0 und leerer Ausgabe; Schritt 4.5 zeigt die Zeilen
+`LH_FIRST=/tmp/lh-measure/bin` und `LH_TY=/tmp/lh-measure/bin/ty`.
 
 ### Schritt 5 — Festhalten und Aufräumen
 
@@ -125,7 +135,7 @@ und mit BLOCKED enden.
 
 Den Aufruf aus Schritt 2 (`wt step diff <sha>`) legt Plan B, Task 6, in `tests/test_llm.py` als Test fest.
 
-@call remember_decision("lean-herdr TP2 measurements: `wt -C <path> step diff <sha>` diffs committed and untracked changes since that commit; `wt list --format=json` marks the current worktree with worktree.current and carries head.sha plus worktree.changes flags; `herdr pane split --env PATH=<bin>:$PATH` keeps <bin> in the pane shell's PATH.")
+@call remember_decision("lean-herdr TP2 measurements: `wt -C <path> step diff <sha>` diffs committed and untracked changes since that commit; `wt list --format=json` marks the current worktree with worktree.current and carries head.sha plus worktree.changes flags; `herdr pane split --env PATH=<bin>:$PATH` loses the first place to zsh's startup files, while `herdr pane run <pane> export PATH=<bin>:$PATH` right after the split keeps <bin> first and exits 0 with empty stdout.")
 
 Run: `uv run python -c 'import shutil; shutil.rmtree("/tmp/lh-measure")'`
 @phase-end
@@ -723,22 +733,38 @@ Expected: PASS — die neuen Tests und alle bestehenden in beiden Dateien.
 @phase "task-4"
 ## Task 4: `dispatch` — Länge des Agent-Namens, `PATH` für Worker
 
-**Files:** Modify `lean_herdr/dispatch.py`, `tests/test_dispatch.py`.
+**Files:** Modify `lean_herdr/dispatch.py`, `lean_herdr/herdr.py`, `tests/test_dispatch.py`,
+`tests/test_herdr.py`.
 
-**Interfaces — Produces** (`lean_herdr/dispatch.py`):
+**Interfaces — Produces:**
 
+    # lean_herdr/herdr.py
+    Herdr.pane_run(self, pane: str, command: str) -> bool     # True: Exit 0
+    # lean_herdr/dispatch.py
     HERDR_NAME_MAX = 32
     WORKER_BIN = Path(".lean-ctx") / "lean-herdr" / "bin"
     # _build: Name länger als HERDR_NAME_MAX →
     #   {"ok": False, "error": "config_error: agent name '<name>' has <n> characters, herdr allows 32"}
-    # dispatch(): existiert root / WORKER_BIN, bekommt `pane split` zusätzlich
-    #   --env PATH=<root>/.lean-ctx/lean-herdr/bin:<PATH dieses Prozesses>
+    # dispatch(): existiert root / WORKER_BIN, tippt es nach `pane split` und vor `agent start`
+    #   export PATH=<root>/.lean-ctx/lean-herdr/bin:"$PATH"   in die Shell des Panes;
+    #   scheitert `pane run`: ok False, error "pane_run_failed", kein Agent
 
-**Consumes:** Messung aus Task 1 (`PATH` im Pane).
+**Consumes:** Messung aus Task 1, Schritt 4 (`export PATH` über `pane run`; Spec §5.5, §11).
 
 ### Schritt 1 — Tests zuerst
 
-`tests/test_dispatch.py`, am Dateiende:
+`tests/test_herdr.py`, nach `test_pane_send_keys_puts_the_pane_id_first`:
+
+    def test_pane_run_puts_the_pane_id_first_and_answers_with_the_exit_code(fake):
+        """`pane run` prints nothing on success (measured 2026-09-15): the exit code is the answer."""
+        fake.replies = {("pane", "run"): Completed()}
+        assert h(fake).pane_run("w8:p5", 'export PATH=/x:"$PATH"') is True
+        assert fake.calls == [["herdr", "pane", "run", "w8:p5", 'export PATH=/x:"$PATH"']]
+        fake.replies = {("pane", "run"): Completed(returncode=1, stderr="pane not found")}
+        assert h(fake).pane_run("w8:p5", "true") is False
+
+`tests/test_dispatch.py`: `import shlex` in den Import-Block; `Completed` in den Import aus
+`tests.doubles`; am Dateiende:
 
     def test_an_agent_name_over_32_characters_is_refused_before_any_pane(monkeypatch, tmp_path, capsys):
         root = tmp_path / "repo"
@@ -770,42 +796,78 @@ Expected: PASS — die neuen Tests und alle bestehenden in beiden Dateien.
         assert len(seen) == 1
 
 
-    def test_the_worker_bin_goes_in_front_of_the_panes_path(world, tmp_path, monkeypatch):
+    def test_the_worker_bin_is_exported_in_the_pane_before_the_agent_starts(world, tmp_path):
+        h_proc, path = world
+        bin_dir = tmp_path / ".lean-ctx" / "lean-herdr" / "bin"
+        bin_dir.mkdir(parents=True)
+        path.write_text(json.dumps(registry()), encoding="utf-8")
+        dispatch(
+            req(), herdr=Herdr(runner=h_proc), root=tmp_path, registry_path=path,
+            waiter=lambda *a, **kw: AGENT_ID,
+        )
+        verbs = [call[1:3] for call in h_proc.calls]
+        run = verbs.index(["pane", "run"])
+        assert verbs.index(["pane", "split"]) < run < verbs.index(["agent", "start"])
+        assert h_proc.calls[run][3:] == ["w1:p6", f'export PATH={shlex.quote(str(bin_dir))}:"$PATH"']
+        split = h_proc.calls[verbs.index(["pane", "split"])]
+        assert not any(arg.startswith("PATH=") for arg in split), "zsh would push an --env PATH back"
+
+
+    def test_without_a_worker_bin_nothing_is_typed_into_the_pane(world, tmp_path):
+        h_proc, path = world
+        path.write_text(json.dumps(registry()), encoding="utf-8")
+        dispatch(
+            req(), herdr=Herdr(runner=h_proc), root=tmp_path, registry_path=path,
+            waiter=lambda *a, **kw: AGENT_ID,
+        )
+        assert not any(call[1:3] == ["pane", "run"] for call in h_proc.calls)
+
+
+    def test_a_failed_path_export_starts_no_agent(world, tmp_path):
         h_proc, path = world
         (tmp_path / ".lean-ctx" / "lean-herdr" / "bin").mkdir(parents=True)
-        monkeypatch.setenv("PATH", "/usr/bin")
+        h_proc.replies[("pane", "run")] = Completed(returncode=1, stderr="pane not found")
         path.write_text(json.dumps(registry()), encoding="utf-8")
-        dispatch(
+        result = dispatch(
             req(), herdr=Herdr(runner=h_proc), root=tmp_path, registry_path=path,
             waiter=lambda *a, **kw: AGENT_ID,
         )
-        split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
-        assert f"PATH={tmp_path / '.lean-ctx' / 'lean-herdr' / 'bin'}:/usr/bin" in split
+        assert result["ok"] is False
+        assert result.get("error") == "pane_run_failed"
+        assert not any(call[1:3] == ["agent", "start"] for call in h_proc.calls)
 
+Run: `uv run pytest -q tests/test_herdr.py tests/test_dispatch.py -k "pane_run or agent_name_over_32 or agent_name_of_exactly_32 or worker_bin or typed_into or path_export"`
 
-    def test_without_a_worker_bin_the_pane_path_is_left_alone(world, tmp_path):
-        h_proc, path = world
-        path.write_text(json.dumps(registry()), encoding="utf-8")
-        dispatch(
-            req(), herdr=Herdr(runner=h_proc), root=tmp_path, registry_path=path,
-            waiter=lambda *a, **kw: AGENT_ID,
-        )
-        split = next(c for c in h_proc.calls if c[1:3] == ["pane", "split"])
-        assert not any(arg.startswith("PATH=") for arg in split)
+Expected: FAIL —
+`test_pane_run_puts_the_pane_id_first_and_answers_with_the_exit_code`: `AttributeError: 'Herdr' object
+has no attribute 'pane_run'`; `test_an_agent_name_over_32_characters_is_refused_before_any_pane`:
+`main` fängt den `AssertionError` aus `_no_launch`, das Ergebnis trägt `dispatch_crashed: main() reached
+the launch path past a config error` statt des `config_error`;
+`test_the_worker_bin_is_exported_in_the_pane_before_the_agent_starts`: `ValueError: ['pane', 'run'] is
+not in list`; `test_a_failed_path_export_starts_no_agent`: `assert result["ok"] is False`. Die Tests für
+genau 32 Zeichen und ohne bin-Verzeichnis sind schon vorher grün.
 
-Run: `uv run pytest -q tests/test_dispatch.py -k "agent_name_over_32 or agent_name_of_exactly_32 or worker_bin"`
+### Schritt 2 — `herdr.py`
 
-Expected: FAIL — `test_an_agent_name_over_32_characters_is_refused_before_any_pane`: `main` fängt den
-`AssertionError` aus `_no_launch`, das Ergebnis trägt `dispatch_crashed: main() reached the launch path
-past a config error` statt des `config_error`; `test_the_worker_bin_goes_in_front_of_the_panes_path`:
-im `pane split` fehlt `PATH=`. Die Tests für genau 32 Zeichen und ohne bin-Verzeichnis sind schon
-vorher grün.
+@call patch("lean_herdr/herdr.py", "the end of pane_send_keys")
 
-### Schritt 2 — Implementierung
+- Nach `pane_send_keys` einfügen:
 
-@call patch("lean_herdr/dispatch.py", "the stdlib imports, the line after VERDICT_RE, the env dict of pane_split in dispatch(), and the start of _build after the role_problem check")
+      def pane_run(self, pane: str, command: str) -> bool:
+          """`herdr pane run <PANE_ID> <COMMAND>`: one line typed into the pane's shell.
 
-- Import-Block: `import os` nach `import json`.
+          True when Herdr took it. On success it prints nothing (measured
+          2026-09-15: exit 0, empty stdout), so `run()`'s `{}` cannot tell
+          success from failure here -- the exit code is the answer. The pane id
+          is positional, as with `send-keys`.
+          """
+          return self._run("pane", "run", pane, command)[1] == 0
+
+### Schritt 3 — `dispatch.py`
+
+@call patch("lean_herdr/dispatch.py", "the stdlib imports, the line after VERDICT_RE, the pane_split_failed return in dispatch(), and the start of _build after the role_problem check")
+
+- Import-Block: `import shlex` nach `import re`.
 - Nach `VERDICT_RE = …`:
 
       #: herdr's agent names are `[a-z][a-z0-9_-]{0,31}`: 32 characters at most. A longer
@@ -816,34 +878,18 @@ vorher grün.
       #: directory goes in front of the worker pane's PATH; absent, the PATH stays as it is.
       WORKER_BIN = Path(".lean-ctx") / "lean-herdr" / "bin"
 
-- In `dispatch()` den Block `pane = (herdr.pane_split(…, env={…},) or "")` ersetzen durch:
+- In `dispatch()` direkt nach `if not pane: return _result(False, None, None, error="pane_split_failed")`,
+  vor `started = start_agent(…)`; das `env` des `pane split` bleibt, wie es ist:
 
-      env = {
-          "LEAN_CTX_TOOL_PROFILE": profile_for(req.role, req.profile, settings=cfg),
-          ROLE_ENV: req.role,
-          # The worker's own name, so `lean-herdr report` does not have to
-          # derive it. Derivation from role plus branch disagrees with
-          # this side whenever the dispatch carried no `--worktree`:
-          # here the agent is `builder`, there it would be
-          # `builder-feat-x`, and an order under the wrong name
-          # reaches nobody.
-          AGENT_ENV: name,
-      }
       bin_dir = root / WORKER_BIN
-      if bin_dir.is_dir():
-          # Spelled out, not `$PATH`: herdr sets the value as given.
-          env["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-      pane = (
-          herdr.pane_split(
-              target_cwd,
-              pane=target_pane,
-              direction=cfg.direction,
-              ratio=cfg.ratio,
-              focus=cfg.focus,
-              env=env,
-          )
-          or ""
-      )
+      # Typed into the pane's shell rather than passed as `pane split --env PATH=...`:
+      # zsh's startup files put their own directories in front of an inherited PATH,
+      # and a line typed right after the split runs after them (measured 2026-09-15).
+      # The agent and its lean-ctx server inherit the result. POSIX syntax: zsh, bash.
+      if bin_dir.is_dir() and not herdr.pane_run(
+          pane, f'export PATH={shlex.quote(str(bin_dir))}:"$PATH"'
+      ):
+          return _result(False, pane, None, error="pane_run_failed")
 
 - In `_build` direkt nach `if problem: return {"ok": False, "error": f"config_error: {problem}"}`:
 
@@ -857,14 +903,15 @@ vorher grün.
               ),
           }
 
-Run: `uv run pytest -q tests/test_dispatch.py -k "agent_name_over_32 or agent_name_of_exactly_32 or worker_bin"`
+Run: `uv run pytest -q tests/test_herdr.py tests/test_dispatch.py -k "pane_run or agent_name_over_32 or agent_name_of_exactly_32 or worker_bin or typed_into or path_export"`
 
-Expected: PASS — die vier neuen Tests.
+Expected: PASS — die sechs neuen Tests.
 
-Run: `uv run pytest -q tests/test_dispatch.py`
-Expected: PASS — alle bestehenden Tests, u. a. `test_the_pane_carries_the_agent_name_in_its_environment`.
+Run: `uv run pytest -q tests/test_herdr.py tests/test_dispatch.py`
+Expected: PASS — alle bestehenden Tests, u. a. `test_the_pane_carries_the_agent_name_in_its_environment`
+und `test_no_call_appends_json`.
 
-### Schritt 3 — Produktions-LOC messen
+### Schritt 4 — Produktions-LOC messen
 
 Run (der Block steht ohne Einrückung, so wie er in die Shell geht):
 
@@ -886,15 +933,15 @@ def prod_loc(path):
             continue
         code.update(range(tok.start[0], tok.end[0] + 1))
     return len(code - doc)
-for name in ("dispatch", "ordercmd", "orders", "report"):
+for name in ("dispatch", "herdr", "ordercmd", "orders", "report"):
     print(name, prod_loc(f"lean_herdr/{name}.py"))
 EOF
 ```
 
 Expected: jede Zahl ≤ 800; die Zahlen im Bericht nennen.
 
-@call verify(lean_herdr/dispatch.py tests/test_dispatch.py)
-@call py_gate(lean_herdr/dispatch.py tests/test_dispatch.py)
-@call commit("lean_herdr/dispatch.py tests/test_dispatch.py", "feat(dispatch): refuse agent names over 32 characters and put the worker bin on PATH")
-@call remember_decision("lean-herdr TP2 plan A done: dispatch order takes --plan/--step/--plan-task/--spec (ordercmd.plan_flag_problem, Order.plan/step/plan_task/spec); report start/done stamp head and changes via wt list --format=json (report.worktree_stamp, Order.start_head/done_head/done_changes, None = unknown); dispatch refuses agent names over 32 characters and prepends .lean-ctx/lean-herdr/bin to a worker pane's PATH when it exists.")
+@call verify(lean_herdr/dispatch.py lean_herdr/herdr.py tests/test_dispatch.py tests/test_herdr.py)
+@call py_gate(lean_herdr/dispatch.py lean_herdr/herdr.py tests/test_dispatch.py tests/test_herdr.py)
+@call commit("lean_herdr/dispatch.py lean_herdr/herdr.py tests/test_dispatch.py tests/test_herdr.py", "feat(dispatch): refuse agent names over 32 characters and put the worker bin first on PATH")
+@call remember_decision("lean-herdr TP2 plan A done: dispatch order takes --plan/--step/--plan-task/--spec (ordercmd.plan_flag_problem, Order.plan/step/plan_task/spec); report start/done stamp head and changes via wt list --format=json (report.worktree_stamp, Order.start_head/done_head/done_changes, None = unknown); dispatch refuses agent names over 32 characters and, when .lean-ctx/lean-herdr/bin exists, types export PATH=<bin>:$PATH into the worker pane via Herdr.pane_run before agent start (pane_run_failed otherwise).")
 @phase-end
