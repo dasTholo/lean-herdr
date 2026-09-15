@@ -87,14 +87,16 @@ neuen Wrapper `Herdr.agent_read` (`herdr agent read <pane> --source detection`),
 
 ### 4.2 `dispatch`
 
-- **Start:** `pretrust` läuft vor `start_agent`. Endet der Start ohne `ok` und liefert
-  `blocked_dialog` einen Text, antwortet `dispatch` so:
-  `{"ok": false, "error": "agent_blocked", "pane": "<pane>", "dialog": "<Text>"}`.
-  Sonst bleiben die bisherigen Fehler. Nennt Herdr beim Startdialog einen eigenen Grund (M2),
-  darf `Herdr.agent_start` ihn durchreichen; entschieden wird über `agent list`.
-- **Warten:** Jede Runde von `await_task` prüft `blocked_dialog` für den Worker-Pane. Bei `blocked`
-  antwortet es sofort `error: "agent_blocked"` mit `dialog`, statt nach der Deadline `no_reply`.
-  Die Prüfung kostet einen `agent list`-Aufruf je Runde.
+- **Start:** `pretrust` läuft vor `start_agent`. `start_agent` prüft `blocked_dialog`, sobald der
+  erste Versuch ohne Agent endet — **vor** `_free_pane`, denn dessen `ctrl-c` wäre ein Tastendruck
+  in den Dialog. Liefert `blocked_dialog` einen Text, gibt es keinen zweiten Versuch, und `dispatch`
+  antwortet `{"ok": false, "error": "agent_blocked", "pane": "<pane>", "dialog": "<Text>"}`.
+  Sonst bleiben die bisherigen Fehler und der zweite Versuch. Nennt Herdr beim Startdialog einen
+  eigenen Grund (M2), darf `Herdr.agent_start` ihn durchreichen; entschieden wird über `agent list`.
+- **Warten:** Jede Runde von `await_task` sucht den Worker über seinen Namen in `herdr agent list`
+  und prüft dessen Pane mit `blocked_dialog`. Bei `blocked` antwortet es sofort
+  `error: "agent_blocked"` mit `dialog`, statt nach der Deadline `no_reply`. Die Prüfung kostet
+  einen `agent list`-Aufruf je Runde.
 
 ### 4.3 Orchestrator
 
@@ -183,17 +185,18 @@ daran, gilt §5.
 |---|---|---|
 | M1 | Wo legt claude das Ordner-Vertrauen ab, und verhindert ein Eintrag für einen neuen Worktree-Pfad den Dialog beim nächsten Start? Gilt das Vertrauen eines Elternverzeichnisses? | E1 oder E8 |
 | M2 | Was antwortet `herdr agent start` bei einem claude-Startdialog (Exit, stderr, Dauer), und steht der Pane danach in `herdr agent list` auf `blocked`? Was liefert `herdr agent read --source detection`? | §4.1, §4.2 |
-| M3 | `wt -C <path> merge main --yes --no-commit --no-remove` mit ignoriertem `__pycache__/` im Worktree, danach `herdr`-freies `wt -C <root> remove <branch> --yes`: gemergt, Worktree und Branch weg? | §5 |
+| M3 | `wt -C <path> merge main --yes --no-commit --no-remove` mit ignoriertem `__pycache__/` im Worktree; danach, bei geschlossenem Workspace, `wt -C <root> remove <branch> --yes`: Ist gemergt, sind Worktree und Branch weg? | §5 |
 | M4 | Trifft `git check-ignore -v __pycache__/lean-herdr.probe` die Regel `__pycache__/`, auch wenn kein solches Verzeichnis existiert? | §6.1 |
 
 Jede Messung landet als Fakt im Wissen. Weicht ein Ergebnis von diesem Spec ab, hält der Plan an.
 
 ## 9. Abnahme-Rezept
 
-In `~/Scripts/<probe>` (Wegwerf-Repository):
+In `~/Scripts/<probe>` (Wegwerf-Repository; das Elternverzeichnis ist kein Git-Repository):
 
-1. `mkdir -p`; darin **zuerst** `uv init --package --name probe`, danach `git init -q` — nur so
-   legt uv die `.gitignore` mit `__pycache__/` an.
+1. `mkdir -p ~/Scripts/<probe>`; darin **zuerst** `uv init --package --name probe`, danach
+   `git init -q` — nur `uv init` außerhalb eines Git-Repositorys legt das Repository samt
+   `.gitignore` (mit `__pycache__/`) an.
 2. `uv add --dev pytest ruff ty`; `git add -A`; `git commit -m "chore: empty probe project"`;
    `git branch -M main`.
 3. `lean-herdr workspace init`; in `.lean-ctx/lean-herdr/config.toml` für jede Rolle `kind` **und**
