@@ -1060,12 +1060,19 @@ Vor `## Termination — no polling`:
                 [--prereview]
         3  back to 1
 
-    - `work`, `step`, `task` and `after` come from the answer of step 1, verbatim. `--spec` goes
-      only with `--step plan`: the path the human gave you.
-    - `--prereview` only when `round` is 1 and `step` is `plan`, or `implement` on a numbered task.
+    - `work`, `step`, `task` and `after` come from the answer of step 1, verbatim. On an `await`
+      answer `step` is itself `"await"` — the step actually being waited for is named `of`.
+      `--spec` goes only with `--step plan`: in round 1 the path the human gave you; from round 2
+      on, the `spec` field the answer itself carries (`plan next` echoes the last plan order's
+      spec, so you never have to remember the path yourself).
+    - `--prereview` only when `round` is 1 and the step — `step` normally, or `of` when the
+      answer's own `step` is `await` — is `plan`, or `implement` on a numbered task.
     - Two answers you still judge yourself: `error: input_required` (`dispatch answer`, then step c
       again) and `prereview: reject` — one follow-up order for the same step with `--after o-…` and
-      `prereview_note`, waited for without `--prereview`. `plan next` counts it as round 2.
+      `prereview_note`, waited for without `--prereview`. `plan next` counts it as round 2. This
+      rejection lives only in this `--await` answer, never in the order log: if you restart before
+      sending that follow-up order, `plan next` simply moves on to review or plan-review — at
+      worst one review round too many, never an error.
     - `lean-herdr plan show <slug>` lists every task with its state, for your report.
 
     **Teardown for a plan -- no squash.** Every task commit passed its own review and stays:

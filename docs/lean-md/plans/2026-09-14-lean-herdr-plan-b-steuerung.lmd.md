@@ -55,21 +55,27 @@ tests/test_dispatch_prereview.py
 ```
 
 Wiederverwendet: `orders.fold`/`message_from`, `orderlog.read_events`/`task_ids`/`state_dir`,
-`dispatch.verdict` (`lean_herdr/dispatch.py:360-368`), `dispatch.UsageError`/`_Parser`
-(`:561-576`, wie in `catalog.py`), `settings.work_roles`/`role_for_work`/`settings_for`/`STAGES`,
+`dispatch.verdict` (`lean_herdr/dispatch.py:380-388`), `dispatch.UsageError`/`_Parser`
+(`:602-617`, wie in `catalog.py`), `settings.work_roles`/`role_for_work`/`settings_for`/`STAGES`,
 `worktree.find_worktree`, `bus.canonical_root`. Subprozess-Muster: `checkcmd._run`
-(`lean_herdr/checkcmd.py:99-122`). Pre-Review heute: `llm.wt_diff` (`lean_herdr/llm.py:413-448`),
-`llm.prereview` (`:451-515`), `llm.prereview_result` (`:518-572`), Aufruf in
-`dispatch.await_task` (`lean_herdr/dispatch.py:499-513`). Test-Muster: `tests/doubles.py`
+(`lean_herdr/checkcmd.py:99-122`). Pre-Review heute: `llm.wt_diff` (`lean_herdr/llm.py:440-479`),
+`llm.prereview` (`:482-550`), `llm.prereview_result` (`:553-609`), Aufruf in
+`dispatch.await_task` (`lean_herdr/dispatch.py:519-554`). Test-Muster: `tests/doubles.py`
 (`FakeProc`, `Completed`), `tests/test_dispatch_prereview.py` (`wait`, `llm_doubles`,
 `no_network`), `tests/test_llm.py` (`SpyRequest`, `answer`, `no_store`, `worktrees`, `NO_FILE`).
+(Zeilen Nachtrag Final-Review Plan B 2026-09-15: die vier Bereiche liegen im fertigen Code an
+diesen Stellen; ursprünglich im Plan mit ~20-30 Zeilen Abstand niedriger benannt.)
 
 Aus Plan A (gemergt): `Order.plan/step/plan_task/spec`, `Order.start_head/done_head`,
-`Order.done_changes` (`None` = unbekannt), `orders.PLAN_SLUG_RE`, `report.worktree_stamp`.
+`Order.done_changes` (`None` = unbekannt), `orders.PLAN_SLUG_RE`, `orders.COMMIT_RE` (Final-Review
+Plan B umbenannt aus `orders._COMMIT_RE`, 2026-09-15), `report.worktree_stamp`.
 
 ## Global Constraints
 
-- Voraussetzung: Plan A ist auf `main`.
+- Voraussetzung: Plan A ist auf `main`. (Nachtrag Final-Review Plan B 2026-09-15: tatsächlich
+  ausgeführt wurde Plan B gestapelt auf dem noch nicht gemergten Branch `feat/tp2-plan-a` —
+  Betreiberentscheidung 2026-09-15; die Voraussetzung oben gilt unverändert für einen künftigen
+  Lauf dieses Plans.)
 - Non-Goals: keine Brief-, Template- oder Rollen-Dateien, kein eingebautes Routing für
   `plan`/`plan-review`, keine Änderung an `orchestrator.md` (alles Plan C); kein Python-Parser für
   `@call`-Syntax — die Struktur kommt aus `lean-md outline`; keine Parallelität.
@@ -495,6 +501,7 @@ Befunde (Nachricht wörtlich; `line`/`phase` wie in der Spalte):
 
 | `kind` | Nachricht | line, phase |
 |---|---|---|
+| `no_tasks` | `the plan has no task-N phase` | 0, — (Nachtrag Final-Review Plan B 2026-09-15) |
 | `task_order` | `task-<n> stands where task-<i> belongs` | Task-Zeile, `task-<n>` |
 | `no_route` | `task-<n> does not start with @call route(work, lane, files)` | Task-Zeile, `task-<n>` |
 | `stage_as_work` | `task-<n>: '<work>' is a stage of a plan run, not a work` | Task-Zeile, `task-<n>` |
@@ -549,6 +556,7 @@ Am Dateiende:
     @pytest.mark.parametrize(
         ("plan", "expected"),
         [
+            (plan_of(), [Finding("no_tasks", "the plan has no task-N phase")]),
             (plan_of(routed(2)), [Finding("task_order", "task-2 stands where task-1 belongs", 20, "task-2")]),
             (
                 plan_of(Task(1, "T", 10)),
@@ -590,7 +598,7 @@ Am Dateiende:
                 ],
             ),
         ],
-        ids=["order", "route", "stage", "work", "lane", "files", "dep", "cycle", "deps"],
+        ids=["tasks", "order", "route", "stage", "work", "lane", "files", "dep", "cycle", "deps"],
     )
     def test_each_rule_names_its_finding(plan, expected):
         errors, warnings = rule_findings(plan, {})
@@ -725,6 +733,8 @@ Expected: FAIL — `ImportError: cannot import name 'BRANCH_FILES'`.
           """The rules of spec section 3 that need no git: `(errors, warnings)`."""
           errors: list[Finding] = []
           warnings: list[Finding] = []
+          if not plan.tasks:
+              errors.append(Finding("no_tasks", "the plan has no task-N phase"))
           for index, task in enumerate(plan.tasks, start=1):
               phase = f"task-{task.number}"
               if task.number != index:
@@ -859,11 +869,15 @@ Plan-Auftrags → Fehler von `plan check` am `head` seines `report done` (leer =
 Reihenfolge der Entscheidung (Spec §6.4):
 
 1. `merged` → `{"done": True}`
-2. offener Auftrag (neuester) → `{"step": "await", "work", "task_id", "task", "round"}`
-3. Planung: kein Plan-Auftrag → `plan` Runde 1; letzter Plan-Auftrag `failed`/`canceled` →
+2. offener Auftrag (neuester) → `{"step": "await", "work", "task_id", "task", "round", "of"}`;
+   `of` ist der `step` des wartenden Auftrags (`plan` | `plan-review` | `implement` | `review`)
+   (Nachtrag Final-Review Plan B 2026-09-15)
+3. Planung: kein Plan-Auftrag → `plan` Runde 1 (ohne `spec`); letzter Plan-Auftrag `failed`/`canceled` →
    `escalate`; Check-Fehler → `plan` mit `reason: check` bzw. zweimal in Folge
    `escalate check×2`; kein Plan-Review danach → `plan-review`; Plan-Review `reject` → `plan`
-   bzw. zweimal `escalate plan-review reject×2`; `result` → weiter
+   bzw. zweimal `escalate plan-review reject×2`; `result` → weiter. Jede `plan`-Antwort ab
+   Runde 2 (Check-Fehler wie Plan-Review-Ablehnung) trägt zusätzlich `spec` = das `spec` des
+   letzten Plan-Auftrags (Nachtrag Final-Review Plan B 2026-09-15)
 4. kein `Plan` → `{"escalate": True, "reason": "no_plan"}`
 5. je Task: Zyklus `implement` → `review` (siehe Tabelle unten)
 6. Zyklus `branch`: beginnt mit `review`; `result` → `{"step": "merge"}`
@@ -890,6 +904,7 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
     from lean_herdr.planrun import next_step, task_summary
 
     WORKER = "worker"
+    SPEC = "docs/specs/shop-design.md"
     PLAN = Plan(
         slug="shop",
         ref="plan/shop",
@@ -911,6 +926,7 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
             plan="shop",
             step=step,
             plan_task=task,
+            spec=SPEC if step == "plan" else None,
             messages=((WORKER, f"VERDIKT: {verdict}\nbecause"),) if verdict else (),
             done_changes=tuple(changes) if state == "completed" else None,
         )
@@ -934,25 +950,78 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
             (
                 [o("p1", "plan", state="working")],
                 {},
-                {"step": "await", "work": "plan", "task_id": "p1", "task": None, "round": 1},
+                {
+                    "step": "await",
+                    "work": "plan",
+                    "task_id": "p1",
+                    "task": None,
+                    "round": 1,
+                    "of": "plan",
+                },
             ),
-            ([o("p1", "plan", state="failed")], {}, {"escalate": True, "reason": "agent_error", "task_id": "p1"}),
-            ([o("p1", "plan", state="canceled")], {}, {"escalate": True, "reason": "canceled", "task_id": "p1"}),
+            (
+                [o("p1", "plan"), o("r1", "plan-review", state="working")],
+                {},
+                {
+                    "step": "await",
+                    "work": "plan-review",
+                    "task_id": "r1",
+                    "task": None,
+                    "round": 1,
+                    "of": "plan-review",
+                },
+            ),
+            (
+                [o("p1", "plan", state="failed")],
+                {},
+                {"escalate": True, "reason": "agent_error", "task_id": "p1"},
+            ),
+            (
+                [o("p1", "plan", state="canceled")],
+                {},
+                {"escalate": True, "reason": "canceled", "task_id": "p1"},
+            ),
             (
                 [o("p1", "plan")],
                 {"p1": ERR},
-                {"step": "plan", "work": "plan", "reason": "check", "errors": ERR, "round": 2, "after": "p1"},
+                {
+                    "step": "plan",
+                    "work": "plan",
+                    "reason": "check",
+                    "errors": ERR,
+                    "round": 2,
+                    "after": "p1",
+                    "spec": SPEC,
+                },
             ),
             (
                 [o("p1", "plan"), o("p2", "plan")],
                 {"p1": ERR, "p2": ERR},
                 {"escalate": True, "reason": "check×2", "task_id": "p2"},
             ),
+            (
+                [
+                    o("p1", "plan"),
+                    o("p2", "plan"),
+                    o("r1", "plan-review", verdict="reject"),
+                    o("p3", "plan"),
+                ],
+                {"p1": ERR, "p2": [], "p3": ERR},
+                {
+                    "step": "plan",
+                    "work": "plan",
+                    "reason": "check",
+                    "errors": ERR,
+                    "round": 4,
+                    "after": "p3",
+                    "spec": SPEC,
+                },
+            ),
             ([o("p1", "plan")], {}, {"step": "plan-review", "work": "plan-review"}),
             (
                 [o("p1", "plan"), o("r1", "plan-review", verdict="reject")],
                 {},
-                {"step": "plan", "work": "plan", "round": 2, "after": "r1"},
+                {"step": "plan", "work": "plan", "round": 2, "after": "r1", "spec": SPEC},
             ),
             (
                 [
@@ -968,7 +1037,14 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
             (
                 [*PLANNED, o("i1", "implement", task="1", changes=["modified"])],
                 {},
-                {"step": "implement", "task": 1, "work": "implement", "reason": "uncommitted", "round": 2, "after": "i1"},
+                {
+                    "step": "implement",
+                    "task": 1,
+                    "work": "implement",
+                    "reason": "uncommitted",
+                    "round": 2,
+                    "after": "i1",
+                },
             ),
             (
                 [
@@ -980,13 +1056,34 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
                 {"escalate": True, "reason": "uncommitted×2", "task_id": "i2", "task": 1},
             ),
             (
+                [
+                    *PLANNED,
+                    o("i1", "implement", task="1", changes=["modified"]),
+                    o("v1", "review", task="1", verdict="reject"),
+                    o("i2", "implement", task="1", changes=["staged"]),
+                ],
+                {},
+                {
+                    "step": "implement",
+                    "task": 1,
+                    "work": "implement",
+                    "reason": "uncommitted",
+                    "round": 3,
+                    "after": "i2",
+                },
+            ),
+            (
                 [*PLANNED, o("i1", "implement", task="1", changes=["untracked"])],
                 {},
                 {"step": "review", "task": 1, "work": "review", "after": "i1"},
             ),
             ([*PLANNED, UNKNOWN], {}, {"step": "review", "task": 1, "work": "review", "after": "i1"}),
             (
-                [*PLANNED, o("i1", "implement", task="1"), o("v1", "review", task="1", verdict="reject")],
+                [
+                    *PLANNED,
+                    o("i1", "implement", task="1"),
+                    o("v1", "review", task="1", verdict="reject"),
+                ],
                 {},
                 {"step": "implement", "task": 1, "work": "implement", "round": 2, "after": "v1"},
             ),
@@ -1007,7 +1104,11 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
                 {"escalate": True, "reason": "review reject×2", "task_id": "v2", "task": 1},
             ),
             (
-                [*PLANNED, o("i1", "implement", task="1"), o("v1", "review", task="1", verdict="result")],
+                [
+                    *PLANNED,
+                    o("i1", "implement", task="1"),
+                    o("v1", "review", task="1", verdict="result"),
+                ],
                 {},
                 {"step": "implement", "task": 2, "work": "implement-small", "round": 1},
             ),
@@ -1019,9 +1120,20 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
                     o("i2", "implement", task="2", state="created"),
                 ],
                 {},
-                {"step": "await", "work": "implement-small", "task_id": "i2", "task": 2, "round": 1},
+                {
+                    "step": "await",
+                    "work": "implement-small",
+                    "task_id": "i2",
+                    "task": 2,
+                    "round": 1,
+                    "of": "implement",
+                },
             ),
-            ([*PLANNED, o("i1", "implement", task="1", state="failed")], {}, {"escalate": True, "reason": "agent_error", "task_id": "i1", "task": 1}),
+            (
+                [*PLANNED, o("i1", "implement", task="1", state="failed")],
+                {},
+                {"escalate": True, "reason": "agent_error", "task_id": "i1", "task": 1},
+            ),
             (TASKS_DONE, {}, {"step": "review", "task": "branch", "work": "review"}),
             (
                 [*TASKS_DONE, o("b1", "review", task="branch", verdict="reject")],
@@ -1029,7 +1141,11 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
                 {"step": "implement", "task": "branch", "work": "implement", "round": 1, "after": "b1"},
             ),
             (
-                [*TASKS_DONE, o("b1", "review", task="branch", verdict="reject"), o("b2", "implement", task="branch")],
+                [
+                    *TASKS_DONE,
+                    o("b1", "review", task="branch", verdict="reject"),
+                    o("b2", "implement", task="branch"),
+                ],
                 {},
                 {"step": "review", "task": "branch", "work": "review", "after": "b2"},
             ),
@@ -1050,7 +1166,14 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
                     o("b2", "implement", task="branch", changes=["modified"]),
                 ],
                 {},
-                {"step": "implement", "task": "branch", "work": "implement", "reason": "uncommitted", "round": 2, "after": "b2"},
+                {
+                    "step": "implement",
+                    "task": "branch",
+                    "work": "implement",
+                    "reason": "uncommitted",
+                    "round": 2,
+                    "after": "b2",
+                },
             ),
             (
                 [*PLANNED, o("i1", "implement", task="1", state="canceled")],
@@ -1060,11 +1183,36 @@ Zyklus einer Task (`task` = Zahl, bzw. `"branch"`), letzter Auftrag der Gruppe:
             ([*TASKS_DONE, o("b1", "review", task="branch", verdict="result")], {}, {"step": "merge"}),
         ],
         ids=[
-            "fresh", "await-plan", "plan-failed", "plan-canceled", "check", "check-twice", "plan-review",
-            "plan-review-reject", "plan-review-reject-twice", "first-task", "uncommitted", "uncommitted-twice",
-            "untracked-only", "changes-unknown", "review-reject", "review-no-verdict", "review-reject-twice",
-            "next-task", "await-task", "implement-failed", "branch-review", "branch-reject", "branch-fixed",
-            "branch-reject-twice", "branch-uncommitted", "implement-canceled", "merge",
+            "fresh",
+            "await-plan",
+            "await-plan-review",
+            "plan-failed",
+            "plan-canceled",
+            "check",
+            "check-twice",
+            "check-not-in-a-row",
+            "plan-review",
+            "plan-review-reject",
+            "plan-review-reject-twice",
+            "first-task",
+            "uncommitted",
+            "uncommitted-twice",
+            "uncommitted-not-in-a-row",
+            "untracked-only",
+            "changes-unknown",
+            "review-reject",
+            "review-no-verdict",
+            "review-reject-twice",
+            "next-task",
+            "await-task",
+            "implement-failed",
+            "branch-review",
+            "branch-reject",
+            "branch-fixed",
+            "branch-reject-twice",
+            "branch-uncommitted",
+            "implement-canceled",
+            "merge",
         ],
     )
     def test_next_step(orders, checks, expected):
@@ -1160,8 +1308,14 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'lean_herdr.planrun'`.
         return same.index(order) + 1
 
 
-    def _planning(orders: Sequence[Order], checks: Mapping[str, Sequence[dict[str, Any]]]) -> dict[str, Any] | None:
-        """The plan and its review. None once the review said `result`."""
+    def _planning(
+        orders: Sequence[Order], checks: Mapping[str, Sequence[dict[str, Any]]]
+    ) -> dict[str, Any] | None:
+        """The plan and its review. None once the review said `result`.
+
+        Every plan step after the first carries the last plan order's `spec`: `dispatch order
+        --step plan` needs `--spec`.
+        """
         plans = [o for o in orders if o.step == "plan"]
         if not plans:
             return {"step": "plan", "work": "plan", "round": 1}
@@ -1180,6 +1334,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'lean_herdr.planrun'`.
                 "errors": errors,
                 "round": len(plans) + 1,
                 "after": last.id,
+                "spec": last.spec,
             }
         after_last = orders[orders.index(last) + 1 :]
         reviews = [o for o in after_last if o.step == "plan-review"]
@@ -1194,7 +1349,13 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'lean_herdr.planrun'`.
         rejects = [o for o in orders if o.step == "plan-review" and o.state == "completed" and _ruling(o) == "reject"]
         if len(rejects) >= 2:
             return {"escalate": True, "reason": "plan-review reject×2", "task_id": review.id}
-        return {"step": "plan", "work": "plan", "round": len(plans) + 1, "after": review.id}
+        return {
+            "step": "plan",
+            "work": "plan",
+            "round": len(plans) + 1,
+            "after": review.id,
+            "spec": last.spec,
+        }
 
 
     def _cycle(orders: Sequence[Order], task: str, work: str) -> dict[str, Any] | None:
@@ -1259,6 +1420,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'lean_herdr.planrun'`.
                 "task_id": order.id,
                 "task": _label(order.plan_task),
                 "round": _round(orders, order),
+                "of": order.step,
             }
         answer = _planning(orders, checks)
         if answer is not None:
@@ -1302,7 +1464,7 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'lean_herdr.planrun'`.
 
 Run: `uv run pytest -q tests/test_planrun.py`
 
-Expected: PASS — `test_next_step` (27 Fälle) und die drei weiteren Tests.
+Expected: PASS — `test_next_step` (30 Fälle) und die drei weiteren Tests.
 
 @call verify(lean_herdr/planrun.py tests/test_planrun.py)
 @call review_change()
@@ -1335,7 +1497,12 @@ Ausgaben (Spec §6.2, §9):
 | `show <slug>` | Plan lesbar | `slug`, `ref`, `planning[]` (`task_id`, `step`, `state`), `tasks[]` aus `task_summary`, `errors[]`, `warnings[]` |
 
 `next` prüft jeden erledigten `plan`-Auftrag am `head` seines `report done` (ohne Stempel: am
-Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `config_error` beendet
+Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. Ausnahme (Nachtrag
+Final-Review Plan B 2026-09-15): Ein Plan-Auftrag, dem im Log ein erledigtes `plan-review` folgt,
+wird NICHT erneut geprüft — er bekommt `checks[id] = []`, ohne `load_plan` aufzurufen. Grund: Das
+Review lief nur nach einem sauberen Check; ein später geänderter `[routing]`, ein geändertes
+lean-md oder ein weitergezogener Branch-Kopf darf einen bereits freigegebenen Plan nicht in die
+Planung zurückwerfen. `config_error` beendet
 `next` mit `ok: false`. Fehler von `main`: `usage_error: …`, `config_error: …` (Settings),
 `plan_crashed: …`.
 
@@ -1530,6 +1697,7 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
             "errors": [UNKNOWN_MACRO],
             "round": 2,
             "after": "o-1",
+            "spec": "docs/specs/shop-design.md",
         }
         assert (["git", "show", f"eee1111:{PLAN_FILE}"], "/repo") in repo.calls
 
@@ -1542,6 +1710,60 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
             "step": "plan-review",
             "work": "plan-review",
         }
+
+
+    def _load_plan_refs(monkeypatch):
+        """Every `ref` plancmd hands `load_plan`, in call order; the real function still answers."""
+        refs = []
+        real = plancmd.load_plan
+
+        def spy(*args, ref=None, **kwargs):
+            refs.append(ref)
+            return real(*args, ref=ref, **kwargs)
+
+        monkeypatch.setattr(plancmd, "load_plan", spy)
+        return refs
+
+
+    def test_next_does_not_recheck_a_plan_its_plan_review_passed(tmp_path, monkeypatch):
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
+        order(tmp_path, "o-2", "plan-review", done="eee1111", message="VERDIKT: result\nfine")
+        order(tmp_path, "o-3", "implement", task="1", start="eee1111", done="fff1111")
+        repo = Repo(
+            {f"eee1111:{PLAN_FILE}": "broken", f"plan/shop:{PLAN_FILE}": "clean"},
+            {"broken": BROKEN, "clean": CLEAN},
+        )
+        refs = _load_plan_refs(monkeypatch)
+        assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {
+            "ok": True,
+            "step": "review",
+            "task": 1,
+            "work": "review",
+            "after": "o-3",
+        }
+        assert refs == [None]
+        assert (["git", "show", f"eee1111:{PLAN_FILE}"], "/repo") not in repo.calls
+
+
+    def test_a_plan_round_after_a_rejected_review_is_still_checked(tmp_path, monkeypatch):
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
+        order(tmp_path, "o-2", "plan-review", done="eee1111", message="VERDIKT: reject\nno lanes")
+        order(tmp_path, "o-3", "plan", spec="docs/specs/shop-design.md", done="eee2222")
+        repo = Repo(
+            {f"eee2222:{PLAN_FILE}": "broken", f"plan/shop:{PLAN_FILE}": "broken"}, {"broken": BROKEN}
+        )
+        refs = _load_plan_refs(monkeypatch)
+        assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {
+            "ok": True,
+            "step": "plan",
+            "work": "plan",
+            "reason": "check",
+            "errors": [UNKNOWN_MACRO],
+            "round": 3,
+            "after": "o-3",
+            "spec": "docs/specs/shop-design.md",
+        }
+        assert refs == ["eee2222", None]
 
 
     def test_next_without_lean_md_outline_is_a_config_error(tmp_path):
@@ -1681,10 +1903,20 @@ Expected: FAIL — `ImportError: cannot import name 'plancmd' from 'lean_herdr'`
 
         Without a stamped head the branch tip stands in. A head that carries no plan is a
         finding of its own; any other PlanError -- lean-md without `outline` -- propagates.
+
+        A plan order a completed plan-review follows is not checked again: that review was only
+        dispatched after a clean check, and today's `[routing]`, lean-md or branch tip must not
+        reopen a plan already under way.
         """
         checks: dict[str, list[dict[str, Any]]] = {}
-        for order in orders:
+        for position, order in enumerate(orders):
             if order.step != "plan" or order.state != "completed":
+                continue
+            if any(
+                later.step == "plan-review" and later.state == "completed"
+                for later in orders[position + 1 :]
+            ):
+                checks[order.id] = []
                 continue
             try:
                 plan = load_plan(root, slug, data, ref=order.done_head, runner=runner)
@@ -1847,7 +2079,7 @@ Expected: PASS — `test_each_verb_reaches_its_own_main_with_the_rest[plan-lean_
     class BriefError(Exception)
     def render(cwd: Path, path: str | Path, *, phase: str | None = None, runner=subprocess.run) -> str
     def compose_brief(order: Order, *, root: Path, cwd: Path, orders_dir, data: dict, runner=subprocess.run) -> str
-    def brief_main(argv: list[str]) -> int     # Klartext + Exit 0, sonst eine stderr-Zeile + Exit 1
+    def brief_main(argv: list[str], *, runner=subprocess.run) -> int   # Klartext + Exit 0, sonst eine stderr-Zeile + Exit 1
 
 Inhalt je Schritt (Spec §6.5); Teile getrennt durch eine Leerzeile, jeder Brief endet mit
 `## Order` und `report.order_text` — so trägt eine zweite Runde die Befunde, auf die sie antwortet:
@@ -1867,20 +2099,43 @@ der Task; fehlt er, der letzte `done_head` eines `implement` der Task davor, son
 (`git log --oneline <sha>..HEAD`) und die ungetrackten Dateien (`git status --porcelain
 --untracked-files=all`, nur `??`). Ohne jede Basis: `no_base: task N has no start head, and no
 merge base with main`. Gerendert wird im Arbeitsverzeichnis des Workers (`cwd`), `git show` und
-`plan check` laufen in der Repo-Wurzel.
+`plan check` laufen in der Repo-Wurzel. `cwd` ist dabei nicht einfach `Path.cwd()`, sondern der
+Top des Worktrees, den `_worktree_top` über `git rev-parse --show-toplevel` (ausgeführt in
+`Path.cwd()`) auflöst; ohne Antwort (kein `git`, leere Ausgabe, Fehler) fällt `_worktree_top` auf
+`Path.cwd()` zurück. Damit darf ein Worker `plan brief` aus einem Unterverzeichnis seines
+Worktrees aufrufen (Nachtrag Final-Review Plan B 2026-09-15).
 
 Fehlerzeilen auf stderr: `usage_error: …`, `task_not_found: o-…`, `order o-… belongs to no plan`,
 `render_failed: <datei>[ --phase <p>]: <erste stderr-Zeile>`, `no_base: …`, `no_plan: …`,
-`config_error: …`, `brief_crashed: …`.
+`config_error: …`, `brief_crashed: …`. Jede davon steht auf genau EINER stderr-Zeile: `_brief_failed`
+setzt die Nachricht mit `" ".join(message.split())` zusammen, auch wenn die zugrunde liegende
+Meldung — etwa `git`s eigenes stderr über `BusError` — selbst mehrzeilig war (Nachtrag
+Final-Review Plan B 2026-09-15).
 
 ### Schritt 1 — Tests zuerst
 
 In `tests/test_plancmd.py` die Importe ersetzen:
 
+- nach `from lean_herdr import plancmd`: `from lean_herdr.bus import BusError` (für den
+  Multi-Line-Fehler-Test unten)
 - `from lean_herdr.orderlog import append` → `from lean_herdr.orderlog import append, read_events`
 - nach dieser Zeile: `from lean_herdr.orders import fold`
 - `from lean_herdr.plancmd import check_result, main, next_result, plan_orders, show_result` →
   `from lean_herdr.plancmd import BriefError, check_result, compose_brief, main, next_result, plan_orders, show_result`
+
+`Repo.__init__` bekommt ein neues Feld `toplevel: str | None = None` (Repo-Docstring ergänzen:
+„`toplevel` ist, was `git rev-parse --show-toplevel` ausgibt; `None` lässt es scheitern.“); in
+`Repo.__call__` vor dem `git log`-Zweig:
+
+    if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+        if self.toplevel is None:
+            return Completed(returncode=128, stderr="fatal: not a git repository")
+        return Completed(stdout=self.toplevel)
+
+Die `cwd_repo`-Fixture bekommt eine dritte Zeile (Docstring ergänzen: „No git runs either: `git
+rev-parse --show-toplevel` cannot, so the cwd stands in.“):
+
+    monkeypatch.setattr(plancmd, "run_git", lambda *_a, **_kw: None)
 
 Am Dateiende:
 
@@ -1987,6 +2242,20 @@ Am Dateiende:
             brief(tmp_path, "o-1", Repo())
 
 
+    def test_renders_run_in_the_worktree_and_the_plan_is_read_in_the_root(tmp_path):
+        order(tmp_path, "o-1", "review", task="branch")
+        order(tmp_path, "o-2", "plan-review")
+        repo = Repo({f"plan/shop:{PLAN_FILE}": "clean"}, {"clean": CLEAN})
+        brief(tmp_path, "o-1", repo)
+        brief(tmp_path, "o-2", repo)
+        renders = {cwd for cmd, cwd in repo.calls if cmd[:2] == ["lean-md", "render"]}
+        others = {cwd for cmd, cwd in repo.calls if cmd[:2] != ["lean-md", "render"]}
+        assert renders == {"/wt/shop"}
+        assert others == {"/repo"}
+        kinds = {tuple(cmd[:2]) for cmd, _cwd in repo.calls}
+        assert {("git", "show"), ("lean-md", "outline"), ("git", "cat-file"), ("git", "diff")} <= kinds
+
+
     def test_a_failing_render_names_the_file_and_the_phase(tmp_path):
         order(tmp_path, "o-1", "implement", task="1")
         with pytest.raises(BriefError) as caught:
@@ -2012,6 +2281,50 @@ Am Dateiende:
     def test_a_failed_brief_is_one_stderr_line_and_exit_one(cwd_repo, capsys, argv, line):
         assert main(argv) == 1
         assert capsys.readouterr() == ("", line + "\n")
+
+
+    @pytest.mark.parametrize(
+        ("error", "line"),
+        [
+            (
+                BusError("git rev-parse --git-common-dir failed: fatal: not a git repository\nhint: x"),
+                "git rev-parse --git-common-dir failed: fatal: not a git repository hint: x",
+            ),
+            (RuntimeError("boom\n  in line two"), "brief_crashed: boom in line two"),
+        ],
+        ids=["bus", "crash"],
+    )
+    def test_a_multi_line_error_is_still_one_stderr_line(cwd_repo, monkeypatch, capsys, error, line):
+        order(cwd_repo, "o-1", "implement", task="1")
+
+        def broken(*_a, **_kw):
+            raise error
+
+        monkeypatch.setattr(plancmd, "compose_brief", broken)
+        assert main(["brief", "--task", "o-1"]) == 1
+        assert capsys.readouterr() == ("", line + "\n")
+
+
+    @pytest.mark.parametrize(
+        ("toplevel", "top"),
+        [("/wt/shop\n", "/wt/shop"), ("", None), (None, None)],
+        ids=["toplevel", "no-answer", "git-fails"],
+    )
+    def test_brief_renders_in_the_worktree_top_from_a_subdirectory(
+        monkeypatch, tmp_path, capsys, toplevel, top
+    ):
+        monkeypatch.setattr(plancmd, "canonical_root", lambda cwd=None: tmp_path)
+        monkeypatch.setattr(plancmd, "state_dir", lambda root=None: tmp_path)
+        order(tmp_path, "o-1", "implement", task="1")
+        (tmp_path / "app").mkdir()
+        monkeypatch.chdir(tmp_path / "app")
+        here = str(Path.cwd())
+        repo = Repo(toplevel=toplevel)
+        assert plancmd.brief_main(["brief", "--task", "o-1"], runner=repo) == 0
+        assert capsys.readouterr().err == ""
+        assert (["git", "rev-parse", "--show-toplevel"], here) in repo.calls
+        renders = {cwd for cmd, cwd in repo.calls if cmd[:2] == ["lean-md", "render"]}
+        assert renders == {top or here}
 
 
     def test_brief_behind_a_flag_is_a_usage_error_and_no_show(cwd_repo, capsys):
@@ -2203,25 +2516,39 @@ Expected: PASS — unverändert.
 
 
       def _brief_failed(message: str) -> int:
-          sys.stderr.write(message + "\n")
+          """One line on stderr, however many the message spans -- git's stderr can span several."""
+          sys.stderr.write(" ".join(message.split()) + "\n")
           return 1
 
 
-      def brief_main(argv: list[str]) -> int:
+      def _worktree_top(cwd: Path, *, runner: Any) -> Path:
+          """The top of the worktree `cwd` lies in; `cwd` itself when git does not say.
+
+          A worker may run `plan brief` from a subdirectory, and every render path is relative
+          to the top of its worktree.
+          """
+          lines = _lines(cwd, "rev-parse", "--show-toplevel", runner=runner)
+          top = lines[0].strip() if lines else ""
+          return Path(top) if top else cwd
+
+
+      def brief_main(argv: list[str], *, runner: Any = subprocess.run) -> int:
           """`plan brief --task o-…`: the brief on stdout and exit 0, or one line on stderr and exit 1."""
           try:
               args = build_parser().parse_args(argv)
               complaint = missing_flags(args)
               if complaint:
                   return _brief_failed(f"usage_error: {complaint}")
-              cwd = Path.cwd()
+              cwd = _worktree_top(Path.cwd(), runner=runner)
               root = canonical_root(cwd)
               orders_dir = state_dir(root)
               order = fold(read_events(args.task, orders=orders_dir))
               if not order.state:
                   return _brief_failed(f"task_not_found: {args.task}")
               data = _settings(root)
-              text = compose_brief(order, root=root, cwd=cwd, orders_dir=orders_dir, data=data)
+              text = compose_brief(
+                  order, root=root, cwd=cwd, orders_dir=orders_dir, data=data, runner=runner
+              )
           except UsageError as exc:
               return _brief_failed(f"usage_error: {exc}")
           except SettingsError as exc:
@@ -2294,13 +2621,20 @@ Expected: PASS — alle Tests der drei Dateien.
 |---|---|
 | ohne `plan` | `skip="no_plan_order"` |
 | `plan` | `order` = Spec von `main` + `PLAN_RULES_SUMMARY`, `plan=True`; Spec nicht lesbar → `skip="spec_unreadable"` |
-| `implement`, Task N | `order` = Render `constraints` + `task-N` im Worktree, `base=start_head`; ohne `start_head` → `no_start_head`, Worktree nicht auflösbar → `worktree_unresolved`, Render scheitert → `render_failed` |
+| `implement`, Task N | `order` = Render `constraints` + `task-N` im Worktree, `base=start_head`; ohne `start_head` → `no_start_head`, Worktree nicht auflösbar (kein Eintrag, oder `path` nicht string/leer) → `worktree_unresolved`, Render scheitert → `render_failed` |
 | `implement` branch, `review`, `plan-review` | `skip="no_prereview_for_step"` |
 
 `dispatch.await_task` fragt `plancmd.prereview_input` nur bei einem Auftrag mit `plan`. Ein `skip`
 wird zu `prereview: skipped` mit dem Grund als `prereview_note`; sonst gehen `order`, `base` und
 `plan` an `llm.prereview_result`. `MAX_DIFF_BYTES` gilt für Diff und Auftrag zusammen.
 Aufruf-Test für `wt step diff <sha>` (Plan A, Task 1): `test_a_base_diffs_since_that_commit`.
+
+Die CLI `lean-herdr llm prereview --base <wert>` prüft `<wert>` gegen `orders.COMMIT_RE`
+(`[0-9a-f]{7,64}`, umbenannt aus `orders._COMMIT_RE`); trifft er nicht voll, schreibt sie
+`skipped\nbad_base\n` auf stdout, eine Zeile auf stderr und liefert Exit 0, ohne `wt` je
+aufzurufen. Nur diese CLI (`llm.main`) prüft das; `prereview_result(base=…)` bleibt unverändert,
+weil `dispatch.await_task` dort nur einen bereits über `Order.start_head` validierten Head
+übergibt (Nachtrag Final-Review Plan B 2026-09-15).
 
 ### Schritt 1 — Tests zuerst
 
@@ -2392,6 +2726,16 @@ Aufruf-Test für `wt step diff <sha>` (Plan A, Task 1): `test_a_base_diffs_since
         assert "expensive plan reviewer" in json.dumps(spy.json_body())
 
 
+    @pytest.mark.parametrize("base", ["--config=/x", "HEAD", "abc123"])
+    def test_the_cli_skips_a_base_that_is_no_commit_and_never_reaches_wt(monkeypatch, capsys, base):
+        monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: pytest.fail("a bad base reached wt"))
+        monkeypatch.setattr(llm, "prereview", lambda *a, **kw: pytest.fail("nothing may be judged"))
+        assert llm.main(["prereview", f"--base={base}"]) == 0
+        captured = capsys.readouterr()
+        assert captured.out == "skipped\nbad_base\n"
+        assert "--base" in captured.err
+
+
     def test_the_cli_takes_base_and_plan(monkeypatch):
         fetched: dict[str, object] = {}
         judged_with: dict[str, object] = {}
@@ -2406,8 +2750,8 @@ Aufruf-Test für `wt step diff <sha>` (Plan A, Task 1): `test_a_base_diffs_since
 
         monkeypatch.setattr(llm, "wt_diff", fake_wt_diff)
         monkeypatch.setattr(llm, "prereview", fake_prereview)
-        assert llm.main(["prereview", "--base", "abc123", "--plan", "--order", "the spec"]) == 0
-        assert fetched["base"] == "abc123"
+        assert llm.main(["prereview", "--base", "abc1234", "--plan", "--order", "the spec"]) == 0
+        assert fetched["base"] == "abc1234"
         assert judged_with["plan"] is True
 
 `tests/test_plancmd.py`: `from lean_herdr.orders import fold` → `from lean_herdr.orders import Order, fold`;
@@ -2456,8 +2800,23 @@ den `plancmd`-Import um `PLAN_RULES_SUMMARY, PrereviewInput` und `prereview_inpu
                 Repo(broken_render=f"{PLAN_FILE} --phase task-1"),
                 "render_failed",
             ),
+            (
+                plan_order(step="implement", plan_task="1", start_head="aaa1111"),
+                {"result": {"worktrees": [{"branch": "plan/shop", "path": 5}]}},
+                Repo(),
+                "worktree_unresolved",
+            ),
+            (
+                plan_order(step="implement", plan_task="1", start_head="aaa1111"),
+                {"result": {"worktrees": [{"branch": "plan/shop", "path": ""}]}},
+                Repo(),
+                "worktree_unresolved",
+            ),
         ],
-        ids=["no-plan", "no-spec", "branch", "review", "no-start-head", "no-worktree", "render"],
+        ids=[
+            "no-plan", "no-spec", "branch", "review", "no-start-head", "no-worktree", "render",
+            "path-not-str", "path-empty",
+        ],
     )
     def test_what_gets_no_pre_review_says_why(order_, worktree_list, repo, skip):
         assert picked(order_, repo, worktree_list) == PrereviewInput(skip=skip)
@@ -2599,7 +2958,20 @@ bricht den Lauf dort ab, bevor ein anderer Test läuft.
           help="prereview: judge a plan against the spec given as --order",
       )
 
-- `main`: `diff = wt_diff(args.path, timeout_s=args.timeout or DIFF_TIMEOUT_S)` →
+- Import-Block: nach `from lean_herdr.openrouter import ENDPOINT, api_key` die Zeile
+  `from lean_herdr.orders import COMMIT_RE` (Nachtrag Final-Review Plan B 2026-09-15).
+- `main`: vor `diff = wt_diff(args.path, timeout_s=args.timeout or DIFF_TIMEOUT_S)` einfügen
+  (Nachtrag Final-Review Plan B 2026-09-15):
+
+      if args.base is not None and not COMMIT_RE.fullmatch(args.base):
+          # A commit id or nothing: `wt step diff <base>` would read a leading `-` as an
+          # option of its own. `skipped` and exit 0, like the failed diff below.
+          print(f"lean-herdr llm: --base {args.base!r} is no commit id", file=sys.stderr)
+          skip = _skip("bad_base")
+          sys.stdout.write(f"{skip['prereview']}\n{skip['prereview_note']}\n")
+          return 0
+
+  danach `diff = wt_diff(args.path, timeout_s=args.timeout or DIFF_TIMEOUT_S)` →
   `diff = wt_diff(args.path, base=args.base, timeout_s=args.timeout or DIFF_TIMEOUT_S)`;
   im `prereview(`-Aufruf nach `diff,` die Zeile `plan=args.plan,`.
 
@@ -2639,12 +3011,13 @@ Expected: PASS — alle Tests in `tests/test_llm.py`.
 
 
       def _worktree_path(worktree_list: Any, branch: str | None) -> Path | None:
+          """Where `branch` is checked out -- None unless the list names a non-empty text path."""
           try:
               entry = find_worktree(worktree_list or {}, branch or "")
           except (AttributeError, TypeError):
               return None
           path = entry.get("path") if isinstance(entry, dict) else None
-          return Path(path) if path else None
+          return Path(path) if isinstance(path, str) and path else None
 
 
       def prereview_input(
@@ -2704,7 +3077,8 @@ Den Block von `if req.prereview and order.state == "completed":` bis vor `return
           description = order.description
           judged: dict[str, Any] = {}
           if order.plan is not None:
-              # Imported on the call: plancmd reaches planrun, and planrun imports this module.
+              # Imported on the call: plancmd imports this module, directly
+              # and through planrun.
               from lean_herdr.plancmd import prereview_input
 
               chosen = prereview_input(
@@ -2759,6 +3133,10 @@ EOF
 ```
 
 Expected: jede Zahl ≤ 800; die Zahlen im Bericht nennen.
+
+(Nachtrag Final-Review Plan B 2026-09-15: nach den Fixes des Final-Reviews gemessen —
+`dispatch.py` 647, `llm.py` 396, `plancmd.py` 379, `plan.py` 308, `planrun.py` 190,
+`orders.py` 96, alle ≤ 800.)
 
 @call verify(lean_herdr/llm.py lean_herdr/plancmd.py lean_herdr/dispatch.py tests/test_llm.py tests/test_plancmd.py tests/test_dispatch_prereview.py)
 @call review_change()

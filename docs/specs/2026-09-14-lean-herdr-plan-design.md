@@ -138,6 +138,7 @@ Spec: docs/specs/<…>-design.md
 
 | Regel | Befund |
 |---|---|
+| Plan hat mindestens eine Phase `task-N` | `no_tasks` (Nachtrag Final-Review Plan B 2026-09-15) |
 | Phasen `task-1 … task-N` lückenlos, in Dokument-Reihenfolge | `task_order` |
 | erstes `@call` jeder Task ist `route` | `no_route` |
 | `work` wird über `[routing]` aufgelöst | `unknown_work` |
@@ -299,11 +300,11 @@ unverändert; `plancmd` wählt die Ausgabeart je Unterbefehl.
 |---|---|
 | Plan-Datei liegt auf `main` | `{done: true}` |
 | kein Plan-Auftrag | `{step: plan, work: plan, round: 1}` |
-| offener Auftrag (nicht terminal) | `{step: await, work, task_id, task, round}` |
+| offener Auftrag (nicht terminal) | `{step: await, work, task_id, task, round, of}`; `of` ist der `step` des wartenden Auftrags (`plan` \| `plan-review` \| `implement` \| `review`) (Nachtrag Final-Review Plan B 2026-09-15) |
 | Plan-Auftrag `failed` oder `canceled` | `{escalate: true, reason, task_id}` |
-| Plan-Auftrag `done`, `plan check` fehlerhaft | `{step: plan, reason: check, errors, round, after}`. Geprüft wird der Stand am `head` aus dem `report done` dieses Auftrags (`git show <head>:<pfad>`); `plancmd` prüft jeden erledigten Plan-Auftrag so und übergibt die Ergebnisse an `planrun`. Sind die letzten zwei Plan-Aufträge beide fehlerhaft → `{escalate: true, reason: check×2}` |
+| Plan-Auftrag `done`, `plan check` fehlerhaft | `{step: plan, reason: check, errors, round, after, spec}`, `spec` = das `spec` des letzten Plan-Auftrags (Nachtrag Final-Review Plan B 2026-09-15). Geprüft wird der Stand am `head` aus dem `report done` dieses Auftrags (`git show <head>:<pfad>`); `plancmd` prüft jeden erledigten Plan-Auftrag so und übergibt die Ergebnisse an `planrun` — **außer** einem, dem im Log bereits ein erledigtes `plan-review` folgt: der bekommt keinen erneuten Check (leere Fehlerliste, kein `load_plan`), weil das Review nur nach einem sauberen Check dispatcht wurde und ein später geänderter `[routing]`, ein geändertes lean-md oder ein weitergezogener Branch-Kopf einen bereits freigegebenen Plan nicht in die Planung zurückwerfen darf (Nachtrag Final-Review Plan B 2026-09-15). Sind die letzten zwei geprüften Plan-Aufträge beide fehlerhaft → `{escalate: true, reason: check×2}` |
 | Check ok, kein Plan-Review | `{step: plan-review, work: plan-review}` |
-| Plan-Review `reject` | `{step: plan, round, after}`; zweimal → `escalate` |
+| Plan-Review `reject` | `{step: plan, round, after, spec}`; zweimal → `escalate` |
 | Plan-Review `result` | erste offene Task: |
 | — kein `implement`-Auftrag | `{step: implement, task, work, round: 1}` |
 | — `implement` `done`, getrackte Änderungen offen (`staged`, `modified`, `deleted`, `renamed` oder `conflicted`) | `{step: implement, task, work, reason: uncommitted, round, after}`; zweimal in Folge → `escalate`. Ungetrackte Dateien lösen keine Runde aus (`builder.md`: „Untracked files stay untracked“); der Review-Brief nennt sie |
@@ -337,6 +338,13 @@ unverändert; `plancmd` wählt die Ausgabeart je Unterbefehl.
 Gerendert wird mit `lean-md render` im Worktree des Workers. Ein CLI-Render einer Phase
 schreibt in dessen lean-ctx-Session (`src/phases.rs:392`); das ist gewollt.
 
+`plan brief` löst diesen Worktree-Top nicht als `Path.cwd()` auf, sondern über
+`git rev-parse --show-toplevel`, ausgeführt in `Path.cwd()`; ohne Antwort (kein `git`, leere
+Ausgabe, Fehler) fällt es auf `Path.cwd()` selbst zurück. Damit darf ein Worker `plan brief` aus
+einem Unterverzeichnis seines Worktrees aufrufen. Ein Fehler steht dabei immer auf genau einer
+stderr-Zeile: eine mehrzeilige zugrunde liegende Meldung — etwa `git`s eigenes stderr — wird mit
+Leerzeichen statt Zeilenumbrüchen zusammengesetzt (Nachtrag Final-Review Plan B 2026-09-15).
+
 ### 6.6 Pre-Review im Plan-Modus
 
 Heute bewertet `llm.prereview_result` das ganze Diff seit dem Abzweigen (`wt step diff`,
@@ -351,7 +359,15 @@ bekommt der Judge im Plan-Modus einen eigenen Auftrag und eine eigene Diff-Basis
 | `implement` über den Branch, `review`, `plan-review` | kein Pre-Review | – | – |
 
 - `llm.prereview_result` bekommt `base: str | None` (→ `wt -C <path> step diff <base>`) und
-  die Wahl des Prompts; `llm prereview` (CLI) bekommt `--base <sha>` und `--plan`.
+  die Wahl des Prompts; `llm prereview` (CLI) bekommt `--base <sha>` und `--plan`. Die CLI prüft
+  ein gegebenes `--base` gegen `orders.COMMIT_RE` (`[0-9a-f]{7,64}`); trifft es nicht voll, gibt
+  sie `skipped`/`bad_base` auf stdout, eine Zeile auf stderr, Exit 0, ohne `wt` je aufzurufen —
+  nur diese CLI prüft das, `prereview_result(base=…)` bleibt unverändert, weil `dispatch`
+  dort nur einen bereits validierten `start_head` übergibt (Nachtrag Final-Review Plan B
+  2026-09-15).
+- Ein Worktree-Pfad zählt nur, wenn die Worktree-Liste dafür einen nicht-leeren Text-`path`
+  nennt; sonst — wie bei einem fehlenden Eintrag — `worktree_unresolved`, ohne Pre-Review
+  (Nachtrag Final-Review Plan B 2026-09-15).
 - `dispatch.await_task` holt Auftragsbild, Basis und Prompt über
   `plancmd.prereview_input(order)`, sobald der Auftrag `plan` im Payload trägt; sonst bleibt
   alles wie heute. In `dispatch.py` kommen nur wenige Zeilen hinzu.
@@ -389,10 +405,18 @@ Einzelaufgaben ohne Plan laufen unverändert. Pro Session ein Plan.
 3  zurück zu 1
 ```
 
+- Bei einer `await`-Antwort (Schritt c für eine bereits offene Aufgabe) heißt das Feld, das den
+  Schritt nennt, `of`, nicht `step` — `step` ist dort selbst `"await"`. Für `--step plan`
+  liefert der Betreiber `--spec` nur in Runde 1 (der Pfad, den er genannt hat); ab Runde 2 nimmt
+  der Orchestrator `--spec` aus dem `spec`-Feld der `plan next`-Antwort, statt sich den Pfad
+  selbst zu merken (Nachtrag Final-Review Plan B 2026-09-15).
 - Selbst auswerten muss der Orchestrator zwei Dinge: `error: input_required`
   (`dispatch answer`, dann erneut warten) und `prereview: reject` (ein Folgeauftrag desselben
   Schritts mit `--after o-…` und `prereview_note`, abgewartet ohne `--prereview`; `plan next`
-  zählt ihn als Runde 2).
+  zählt ihn als Runde 2). Diese Ablehnung steht nur in der `--await`-Antwort, nie im Auftragslog:
+  startet der Orchestrator neu, bevor er den Folgeauftrag geschickt hat, macht `plan next`
+  einfach mit Review bzw. Plan-Review weiter — im schlimmsten Fall eine Review-Runde zu viel,
+  nie ein Fehler (Nachtrag Final-Review Plan B 2026-09-15).
 - **Aufräumen bei `merge`**, ohne Squash:
   1. `herdr worktree list --cwd <repo_root>` → `path`, `open_workspace_id` von `plan/<slug>`
   2. `herdr workspace close <workspace_id>`
@@ -423,6 +447,8 @@ Einzelaufgaben ohne Plan laufen unverändert. Pro Session ein Plan.
 | Lage | Antwort |
 |---|---|
 | `plan/<slug>` und `main` ohne Plan-Datei | `plan check/show`: `{ok: false, error: "no_plan: …"}`; `plan next` ohne Plan-Auftrag: `{step: plan}` |
+| Plan ohne jede Phase `task-N` | `plan check`: `errors[]` mit `kind: no_tasks` (Nachtrag Final-Review Plan B 2026-09-15) |
+| `llm prereview --base <wert>`, `<wert>` trifft `orders.COMMIT_RE` nicht voll | stdout `skipped`/`bad_base`, eine stderr-Zeile, Exit 0, `wt` nicht aufgerufen (Nachtrag Final-Review Plan B 2026-09-15) |
 | `lean-md` fehlt oder kennt `outline` nicht (stdout ist kein JSON-Objekt mit `phases`) | `config_error: lean-md outline unavailable (needs lean-md >= 0.2.4)` |
 | Befunde aus `outline` oder §3 | `plan check`: `ok: false`, `errors[]` mit `kind`, `line`, `phase`, `message` |
 | Slug verfehlt `PLAN_SLUG_RE` (§3) | `usage_error` |
@@ -439,12 +465,12 @@ Alle JSON-Befehle: eine Zeile mit `ok`, Exit 0, nie eine Exception zum Aufrufer.
 
 | Bereich | Inhalt |
 |---|---|
-| `plan.py` | jede Regel aus §3 mit Outline-JSON als Fixture; Durchreichen der `outline`-Fehler; Fallback auf `main`; `config_error` ohne `outline` |
-| `planrun.py` | jede Zeile aus §6.4, rein, ohne I/O |
-| `plancmd.py` | JSON-Vertrag; Klartext und Exit 1 bei `brief`; Briefs je `step` mit Doubles für `git show`, `lean-md` und `wt` |
+| `plan.py` | jede Regel aus §3 mit Outline-JSON als Fixture, `no_tasks` eingeschlossen; Durchreichen der `outline`-Fehler; Fallback auf `main`; `config_error` ohne `outline` |
+| `planrun.py` | jede Zeile aus §6.4, rein, ohne I/O, inklusive `of` auf `await` und `spec` ab Plan-Runde 2 |
+| `plancmd.py` | JSON-Vertrag; Klartext und Exit 1 bei `brief`, immer auf einer stderr-Zeile; Briefs je `step` mit Doubles für `git show`, `lean-md` und `wt`; `next` prüft einen Plan-Auftrag mit späterem erledigtem `plan-review` nicht erneut; `brief` löst den Worktree-Top über `git rev-parse --show-toplevel` auf, mit Fallback auf cwd (auch aus einem Unterverzeichnis) |
 | `dispatch` / `ordercmd` / `orders` | `--plan/--step/--plan-task/--spec`-Prüfung, Payload, `Order`-Felder; Namenslänge; `export PATH` über `Herdr.pane_run` nur bei vorhandenem `bin`, vor `agent start` |
 | `report` | `head`/`changes` über ein `wt`-Double; `wt_error` |
-| `llm` | `prereview_result` mit `base` (Diff ab SHA) und Prompt-Wahl; `PLAN_PREREVIEW_PROMPT`; `llm prereview --base --plan`; `await_task` nutzt `plancmd.prereview_input` nur bei Plan-Aufträgen; Grenze für Diff und Auftragsbild |
+| `llm` | `prereview_result` mit `base` (Diff ab SHA) und Prompt-Wahl; `PLAN_PREREVIEW_PROMPT`; `llm prereview --base --plan`; `llm prereview --base` mit ungültiger Commit-ID: `skipped`/`bad_base`, kein `wt`-Aufruf; `await_task` nutzt `plancmd.prereview_input` nur bei Plan-Aufträgen; Grenze für Diff und Auftragsbild; ein Worktree-Pfad zählt nur als nicht-leerer Text |
 | `settings` | eingebaute Zuordnung `plan`/`plan-review`; Modell-Warnung `plan-review` gegen `plan` |
 | Rechte | kein Worker bekommt `dispatch`; kein Worker darf pushen oder mergen; neue Allowlist-Einträge |
 | Rollen-Prompts | Pflichtsätze der neuen Rollen; Schritt `plan brief` in allen Worker-Prompts; `orchestrator.md` nennt `plan next` |
