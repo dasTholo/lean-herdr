@@ -112,6 +112,63 @@
           "git status*": "allow"
         }
       }
+    },
+    "plan-writer": {
+      "description": "Writes one implementation plan on its branch. Writes no production code.",
+      "mode": "primary",
+      "prompt": "{file:./.lean-ctx/lean-herdr/roles/plan-writer.md}",
+      "steps": 60,
+      "permission": {
+        // The plan is a file, so writing stays allowed. The shell gate is the builder's
+        // minus the gate commands, plus `plan brief` and `plan check` -- both only read.
+        "bash": {
+          "*": "deny",
+          "lean-herdr report next": "allow",
+          "lean-herdr report show *": "allow",
+          "lean-herdr report start *": "allow",
+          "lean-herdr report done *": "allow",
+          "lean-herdr report fail *": "allow",
+          "lean-herdr report ask *": "allow",
+          "lean-herdr plan brief *": "allow",
+          "lean-herdr plan check *": "allow",
+          "git add*": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git status*": "allow",
+          "wt step commit *": "allow"
+        }
+      }
+    },
+    "plan-reviewer": {
+      "description": "Reviews a plan before its tasks run. Answers with a verdict of result or reject.",
+      "mode": "primary",
+      "prompt": "{file:./.lean-ctx/lean-herdr/roles/plan-reviewer.md}",
+      "steps": 40,
+      "permission": {
+        "edit": "deny",
+        "write": "deny",
+        // The reviewer's guard: opencode gates lean-ctx's write tools by their own names.
+        "lean-ctx_ctx_patch": "deny",
+        "lean-ctx_ctx_edit": "deny",
+        "lean-ctx_ctx_refactor": "deny",
+        "bash": {
+          "*": "deny",
+          "lean-herdr report next": "allow",
+          "lean-herdr report show *": "allow",
+          "lean-herdr report start *": "allow",
+          "lean-herdr report done *": "allow",
+          "lean-herdr report fail *": "allow",
+          "lean-herdr report ask *": "allow",
+          "lean-herdr plan brief *": "allow",
+          "lean-herdr plan check *": "allow",
+          "git diff*": "allow",
+          "git log*": "allow",
+          "git show*": "allow",
+          "git status*": "allow",
+          "wt step diff": "allow",
+          "wt step diff *": "allow"
+        }
+      }
     }
   }
 }

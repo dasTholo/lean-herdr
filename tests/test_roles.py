@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 ROLES = Path(__file__).resolve().parents[1] / "lean_herdr" / "templates" / "roles"
-WORKERS = ("builder", "reviewer")
+WORKERS = ("builder", "reviewer", "plan-writer", "plan-reviewer")
 ALL_ROLES = ("orchestrator", *WORKERS)
 
 
@@ -92,3 +92,16 @@ def test_orchestrator_knows_the_wt_merge_trap():
 def test_orchestrator_reads_ok_not_the_exit_code():
     text = (ROLES / "orchestrator.md").read_text(encoding="utf-8")
     assert "never the exit code" in text
+
+
+def test_plan_reviewer_answers_machine_readably():
+    text = (ROLES / "plan-reviewer.md").read_text(encoding="utf-8")
+    assert "VERDIKT: result" in text and "VERDIKT: reject" in text
+    assert "not in your prose" in text
+
+
+@pytest.mark.parametrize("name", ("plan-writer", "plan-reviewer"))
+def test_the_plan_roles_work_from_their_brief(name):
+    text = (ROLES / f"{name}.md").read_text(encoding="utf-8")
+    assert "lean-herdr plan brief --task o-…" in text
+    assert "lean-herdr plan check <slug>" in text

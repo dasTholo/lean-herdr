@@ -22,7 +22,7 @@ from lean_herdr.settings import load_jsonc
 from lean_herdr.templating import LAYOUT, read_lock, render, resolve_values
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKERS = ("builder", "reviewer")
+WORKERS = ("builder", "reviewer", "plan-writer", "plan-reviewer")
 
 #: lean-ctx's own write tools, under the names opencode gives an MCP tool --
 #: measured against opencode 1.18.29 (plan 2026-09-14, task 1). `edit` and
@@ -30,14 +30,14 @@ WORKERS = ("builder", "reviewer")
 LEAN_CTX_WRITERS = ("lean-ctx_ctx_patch", "lean-ctx_ctx_edit", "lean-ctx_ctx_refactor")
 
 #: The opencode agents that change no file.
-NON_WRITING = ("orchestrator", "reviewer")
+NON_WRITING = ("orchestrator", "reviewer", "plan-reviewer")
 
 #: The claude roles that ship a settings file `dispatch` hands over as `--settings`.
-CLAUDE_ROLES = ("builder", "reviewer", "orchestrator")
+CLAUDE_ROLES = ("builder", "reviewer", "orchestrator", "plan-writer", "plan-reviewer")
 
 #: The claude roles that change no file. Their `deny` outranks every `allow` from
 #: every source, the shared `.claude/settings.json` included.
-CLAUDE_NON_WRITING = ("reviewer",)
+CLAUDE_NON_WRITING = ("reviewer", "plan-reviewer")
 
 #: What writes, whatever `.claude/settings.json` says: Claude Code's own editors
 #: and lean-ctx's three write tools.
@@ -49,6 +49,9 @@ CLAUDE_WRITERS = (
     "mcp__lean-ctx__ctx_edit",
     "mcp__lean-ctx__ctx_refactor",
 )
+
+#: What stays a human gesture, whatever a role may otherwise run (plan spec 5.3).
+PUSH_AND_MERGE = ("Bash(git push:*)", "Bash(wt merge:*)", "Bash(wt step push:*)")
 
 
 def claude_rules(role: str, key: str, root: Path = ROOT) -> list[str]:
@@ -116,6 +119,8 @@ def foreign_root(tmp_path_factory) -> Path:
         "claude/builder.json",
         "claude/reviewer.json",
         "claude/orchestrator.json",
+        "claude/plan-writer.json",
+        "claude/plan-reviewer.json",
     ):
         target = root / LAYOUT[name]
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -372,3 +377,32 @@ def test_the_claude_orchestrator_writes_nothing(gate_root):
 
 def test_the_claude_builder_still_blocks_nothing(gate_root):
     assert claude_rules("builder", "deny", gate_root) == []
+
+
+@pytest.mark.parametrize("role", ("plan-writer", "plan-reviewer"))
+def test_a_plan_role_may_neither_push_nor_merge(role):
+    denied = claude_rules(role, "deny")
+    for rule in PUSH_AND_MERGE:
+        assert rule in denied, f"claude/{role}.json does not deny {rule}"
+
+
+def test_the_plan_writer_may_write_commit_and_check_its_plan(gate_root):
+    agent = opencode(gate_root)["agent"]["plan-writer"]
+    assert "edit" not in agent["permission"] and "write" not in agent["permission"]
+    bash = agent["permission"]["bash"]
+    for pattern in (
+        "lean-herdr plan brief *",
+        "lean-herdr plan check *",
+        "git add*",
+        "wt step commit *",
+    ):
+        assert bash.get(pattern) == "allow", f"the plan writer cannot run `{pattern}`"
+    assert "wt *" not in bash and "git push*" not in bash
+
+
+def test_the_plan_reviewer_may_check_and_diff_but_not_commit(gate_root):
+    bash = opencode(gate_root)["agent"]["plan-reviewer"]["permission"]["bash"]
+    for pattern in ("lean-herdr plan brief *", "lean-herdr plan check *", "wt step diff *"):
+        assert bash.get(pattern) == "allow", f"the plan reviewer cannot run `{pattern}`"
+    for forbidden in ("git add*", "git commit*", "wt step commit *"):
+        assert forbidden not in bash, forbidden
