@@ -140,7 +140,7 @@ def resolve_agent(
     return agent_name(role, current_branch(cwd) or None, settings=settings)
 
 
-def _brief(order: Order, *, orders_dir: str | Path) -> str:
+def order_text(order: Order, *, orders_dir: str | Path) -> str:
     """The order as the worker reads it, with its predecessor folded in.
 
     The run-up is a REFERENCE, not a retelling: `--after o-2` puts the
@@ -176,7 +176,7 @@ def next_order(agent: str, *, orders_dir: str | Path) -> dict[str, Any]:
         "task_id": order.id,
         "state": order.state,
         "from": order.from_agent,
-        "text": _brief(order, orders_dir=orders_dir),
+        "text": order_text(order, orders_dir=orders_dir),
     }
 
 
@@ -214,7 +214,7 @@ def show_order(agent: str, task_id: str, *, orders_dir: str | Path) -> dict[str,
         "task_id": order.id,
         "state": order.state,
         "from": order.from_agent,
-        "text": _brief(order, orders_dir=orders_dir),
+        "text": order_text(order, orders_dir=orders_dir),
         "events": [
             {"seq": e.sequence, "kind": e.kind, "actor": e.actor, "at": e.at, "message": e.message}
             for e in read_events(task_id, orders=orders_dir)

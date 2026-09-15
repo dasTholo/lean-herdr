@@ -4,8 +4,17 @@ from pathlib import Path
 import pytest
 
 from lean_herdr import plancmd
-from lean_herdr.orderlog import append
-from lean_herdr.plancmd import check_result, main, next_result, plan_orders, show_result
+from lean_herdr.orderlog import append, read_events
+from lean_herdr.orders import fold
+from lean_herdr.plancmd import (
+    BriefError,
+    check_result,
+    compose_brief,
+    main,
+    next_result,
+    plan_orders,
+    show_result,
+)
 from tests.doubles import Completed
 
 ROOT = Path("/repo")
@@ -310,3 +319,159 @@ def test_a_broken_routing_table_is_a_config_error(cwd_repo, capsys):
     config.write_text('[routing]\nimplement = "Bad Role"\n', encoding="utf-8")
     assert main(["check", "shop"]) == 0
     assert _line(capsys)["error"].startswith("config_error: routing.implement:")
+
+
+WT = Path("/wt/shop")
+
+
+def brief(orders, task_id, repo, *, data=None):
+    order_ = fold(read_events(task_id, orders=orders))
+    return compose_brief(order_, root=ROOT, cwd=WT, orders_dir=orders, data=data or {}, runner=repo)
+
+
+def test_an_implement_brief_is_the_brief_the_task_and_the_order(tmp_path):
+    order(tmp_path, "o-1", "implement", task="2")
+    repo = Repo()
+    assert brief(tmp_path, "o-1", repo) == (
+        "<.lean-ctx/lean-herdr/briefs/implement.lmd.md>\n\n"
+        f"<{PLAN_FILE} --phase task-2>\n\n"
+        "## Order\n\n"
+        "o-1  [created]  <- orch\n"
+        "implement of plan shop"
+    )
+    assert {cwd for _cmd, cwd in repo.calls} == {"/wt/shop"}
+
+
+def test_a_branch_implement_brief_carries_the_constraints_and_the_findings_it_answers(tmp_path):
+    order(
+        tmp_path,
+        "o-1",
+        "review",
+        task="branch",
+        done="eee9999",
+        message="VERDIKT: reject\napp/main.py leaks a debug print",
+    )
+    order(tmp_path, "o-2", "implement", task="branch", after="o-1")
+    text = brief(tmp_path, "o-2", Repo())
+    assert f"<{PLAN_FILE} --phase constraints>" in text
+    assert "--phase task-" not in text
+    assert "after: o-1 (builder-plan-shop, completed)" in text
+    assert "app/main.py leaks a debug print" in text
+
+
+def test_a_task_review_diffs_from_the_start_head_of_the_first_implement_round(tmp_path):
+    order(tmp_path, "o-1", "implement", task="2", start="aaa1111", done="ddd1111")
+    order(tmp_path, "o-2", "review", task="2", done="ddd1111", message="VERDIKT: reject\nno test")
+    order(tmp_path, "o-3", "implement", task="2", start="aaa2222", done="ddd2222")
+    order(tmp_path, "o-4", "review", task="2")
+    repo = Repo(
+        log="c2 test(api): cover the route\nc1 feat(api): add the route\n",
+        status=" M app/main.py\n?? notes.txt\n",
+    )
+    text = brief(tmp_path, "o-4", repo)
+    assert (
+        text.index("--phase constraints>") < text.index("--phase task-2>") < text.index("## Diff")
+    )
+    assert "`wt step diff aaa1111`\n" in text
+    assert "- c1 feat(api): add the route" in text
+    assert "- notes.txt" in text
+    assert "- app/main.py" not in text
+    assert (["git", "log", "--oneline", "aaa1111..HEAD"], "/wt/shop") in repo.calls
+
+
+def test_without_a_start_head_the_previous_tasks_done_head_stands_in_and_says_so(tmp_path):
+    order(tmp_path, "o-1", "implement", task="1", start="aaa1111", done="ddd1111")
+    order(tmp_path, "o-2", "implement", task="2", done="ddd2222")
+    order(tmp_path, "o-3", "review", task="2")
+    text = brief(tmp_path, "o-3", Repo())
+    assert (
+        "`wt step diff ddd1111` (no start head on task 2: the done head of task 1 stands in)"
+        in text
+    )
+
+
+def test_task_one_without_a_start_head_diffs_from_the_merge_base(tmp_path):
+    order(tmp_path, "o-1", "implement", task="1", done="ddd1111")
+    order(tmp_path, "o-2", "review", task="1")
+    text = brief(tmp_path, "o-2", Repo(merge_base="m0\n"))
+    assert "`wt step diff m0` (no start head on task 1: the merge base with main stands in)" in text
+
+
+def test_no_base_at_all_is_a_brief_error(tmp_path):
+    order(tmp_path, "o-1", "review", task="1")
+    with pytest.raises(BriefError, match="^no_base: task 1 "):
+        brief(tmp_path, "o-1", Repo())
+
+
+def test_a_branch_review_lists_the_tasks_and_diffs_the_whole_branch(tmp_path):
+    order(tmp_path, "o-1", "review", task="branch")
+    repo = Repo({f"plan/shop:{PLAN_FILE}": "clean"}, {"clean": CLEAN})
+    text = brief(tmp_path, "o-1", repo)
+    assert "## Tasks\n\n- Task 1: models\n- Task 2: api" in text
+    assert "`wt step diff` -- everything since the branch left main" in text
+
+
+def test_a_plan_brief_names_the_plan_the_spec_and_the_works_with_their_models(tmp_path):
+    order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md")
+    data = {
+        "routing": {"implement-small": "builder-small"},
+        "roles": {"builder": {"model": "opus"}, "builder-small": {"model": "sonnet"}},
+    }
+    text = brief(tmp_path, "o-1", Repo(), data=data)
+    assert f"`{PLAN_FILE}` on branch `plan/shop`" in text
+    assert "Spec: `docs/specs/shop-design.md`" in text
+    assert "- `implement` -> builder, model opus" in text
+    assert "- `implement-small` -> builder-small, model sonnet" in text
+    assert "`review`" not in text
+
+
+def test_a_plan_review_brief_carries_the_findings_of_plan_check(tmp_path):
+    order(tmp_path, "o-1", "plan-review")
+    repo = Repo({f"plan/shop:{PLAN_FILE}": "broken"}, {"broken": BROKEN})
+    text = brief(tmp_path, "o-1", repo)
+    assert "Errors:\n- [unknown_macro] line 40 (task-2): macro not found: gate" in text
+    assert "Warnings:\n- none" in text
+
+
+def test_an_order_outside_a_plan_gets_no_brief(tmp_path):
+    order(tmp_path, "o-1", "implement", plan=None)
+    with pytest.raises(BriefError, match=r"^order o-1 belongs to no plan$"):
+        brief(tmp_path, "o-1", Repo())
+
+
+def test_a_failing_render_names_the_file_and_the_phase(tmp_path):
+    order(tmp_path, "o-1", "implement", task="1")
+    with pytest.raises(BriefError) as caught:
+        brief(tmp_path, "o-1", Repo(broken_render=f"{PLAN_FILE} --phase task-1"))
+    assert (
+        str(caught.value)
+        == f"render_failed: {PLAN_FILE} --phase task-1: PHASE_ABORTED: macro not found: gate"
+    )
+
+
+def test_brief_prints_plain_text_and_exits_zero(cwd_repo, monkeypatch, capsys):
+    order(cwd_repo, "o-1", "implement", task="1")
+    monkeypatch.setattr(plancmd, "compose_brief", lambda order_, **_kw: f"brief for {order_.id}")
+    assert main(["brief", "--task", "o-1"]) == 0
+    assert capsys.readouterr() == ("brief for o-1\n", "")
+
+
+@pytest.mark.parametrize(
+    ("argv", "line"),
+    [
+        (["brief"], "usage_error: brief needs --task"),
+        (["brief", "shop", "--task", "o-1"], "usage_error: brief takes --task, not a slug"),
+        (["brief", "--task", "o-9"], "task_not_found: o-9"),
+    ],
+)
+def test_a_failed_brief_is_one_stderr_line_and_exit_one(cwd_repo, capsys, argv, line):
+    assert main(argv) == 1
+    assert capsys.readouterr() == ("", line + "\n")
+
+
+def test_brief_behind_a_flag_is_a_usage_error_and_no_show(cwd_repo, capsys):
+    assert main(["--task", "o-1", "brief"]) == 0
+    assert _line(capsys) == {
+        "ok": False,
+        "error": "usage_error: brief comes first: lean-herdr plan brief --task o-…",
+    }

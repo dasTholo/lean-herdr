@@ -2,7 +2,8 @@
 
 A router, nothing more. Every verb hands off to a `main(argv) -> int` that
 already exists and already keeps its own contract. Five keep the house
-contract: one JSON line on stdout, `ok` as the only truth, exit ALWAYS 0. Two
+contract: one JSON line on stdout, `ok` as the only truth, exit ALWAYS 0 --
+`plan brief` aside, the one plain-text answer a worker reads. Two
 do not, on purpose, because nobody reading JSON calls them:
 
 * `llm` is worktrunk's commit generator and the manual pre-review. `generate`
@@ -52,6 +53,7 @@ USAGE = (
     "  dispatch, models, plan, report, workspace: one JSON line on stdout, exit 0\n"
     "  llm generate: the commit message on stdout, exit 0\n"
     "  llm prereview: the ruling on stdout, exit 1 on reject\n"
+    "  plan brief: the brief on stdout, exit 1 with one line on stderr on failure\n"
     "  plugin <sub>: Herdr's handlers -- nothing on stdout, errors on stderr, exit 0\n"
 )
 
