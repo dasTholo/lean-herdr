@@ -57,7 +57,19 @@ LAYOUT = {
     "settings.json": ".claude/settings.json",
     "wt.toml": ".config/wt.toml",
     "lean-ctx-policy.js": ".opencode/plugins/lean-ctx-policy.js",
+    "lean-md/herdr-plan-template.lmd.md": ".lean-ctx/lean-md/herdr-plan-template.lmd.md",
+    "lean-md/herdr-recipes.lmd.md": ".lean-ctx/lean-md/herdr-recipes.lmd.md",
+    "lean-md/lang/python.lmd.md": ".lean-ctx/lean-md/lang/python.lmd.md",
+    "briefs/implement.lmd.md": ".lean-ctx/lean-herdr/briefs/implement.lmd.md",
+    "briefs/review.lmd.md": ".lean-ctx/lean-herdr/briefs/review.lmd.md",
+    "briefs/plan.lmd.md": ".lean-ctx/lean-herdr/briefs/plan.lmd.md",
+    "briefs/plan-review.lmd.md": ".lean-ctx/lean-herdr/briefs/plan-review.lmd.md",
+    "bin/pylsp": ".lean-ctx/lean-herdr/bin/pylsp",
 }
+
+#: The targets `init` writes with mode 0755. git records the executable bit, so the
+#: checked-in copy carries it as well.
+EXECUTABLE = frozenset({".lean-ctx/lean-herdr/bin/pylsp"})
 
 #: What `init` renders when neither a flag nor the lock names a value. `ruff
 #: check` without a path checks `.`, and this repository is green under both.

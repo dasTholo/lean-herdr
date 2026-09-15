@@ -1,6 +1,7 @@
 """`init` in a stranger's project: writes, skips, warns -- never repairs."""
 
 import json
+import os
 import subprocess
 import tomllib
 from typing import Any
@@ -72,6 +73,12 @@ def test_init_writes_the_templates_rendered_and_no_token(monkeypatch, repo):
         assert b"{{lean-herdr:" not in (repo / relative).read_bytes(), relative
     gate = tomllib.loads((repo / ".config" / "wt.toml").read_text(encoding="utf-8"))
     assert gate["pre-merge"] == DEFAULT_VALUES
+
+
+def test_init_makes_pylsp_executable(monkeypatch, repo):
+    quiet(monkeypatch)
+    workspace_init(root=repo)
+    assert os.access(repo / ".lean-ctx" / "lean-herdr" / "bin" / "pylsp", os.X_OK)
 
 
 def test_a_dangling_symlink_is_not_written_through(monkeypatch, repo, tmp_path):

@@ -2,6 +2,11 @@
   "files": {
     ".claude/settings.json": "7e8fd45d48b7e1c077b4bfa7028ee2546c8ded83a101d308c9adb8c95b06315c",
     ".config/wt.toml": "106f44990549fd06a4d88e6d100f691eaa6c155ab513e458ece75a1ccf2c5e7e",
+    ".lean-ctx/lean-herdr/bin/pylsp": "6a6c5104f9e87809c14a14d209f08dcd20dc429498c23ccf8692083a3c2587c1",
+    ".lean-ctx/lean-herdr/briefs/implement.lmd.md": "3b96f422d2b89675c09fbbb1ef9f7adc1a21e2791a9b604ec995b3ca4f0e2c17",
+    ".lean-ctx/lean-herdr/briefs/plan-review.lmd.md": "e9da71265b76ebd438f8302563317ebdd4b373b51d099c3b475a9dcb96bc938c",
+    ".lean-ctx/lean-herdr/briefs/plan.lmd.md": "f17528a514b3510e1b2bb1abda47407c076934449c3043afd5f03773140f903c",
+    ".lean-ctx/lean-herdr/briefs/review.lmd.md": "be7b5b59519f1766013a179d75d878bfbc6c7bc78336c0b091fc45353068be6c",
     ".lean-ctx/lean-herdr/claude/builder.json": "4f4295c4d2a05923dfc7f11d76fa3dbf7fd88dca96c49e9700badf785685aed0",
     ".lean-ctx/lean-herdr/claude/orchestrator.json": "48a9ae56f49ea1362f4a96c7bd81034a95c8c34992436b19d8c38ccb7da87700",
     ".lean-ctx/lean-herdr/claude/plan-reviewer.json": "91e09c0c1cc8a6193cc84261f2e4defd5f99eecfbdd51eff151878ec930e1340",
@@ -13,6 +18,9 @@
     ".lean-ctx/lean-herdr/roles/plan-reviewer.md": "9453141872b42a9ac206df140ffc5d702274e818e236edd06ef488edf77559f3",
     ".lean-ctx/lean-herdr/roles/plan-writer.md": "44302e742782a8e78b25386a4237181393ead1e1c494ecb782391d7c03cef792",
     ".lean-ctx/lean-herdr/roles/reviewer.md": "c245ddb80405100e6c6592bab576ef2026d454c7b0064f5fce4483f1504a98a1",
+    ".lean-ctx/lean-md/herdr-plan-template.lmd.md": "abb3cd261f4a8cce4a0539c0be0b1446e57570c54aba4a85b53c8d3314b6b1d5",
+    ".lean-ctx/lean-md/herdr-recipes.lmd.md": "8dbca763c401e33ecb433efb9cdeb2b0ede238b853d6497ae44fcc55e0cfe22c",
+    ".lean-ctx/lean-md/lang/python.lmd.md": "75b818beec830079dde4834dcfa115054edeea35f3342cbd7df5807fad550d4b",
     ".opencode/plugins/lean-ctx-policy.js": "1094a4f71b8ffb0028952123f973be3a436e1a4b7135ec52b012a1d904ccaa1b",
     "opencode.jsonc": "594eed391813f4544a506df878b91b7bef4ffa5909adc2138da76c245232a835"
   },

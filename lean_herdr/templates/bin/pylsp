@@ -1,0 +1,4 @@
+#!/bin/sh
+# lean-ctx starts a Python language server named `pylsp` without arguments; ty needs `server`.
+# `lean-herdr dispatch` puts this directory in front of a worker pane's PATH.
+exec ty server "$@"

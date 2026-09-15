@@ -39,6 +39,7 @@ from lean_herdr.settings import (
     workspace_settings,
 )
 from lean_herdr.templating import (
+    EXECUTABLE,
     LAYOUT,
     LOCK_PATH,
     VALUE_RE,
@@ -135,6 +136,8 @@ def _place(root: Path, relative: str, data: bytes, *, force: bool) -> bool:
     if target.is_symlink():
         target.unlink()
     target.write_bytes(data)
+    if relative in EXECUTABLE:
+        target.chmod(0o755)
     return True
 
 
