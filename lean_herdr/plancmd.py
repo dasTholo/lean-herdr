@@ -172,6 +172,7 @@ def compose_brief(
     path = plan_path(slug)
     parts = [render(cwd, BRIEFS_DIR / f"{step}.lmd.md", runner=runner)]
     if step == "implement" and task != "branch":
+        parts.append(render(cwd, path, phase="constraints", runner=runner))
         parts.append(render(cwd, path, phase=f"task-{task}", runner=runner))
     elif step == "implement":
         parts.append(render(cwd, path, phase="constraints", runner=runner))

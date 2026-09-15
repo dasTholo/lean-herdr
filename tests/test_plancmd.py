@@ -411,6 +411,7 @@ def test_an_implement_brief_is_the_brief_the_task_and_the_order(tmp_path):
     repo = Repo()
     assert brief(tmp_path, "o-1", repo) == (
         "<.lean-ctx/lean-herdr/briefs/implement.lmd.md>\n\n"
+        f"<{PLAN_FILE} --phase constraints>\n\n"
         f"<{PLAN_FILE} --phase task-2>\n\n"
         "## Order\n\n"
         "o-1  [created]  <- orch\n"
