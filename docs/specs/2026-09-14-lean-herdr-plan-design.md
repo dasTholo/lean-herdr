@@ -98,7 +98,10 @@ eingecheckten Kopien und Lock; `README.md`, `INSTALL.md`; Tests.
 ## 3. Plan-Format
 
 **Ort:** `docs/lean-md/plans/<slug>.lmd.md` auf `plan/<slug>`. Der Slug erfüllt
-`[a-z][a-z0-9-]{0,11}`. Der Kopf nennt die zugrunde liegende Spec.
+`(?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*` (`orders.PLAN_SLUG_RE`): höchstens 12 Zeichen,
+einzelne Bindestriche nur zwischen Buchstaben und Ziffern. `agent_name` glättet `--` und
+Bindestriche am Rand; `a--b` und `a-b` teilten sich sonst einen Agent-Namen (Nachtrag Branch-Review
+2026-09-15). Der Kopf nennt die zugrunde liegende Spec.
 
 ```
 @lean-md
@@ -285,7 +288,10 @@ unverändert; `plancmd` wählt die Ausgabeart je Unterbefehl.
   wird.
 - `report start` und `report done` schreiben `head` (SHA) und `changes` (Flags) aus dem
   Eintrag mit `worktree.current: true` von `wt list --format=json` ins Event. Scheitert
-  `wt`, trägt das Event `wt_error`; `report` bleibt erfolgreich.
+  `wt`, trägt das Event `wt_error`; `report` bleibt erfolgreich. `Order` übernimmt nur einen
+  Hex-SHA (`[0-9a-f]{7,64}`) als Head, und `start_head` nur vom ersten `report start` des
+  Auftrags: Fehlt der Stempel dort, bleibt `start_head` `None` und der Fallback gilt, statt dass
+  ein späterer Start nach eigenen Commits zur Basis wird (Nachtrag Branch-Review 2026-09-15).
 
 ### 6.4 `plan next`
 
@@ -419,7 +425,7 @@ Einzelaufgaben ohne Plan laufen unverändert. Pro Session ein Plan.
 | `plan/<slug>` und `main` ohne Plan-Datei | `plan check/show`: `{ok: false, error: "no_plan: …"}`; `plan next` ohne Plan-Auftrag: `{step: plan}` |
 | `lean-md` fehlt oder kennt `outline` nicht (stdout ist kein JSON-Objekt mit `phases`) | `config_error: lean-md outline unavailable (needs lean-md >= 0.2.4)` |
 | Befunde aus `outline` oder §3 | `plan check`: `ok: false`, `errors[]` mit `kind`, `line`, `phase`, `message` |
-| Slug verfehlt `[a-z][a-z0-9-]{0,11}` | `usage_error` |
+| Slug verfehlt `PLAN_SLUG_RE` (§3) | `usage_error` |
 | unzulässige Kombination `--plan/--step/--plan-task/--spec` | `usage_error`, nichts im Log |
 | `plan brief` für einen Auftrag ohne Plan | stderr `order o-… belongs to no plan`, Exit 1 |
 | `wt list` scheitert bei `report` | `ok: true`, Event mit `wt_error` |

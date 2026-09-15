@@ -1467,7 +1467,7 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
 
 
     def test_plan_orders_are_this_plans_alone_oldest_first(tmp_path):
-        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="h1")
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
         order(tmp_path, "o-2", "plan", plan="other", spec="docs/specs/other-design.md")
         order(tmp_path, "o-3", "implement", plan=None)
         order(tmp_path, "o-4", "plan-review")
@@ -1511,15 +1511,15 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
 
 
     def test_next_is_done_once_main_carries_the_plan(tmp_path):
-        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="h1")
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
         repo = Repo({f"main:{PLAN_FILE}": "clean"}, {"clean": CLEAN})
         assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {"ok": True, "done": True}
 
 
     def test_next_checks_a_plan_order_at_the_head_it_reported_done_on(tmp_path):
-        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="h1")
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
         repo = Repo(
-            {f"h1:{PLAN_FILE}": "broken", f"plan/shop:{PLAN_FILE}": "clean"},
+            {f"eee1111:{PLAN_FILE}": "broken", f"plan/shop:{PLAN_FILE}": "clean"},
             {"broken": BROKEN, "clean": CLEAN},
         )
         assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {
@@ -1531,12 +1531,12 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
             "round": 2,
             "after": "o-1",
         }
-        assert (["git", "show", f"h1:{PLAN_FILE}"], "/repo") in repo.calls
+        assert (["git", "show", f"eee1111:{PLAN_FILE}"], "/repo") in repo.calls
 
 
     def test_next_hands_a_clean_plan_to_the_plan_review(tmp_path):
-        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="h1")
-        repo = Repo({f"h1:{PLAN_FILE}": "clean", f"plan/shop:{PLAN_FILE}": "clean"}, {"clean": CLEAN})
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
+        repo = Repo({f"eee1111:{PLAN_FILE}": "clean", f"plan/shop:{PLAN_FILE}": "clean"}, {"clean": CLEAN})
         assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {
             "ok": True,
             "step": "plan-review",
@@ -1545,8 +1545,8 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
 
 
     def test_next_without_lean_md_outline_is_a_config_error(tmp_path):
-        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="h1")
-        repo = Repo({f"h1:{PLAN_FILE}": "clean"})
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
+        repo = Repo({f"eee1111:{PLAN_FILE}": "clean"})
         assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {
             "ok": False,
             "error": "config_error: lean-md outline unavailable (needs lean-md >= 0.2.4)",
@@ -1554,9 +1554,9 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
 
 
     def test_show_lists_the_planning_orders_and_every_task(tmp_path):
-        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="h1")
-        order(tmp_path, "o-2", "plan-review", done="h1", message="VERDIKT: result\nfine")
-        order(tmp_path, "o-3", "implement", task="1", start="h1")
+        order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
+        order(tmp_path, "o-2", "plan-review", done="eee1111", message="VERDIKT: result\nfine")
+        order(tmp_path, "o-3", "implement", task="1", start="eee1111")
         repo = Repo({f"plan/shop:{PLAN_FILE}": "clean"}, {"clean": CLEAN})
         result = show_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo)
         assert result["ok"] is True
@@ -1587,7 +1587,7 @@ Branch-Kopf); trägt dieser Stand keinen Plan, ist das der Befund `no_plan`. `co
         ("argv", "error"),
         [
             (["next"], "usage_error: next needs a slug"),
-            (["check", "Shop"], "usage_error: 'Shop' is no plan slug ([a-z][a-z0-9-]{0,11})"),
+            (["check", "Shop"], r"usage_error: 'Shop' is no plan slug ((?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*)"),
             (["show", "shop", "--task", "o-1"], "usage_error: show does not take --task"),
         ],
     )
@@ -1906,7 +1906,7 @@ Am Dateiende:
 
 
     def test_a_branch_implement_brief_carries_the_constraints_and_the_findings_it_answers(tmp_path):
-        order(tmp_path, "o-1", "review", task="branch", done="h9", message="VERDIKT: reject\napp/main.py leaks a debug print")
+        order(tmp_path, "o-1", "review", task="branch", done="eee9999", message="VERDIKT: reject\napp/main.py leaks a debug print")
         order(tmp_path, "o-2", "implement", task="branch", after="o-1")
         text = brief(tmp_path, "o-2", Repo())
         assert f"<{PLAN_FILE} --phase constraints>" in text
@@ -1916,30 +1916,30 @@ Am Dateiende:
 
 
     def test_a_task_review_diffs_from_the_start_head_of_the_first_implement_round(tmp_path):
-        order(tmp_path, "o-1", "implement", task="2", start="s1", done="d1")
-        order(tmp_path, "o-2", "review", task="2", done="d1", message="VERDIKT: reject\nno test")
-        order(tmp_path, "o-3", "implement", task="2", start="s2", done="d2")
+        order(tmp_path, "o-1", "implement", task="2", start="aaa1111", done="ddd1111")
+        order(tmp_path, "o-2", "review", task="2", done="ddd1111", message="VERDIKT: reject\nno test")
+        order(tmp_path, "o-3", "implement", task="2", start="aaa2222", done="ddd2222")
         order(tmp_path, "o-4", "review", task="2")
         repo = Repo(log="c2 test(api): cover the route\nc1 feat(api): add the route\n", status=" M app/main.py\n?? notes.txt\n")
         text = brief(tmp_path, "o-4", repo)
         assert text.index("--phase constraints>") < text.index("--phase task-2>") < text.index("## Diff")
-        assert "`wt step diff s1`\n" in text
+        assert "`wt step diff aaa1111`\n" in text
         assert "- c1 feat(api): add the route" in text
         assert "- notes.txt" in text
         assert "- app/main.py" not in text
-        assert (["git", "log", "--oneline", "s1..HEAD"], "/wt/shop") in repo.calls
+        assert (["git", "log", "--oneline", "aaa1111..HEAD"], "/wt/shop") in repo.calls
 
 
     def test_without_a_start_head_the_previous_tasks_done_head_stands_in_and_says_so(tmp_path):
-        order(tmp_path, "o-1", "implement", task="1", start="s1", done="d1")
-        order(tmp_path, "o-2", "implement", task="2", done="d2")
+        order(tmp_path, "o-1", "implement", task="1", start="aaa1111", done="ddd1111")
+        order(tmp_path, "o-2", "implement", task="2", done="ddd2222")
         order(tmp_path, "o-3", "review", task="2")
         text = brief(tmp_path, "o-3", Repo())
-        assert "`wt step diff d1` (no start head on task 2: the done head of task 1 stands in)" in text
+        assert "`wt step diff ddd1111` (no start head on task 2: the done head of task 1 stands in)" in text
 
 
     def test_task_one_without_a_start_head_diffs_from_the_merge_base(tmp_path):
-        order(tmp_path, "o-1", "implement", task="1", done="d1")
+        order(tmp_path, "o-1", "implement", task="1", done="ddd1111")
         order(tmp_path, "o-2", "review", task="1")
         text = brief(tmp_path, "o-2", Repo(merge_base="m0\n"))
         assert "`wt step diff m0` (no start head on task 1: the merge base with main stands in)" in text
@@ -2434,9 +2434,9 @@ den `plancmd`-Import um `PLAN_RULES_SUMMARY, PrereviewInput` und `prereview_inpu
 
     def test_a_task_is_judged_against_its_rendered_task_since_its_start_head():
         repo = Repo()
-        got = picked(plan_order(step="implement", plan_task="2", start_head="s1"), repo)
+        got = picked(plan_order(step="implement", plan_task="2", start_head="aaa1111"), repo)
         assert got == PrereviewInput(
-            order=f"<{PLAN_FILE} --phase constraints>\n\n<{PLAN_FILE} --phase task-2>", base="s1"
+            order=f"<{PLAN_FILE} --phase constraints>\n\n<{PLAN_FILE} --phase task-2>", base="aaa1111"
         )
         assert {cwd for _cmd, cwd in repo.calls} == {"/wt/shop"}
 
@@ -2446,12 +2446,12 @@ den `plancmd`-Import um `PLAN_RULES_SUMMARY, PrereviewInput` und `prereview_inpu
         [
             (Order(id="o-1", state="completed"), WORKTREES, Repo(), "no_plan_order"),
             (plan_order(step="plan", spec=SPEC_FILE), WORKTREES, Repo(), "spec_unreadable"),
-            (plan_order(step="implement", plan_task="branch", start_head="s1"), WORKTREES, Repo(), "no_prereview_for_step"),
+            (plan_order(step="implement", plan_task="branch", start_head="aaa1111"), WORKTREES, Repo(), "no_prereview_for_step"),
             (plan_order(step="review", plan_task="1"), WORKTREES, Repo(), "no_prereview_for_step"),
             (plan_order(step="implement", plan_task="1"), WORKTREES, Repo(), "no_start_head"),
-            (plan_order(step="implement", plan_task="1", start_head="s1"), {"result": "garbage"}, Repo(), "worktree_unresolved"),
+            (plan_order(step="implement", plan_task="1", start_head="aaa1111"), {"result": "garbage"}, Repo(), "worktree_unresolved"),
             (
-                plan_order(step="implement", plan_task="1", start_head="s1"),
+                plan_order(step="implement", plan_task="1", start_head="aaa1111"),
                 WORKTREES,
                 Repo(broken_render=f"{PLAN_FILE} --phase task-1"),
                 "render_failed",
@@ -2473,8 +2473,8 @@ den `plancmd`-Import um `PLAN_RULES_SUMMARY, PrereviewInput` und `prereview_inpu
             {"to_agent": WORKER, "description": "Task 1 of plan shop", "plan": "shop", "step": "implement", "plan_task": "1"},
             orders=tmp_path,
         )
-        append(TASK_ID, "working", WORKER, {"head": "s1", "changes": []}, orders=tmp_path)
-        append(TASK_ID, "completed", WORKER, {"message": "done", "head": "d1", "changes": []}, orders=tmp_path)
+        append(TASK_ID, "working", WORKER, {"head": "aaa1111", "changes": []}, orders=tmp_path)
+        append(TASK_ID, "completed", WORKER, {"message": "done", "head": "ddd1111", "changes": []}, orders=tmp_path)
         return tmp_path
 
 
@@ -2483,7 +2483,7 @@ den `plancmd`-Import um `PLAN_RULES_SUMMARY, PrereviewInput` und `prereview_inpu
 
         def fake_input(order, **kwargs):
             asked.update(order_id=order.id, **kwargs)
-            return PrereviewInput(order="the rendered task 1", base="s1")
+            return PrereviewInput(order="the rendered task 1", base="aaa1111")
 
         monkeypatch.setattr("lean_herdr.plancmd.prereview_input", fake_input)
         runner, request = llm_doubles("PREREVIEW: pass", monkeypatch, tmp_path)
@@ -2499,7 +2499,7 @@ den `plancmd`-Import um `PLAN_RULES_SUMMARY, PrereviewInput` und `prereview_inpu
 
         result = wait(herdr, plan_log(tmp_path), prereview=True, runner=recording_runner, request=recording_request)
         assert result["prereview"] == "pass"
-        assert seen == [["wt", "-C", "/worktrees/feat-x", "step", "diff", "s1"]]
+        assert seen == [["wt", "-C", "/worktrees/feat-x", "step", "diff", "aaa1111"]]
         assert "the rendered task 1" in bodies[0]
         assert "Task 1 of plan shop" not in bodies[0]
         assert (asked["order_id"], asked["branch"], asked["root"]) == (TASK_ID, BRANCH, ROOT)

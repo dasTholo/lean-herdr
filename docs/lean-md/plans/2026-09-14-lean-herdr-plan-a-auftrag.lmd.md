@@ -73,6 +73,23 @@ Test-Muster: `tests/test_orders.py` (`event`, `created`), `tests/test_dispatch_a
 - Reihenfolge 1 → 2 → 3 → 4.
 - Keine Datei unter `lean_herdr/` über 800 Produktions-LOC; `dispatch.py` stand bei 581 (Task 4 misst).
 
+## Nachtrag Branch-Review (2026-09-15)
+
+Das Review über den ganzen Branch fand Mängel in Code, den dieser Plan wörtlich vorgab. Nach
+Entscheidung des Betreibers behebt sie Commit `b95b04d`; die Code-Stellen in Task 2 bis 4 sind
+angeglichen:
+
+- `Order.start_head` kommt nur vom `working`-Event, das `created` beendet (vorher: vom ersten mit gültigem Head).
+- `_COMMIT_RE = [0-9a-f]{7,64}`: Ein Head ist eine Hex-Commit-ID; `HEAD` oder `main` gelten nicht.
+- `worktree_stamp` fängt auch `UnicodeDecodeError`.
+- `PLAN_SLUG_RE = (?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*`: `agent_name` glättet `--` und Bindestriche am Rand, sonst teilten sich `a--b` und `a-b` einen Agent-Namen.
+- `Herdr.pane_run`: Der Docstring nennt die Stichprobe (6 von 6 direkt nach `pane split`); kein Retry.
+- Zusätzliche Tests: `test_start_head_is_pinned_to_the_event_that_ends_the_created_state`,
+  `test_undecodable_wt_output_is_a_wt_error_too`, `test_main_stamps_start_and_done_with_the_real_worktree`,
+  `test_main_stamps_start_and_done_even_on_a_wt_error`; `test_a_head_that_is_no_commit_id_is_no_head`
+  parametrisiert (`--output=/tmp/x`, `HEAD~1`, `HEAD`, `main`); `test_plan_flag_problem` mit fünf
+  weiteren Slug-Fällen (23 statt 18).
+
 @phase "task-1"
 ## Task 1: Messungen — `wt step diff <sha>`, `wt list --format=json`, `PATH` im Pane
 
@@ -151,7 +168,7 @@ Create `tests/test_ordercmd.py`.
 
     # lean_herdr/orders.py
     PLAN_STEPS = ("plan", "plan-review", "implement", "review")
-    PLAN_SLUG_RE = re.compile(r"[a-z][a-z0-9-]{0,11}")
+    PLAN_SLUG_RE = re.compile(r"(?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
     PLAN_TASK_RE = re.compile(r"[1-9][0-9]*")
     Order.plan: str | None; Order.step: str | None; Order.plan_task: str | None; Order.spec: str | None
     # lean_herdr/ordercmd.py
@@ -167,7 +184,7 @@ Regeln von `plan_flag_problem` (Rückgabe wörtlich):
 |---|---|
 | alle vier `None` | `None` |
 | nur eins von `plan`/`step` | `--plan and --step go together` |
-| Slug verfehlt das Muster | `--plan '<slug>' is no plan slug ([a-z][a-z0-9-]{0,11})` |
+| Slug verfehlt `PLAN_SLUG_RE` (höchstens 12 Zeichen, einzelne Bindestriche zwischen `[a-z0-9]`-Gruppen) | `--plan '<slug>' is no plan slug (<PLAN_SLUG_RE.pattern>)` |
 | unbekannter Schritt | `--step '<step>' is none of plan, plan-review, implement, review` |
 | `implement`/`review` ohne `plan_task` | `--step <step> needs --plan-task` |
 | `plan_task` weder `branch` noch eine Zahl ≥ 1 ohne führende Null (`PLAN_TASK_RE`) | `--plan-task '<wert>' is neither a task number nor branch` |
@@ -197,7 +214,7 @@ Regeln von `plan_flag_problem` (Rückgabe wörtlich):
 
     ROOT = Path("/repo")
     WORKER = "builder-plan-shop"
-    SLUG = "[a-z][a-z0-9-]{0,11}"
+    SLUG = r"(?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
 
 
     @pytest.mark.parametrize(
@@ -212,6 +229,11 @@ Regeln von `plan_flag_problem` (Rückgabe wörtlich):
             ((None, "implement", "3", None), "--plan and --step go together"),
             (("Shop", "plan", None, "s.md"), f"--plan 'Shop' is no plan slug ({SLUG})"),
             (("a-slug-far-too-long", "plan", None, "s.md"), f"--plan 'a-slug-far-too-long' is no plan slug ({SLUG})"),
+            (("a--b", "plan", None, "s.md"), f"--plan 'a--b' is no plan slug ({SLUG})"),
+            (("shop-", "plan", None, "s.md"), f"--plan 'shop-' is no plan slug ({SLUG})"),
+            (("a-b", "plan", None, "s.md"), None),
+            (("abcdefghijkl", "plan", None, "s.md"), None),
+            (("abcdefghijklm", "plan", None, "s.md"), f"--plan 'abcdefghijklm' is no plan slug ({SLUG})"),
             (("shop", "merge", None, None), "--step 'merge' is none of plan, plan-review, implement, review"),
             (("shop", "implement", None, None), "--step implement needs --plan-task"),
             (("shop", "review", "0", None), "--plan-task '0' is neither a task number nor branch"),
@@ -313,8 +335,12 @@ Expected: FAIL — `ImportError: cannot import name 'plan_flag_problem'` beim Sa
       PLAN_STEPS = ("plan", "plan-review", "implement", "review")
 
       #: A plan slug. `plan/<slug>` is the branch, and the longest agent name built on it,
-      #: `plan-reviewer-plan-<slug>`, has to stay within herdr's 32 characters.
-      PLAN_SLUG_RE = re.compile(r"[a-z][a-z0-9-]{0,11}")
+      #: `plan-reviewer-plan-<slug>`, has to stay within herdr's 32 characters -- hence the
+      #: 12-character bound. Single hyphens only, never a run of them nor one at either
+      #: end: `agent_name()` squashes runs of `-` and strips them at the ends, so `a--b`
+      #: and `a-b` (or `shop-` and `shop`) would name the very same agent, and a dispatch
+      #: for one plan would `/clear` and reuse the other plan's running agent.
+      PLAN_SLUG_RE = re.compile(r"(?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
       #: A task number on an order: decimal, no leading zero. `str.isdigit` lets "²" through,
       #: and `int("²")` raises.
@@ -487,7 +513,7 @@ Expected: PASS — `test_the_plan_fields_are_kept_as_given`, `test_plan_flag_pro
         # {"head": "<sha>", "changes": ["modified", …]}  oder  {"wt_error": "<grund>"}
     def report(agent, command, task_id, message, *, orders_dir, stamper: Callable[[], Mapping[str, Any]] | None = None) -> dict[str, Any]
     # lean_herdr/orders.py
-    Order.start_head: str | None      # head des ersten `working`-Events
+    Order.start_head: str | None      # head des working-Events, das `created` beendet; sonst None
     Order.done_head: str | None       # head des `completed`-Events
     Order.done_changes: tuple[str, ...] | None   # None = unbekannt (kein Stempel, wt_error)
 
@@ -501,15 +527,15 @@ Expected: PASS — `test_the_plan_fields_are_kept_as_given`, `test_plan_flag_pro
         order = fold(
             [
                 created(),
-                event("working", seq=2, head="aaa111", changes=[]),
+                event("working", seq=2, head="aaa1111", changes=[]),
                 event("input-required", seq=3, message="which?"),
                 event("answered", ORCH, 4, message="this"),
-                event("working", seq=5, head="bbb222", changes=[]),
-                event("completed", seq=6, message="done", head="ccc333", changes=["modified"]),
+                event("working", seq=5, head="bbb2222", changes=[]),
+                event("completed", seq=6, message="done", head="ccc3333", changes=["modified"]),
             ]
         )
-        assert order.start_head == "aaa111", "the first start is the task's base"
-        assert order.done_head == "ccc333"
+        assert order.start_head == "aaa1111", "the first start is the task's base"
+        assert order.done_head == "ccc3333"
         assert order.done_changes == ("modified",)
 
 
@@ -607,19 +633,23 @@ Expected: FAIL — `ImportError: cannot import name 'worktree_stamp'` beim Samme
 
 - In `Order` nach `spec: str | None = None`:
 
-      #: `head` of the first `working` event (`report start`), and `head` and `changes` of
-      #: the `completed` event (`report done`). `done_changes` None: nothing is known --
-      #: no stamp, or a `wt_error` instead of one.
+      #: `head` of the first `working` event -- the one that moves the order out of
+      #: `created` -- None when that event carried none (or no commit id). `head` and
+      #: `changes` of the `completed` event (`report done`) follow the same rule for
+      #: `done_head`; `done_changes` None: nothing is known -- no stamp, or a `wt_error`
+      #: instead of one.
       start_head: str | None = None
       done_head: str | None = None
       done_changes: tuple[str, ...] | None = None
 
 - Nach `_text` einfügen:
 
-      #: A head as `wt list` stamps it. Letters and digits only: the value reaches
+      #: A head as `wt list` stamps it: an abbreviated or full SHA-1/SHA-256 commit id,
+      #: lowercase hex only, the way `wt list` prints it -- a ref name such as `HEAD` or
+      #: `main` is not a head, because those move. Hex-only also keeps the value safe at
       #: `git show <head>:…`, `git log <head>..HEAD` and `wt step diff <head>`, where a
       #: leading `-` would read as an option.
-      _COMMIT_RE = re.compile(r"[0-9A-Za-z]{1,64}")
+      _COMMIT_RE = re.compile(r"[0-9a-f]{7,64}")
 
 
       def _commit(value: Any) -> str | None:
@@ -630,7 +660,7 @@ Expected: FAIL — `ImportError: cannot import name 'worktree_stamp'` beim Samme
   von `_apply` ersetzen durch:
 
       start_head = order.start_head
-      if event.kind == "working" and start_head is None:
+      if event.kind == "working" and order.state == "created":
           start_head = _commit(event.payload.get("head"))
       done_head, done_changes = order.done_head, order.done_changes
       if event.kind == "completed":
@@ -683,7 +713,7 @@ Expected: FAIL — `ImportError: cannot import name 'worktree_stamp'` beim Samme
                   timeout=WT_TIMEOUT_S,
                   check=False,
               )
-          except (OSError, subprocess.SubprocessError) as exc:
+          except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
               return {"wt_error": f"wt list failed: {exc}"}
           if proc.returncode != 0:
               return {"wt_error": f"wt list exited {proc.returncode}: {(proc.stderr or '').strip()}"}
@@ -856,10 +886,11 @@ genau 32 Zeichen und ohne bin-Verzeichnis sind schon vorher grün.
       def pane_run(self, pane: str, command: str) -> bool:
           """`herdr pane run <PANE_ID> <COMMAND>`: one line typed into the pane's shell.
 
-          True when Herdr took it. On success it prints nothing (measured
-          2026-09-15: exit 0, empty stdout), so `run()`'s `{}` cannot tell
-          success from failure here -- the exit code is the answer. The pane id
-          is positional, as with `send-keys`.
+          True when Herdr took it. On success it prints nothing, so `run()`'s `{}`
+          cannot tell success from failure here -- the exit code is the answer.
+          Measured 2026-09-15, 6 of 6 runs right after `pane split`: exit 0, empty
+          stdout, never refused -- unlike `agent start`, no retry. The pane id is
+          positional, as with `send-keys`.
           """
           return self._run("pane", "run", pane, command)[1] == 0
 
