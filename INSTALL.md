@@ -42,8 +42,13 @@ Plus one approval in worktrunk. Without it `wt` skips the project hooks from
 `.config/wt.toml` **silently** and reports success — the pre-merge test gate
 would then not run at all:
 
-    wt config approvals list   # expectation: "state": "approved"
-    wt config approvals add    # if "approval_required"
+    wt config approvals list         # expectation: "state": "approved"
+    wt config approvals add          # if "approval_required"
+    wt config approvals add --yes    # the same without a terminal: an agent, CI
+
+Without a terminal `wt config approvals add` refuses with `Cannot prompt for approval in
+non-interactive environment`; `--yes` grants it there. Either way the approval covers the hooks
+of this project's `.config/wt.toml` -- read them before you grant it.
 
 `lean-herdr workspace init --update` brings the permissions for plan runs into
 `opencode.jsonc` and `.claude/settings.json`: `lean-herdr plan brief | check | next | show`
@@ -123,7 +128,8 @@ It also runs `lean-md skill install` again for `lmd-writing-plans` and `lmd-brai
 lean-md refreshes only the seeds nobody edited. Commit what it changed, on `main`.
 
 If that rewrote `.config/wt.toml`, the changed gate command needs a fresh
-`wt config approvals add` -- until then worktrunk skips it silently.
+`wt config approvals add` (`--yes` without a terminal) -- until then worktrunk
+skips it silently.
 
 `workspace check` also names what shadows the snapshot: an activated venv
 whose `bin/` comes first on the PATH -- this repository's own `.venv`

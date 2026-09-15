@@ -36,10 +36,11 @@ One task, start to finish:
    the builder into a second round before any reviewer is built -- it can
    reject, never approve.
 5. The reviewer runs on the same branch (`--work review`). On `result` the orchestrator
-   squashes, closes the worktree's workspace and merges into `main` with
-   `wt merge`, whose pre-merge gate runs the project's test and lint
-   commands. The commit message comes from `lean-herdr llm generate`.
-   Pushing stays with you.
+   squashes and merges into `main` with `wt merge --no-remove`, whose pre-merge gate runs
+   the project's test and lint commands. Only then does it close the worktree's workspace,
+   and only after that does `wt remove` take the worktree -- no pane ever loses its
+   directory, and a merge that fails leaves the workspace open for you to look at. The
+   commit message comes from `lean-herdr llm generate`. Pushing stays with you.
 6. Once the branch is done, one or two sentences about it go into lean-ctx's
    project memory (`lean-herdr dispatch remember`).
 
@@ -61,11 +62,26 @@ A spec becomes a plan, and the plan runs task by task, serially, on one branch `
 4. Per task: `implement` on the work its `route` names, then `review` of exactly that task's
    change -- `wt step diff` from the head the task started on.
 5. A review of the whole branch, then the merge into `main`, without a squash: every task
-   commit passed its own review.
+   commit passed its own review. The teardown keeps the same order: merge, close the
+   workspace, remove the worktree.
 
 `lean-herdr plan next <slug>` names each step from the order log, so the orchestrator counts
 nothing. Two failed checks or two rejections in a row end in an escalation. Every worker
 fetches its brief with `lean-herdr plan brief --task o-…`.
+
+### Dialogs in worker panes
+
+A worker waits for nobody at the keyboard. Claude Code asks whether to trust a folder the
+first time it starts in a repository, and every worktree inherits the answer given for the
+repository root -- so `lean-herdr workspace init --trust-claude` gives that answer once, up
+front (see [Setting up a project](#setting-up-a-project)).
+
+Any other dialog -- a permission, a login -- is reported, never answered. At the start
+`dispatch` answers `{"ok": false, "error": "agent_blocked", "pane": …, "dialog": "<screen text>"}`;
+while it waits, `dispatch --await` answers `agent_blocked` in the round the dialog appears in,
+instead of `no_reply` after the timeout. The orchestrator escalates it with the dialog's text
+and sends no key into a worker's pane: of `herdr` it may run `worktree list`,
+`workspace close` and `workspace report-metadata`, and nothing else.
 
 ## The work-order path
 
@@ -226,6 +242,17 @@ Without the flags the gate is `uv run pytest` and `uv run ruff check`. A value
 is a whole command of letters, digits, spaces and `._/=+,@-`; how far it opens
 the builder's gate is your call.
 
+A claude worker stops at Claude Code's folder-trust dialog unless Claude Code trusts the
+repository root, and every worktree of the repository inherits that trust. Grant it once, as
+you would by answering "Yes, I trust this folder" in the root:
+
+    lean-herdr workspace init --trust-claude
+
+It sets exactly one key, `projects.<root>.hasTrustDialogAccepted`, in `~/.claude.json`
+(`$CLAUDE_CONFIG_DIR/.claude.json` when the variable is set), and reports `claude_trust`:
+`written`, `already`, or `failed: …` as a warning. It never creates that file, and nothing
+else in lean-herdr writes to it.
+
 A claude worker also gets `--settings .lean-ctx/lean-herdr/claude/<role>.json`
 beside `.claude/settings.json`. Claude Code merges the permission lists of
 every source and a `deny` beats every `allow`, so a role file can only
@@ -233,8 +260,9 @@ narrow: `builder.json` and `plan-writer.json` deny `git push`, `wt merge` and
 `wt step push`; `reviewer.json` and `plan-reviewer.json` take back the editors,
 `git add`, `git commit`, `wt step commit` and lean-ctx's three write tools and deny
 the same three; `orchestrator.json` takes back the editors and lean-ctx's three
-write tools too, leaving Bash open for `lean-herdr dispatch`, `lean-herdr plan`,
-`herdr` and `wt`.
+write tools too and denies `herdr agent` and `herdr pane` -- the orchestrator sends no
+key into a worker's pane -- leaving Bash open for `lean-herdr dispatch`,
+`lean-herdr plan`, the rest of `herdr` and `wt`.
 An opencode worker gets the same per role from its block in
 `opencode.jsonc`. `dispatch` refuses a role whose prompt, opencode block or
 claude file is missing, before it opens a worktree or a pane.
@@ -265,6 +293,13 @@ generator and the ignore rules.
 For plan runs it also names a lean-md without `outline --json`, a missing lean-md gateway
 entry or skills directory, a missing `lmd-writing-plans` stub, a missing `ty`, and every file
 `init` or lean-md wrote that is not committed.
+
+In a Python project -- one with `pyproject.toml` -- it names a `__pycache__/` git does not
+ignore: every test run leaves bytecode in the worktree, and an untracked file stops
+`wt merge --no-commit` and `wt remove`. `init` writes no ignore rule; the warning carries the
+line to add. It also names every worker role without a `model`, for which `dispatch` builds
+nothing, and -- as soon as a role runs on claude -- a root Claude Code does not trust
+(`claude does not trust <root>`), with the `--trust-claude` line that grants it.
 
 It also spends one aborted opencode bootstrap in the project, up to eight
 seconds. opencode's first bootstrap in a project that carries a project
