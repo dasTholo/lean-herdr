@@ -278,6 +278,33 @@ def _check_temp_ignored(root: Path, runner: Any) -> str | None:
     return None
 
 
+#: The ignore rule a Python project needs before a worker's test run leaves bytecode in its
+#: worktree. `git check-ignore` matches patterns, so the probe needs no directory on disk (M4).
+PYCACHE_IGNORE = "__pycache__/"
+PYCACHE_PROBE = "__pycache__/lean-herdr.probe"
+
+
+def _check_pycache_ignored(root: Path, runner: Any) -> str | None:
+    """A Python project whose git does not ignore `__pycache__/`.
+
+    Every test run in a worker's worktree leaves bytecode behind, and both
+    `wt merge --no-commit` and `wt remove` stop at an untracked file. Asked
+    only where `pyproject.toml` marks the root as a Python project, and judged
+    by the exit code like `_check_temp_ignored`. The rule stays the operator's
+    to add: `init` writes none.
+    """
+    if not (root / "pyproject.toml").is_file():
+        return None
+    proc = _run(runner, "git", "check-ignore", "-v", PYCACHE_PROBE, cwd=root)
+    if proc is None or proc.returncode != 1:
+        return None
+    return (
+        f"git does not ignore {PYCACHE_IGNORE} (probed with {PYCACHE_PROBE}) -- every test run "
+        "leaves bytecode there, and untracked files stop `wt merge --no-commit` and `wt remove`. "
+        f"Add to .gitignore: {PYCACHE_IGNORE}"
+    )
+
+
 def _dig(data: Any, *keys: str) -> Any:
     """`data[k1][k2]...`, or None as soon as a level is not a dict."""
     for key in keys:
@@ -476,6 +503,8 @@ def machine_report(
             _check_overlay_ignored(root, runner) if overlay_auto else None,
             # NOT guarded: the template lock is written in every project.
             _check_temp_ignored(root, runner),
+            # Only a Python project asks, and `init` still writes no rule (E5).
+            _check_pycache_ignored(root, runner),
             _check_temp_leftovers(root),
         ]
     found.extend(line for line in checks if line is not None)
@@ -549,7 +578,8 @@ def _role_warnings(root: Path, data: dict[str, Any]) -> list[str]:
             lines.append(misrouted)
             continue
         prompt = role_prompt_path(root, role)
-        kind = settings_for(role, data).kind
+        role_settings = settings_for(role, data)
+        kind = role_settings.kind
         if not prompt.is_file():
             problem = role_problem(root, role, kind or "", prompt)
             lines.append(f"{problem} -- `dispatch --work {work}` fails")
@@ -563,6 +593,10 @@ def _role_warnings(root: Path, data: dict[str, Any]) -> list[str]:
                 lines.append(f"{problem} -- `dispatch --work {work}` fails")
         if role == "orchestrator":
             continue
+        if not role_settings.model:
+            # `dispatch` builds no worker without one (`usage_error: build mode needs
+            # --model`); `[default].model` counts, settings_for lays it under the role.
+            lines.append(f"[roles.{role}].model unset: `dispatch --work {work}` needs --model")
         try:
             text = " ".join(prompt.read_text(encoding="utf-8").split())
         except (OSError, UnicodeDecodeError) as exc:

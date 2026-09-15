@@ -12,6 +12,8 @@ import pytest
 from lean_herdr import checkcmd
 from lean_herdr.bus import BusError, GitUnusable
 from lean_herdr.checkcmd import (
+    PYCACHE_IGNORE,
+    PYCACHE_PROBE,
     TEMP_IGNORE,
     TEMP_PROBE,
     _check_allowlist,
@@ -19,6 +21,7 @@ from lean_herdr.checkcmd import (
     _check_generator,
     _check_overlay_ignored,
     _check_plugins,
+    _check_pycache_ignored,
     _check_temp_ignored,
     _check_temp_leftovers,
     _linked_plugin,
@@ -177,6 +180,70 @@ def test_the_temp_check_probes_the_lock_writer_as_well(monkeypatch, repo, rule, 
     assert (line is not None) is warned, line
     if warned:
         assert line is not None and ".tmp-templates.lock.json" in line
+
+
+def _python_project(repo: Path) -> None:
+    (repo / "pyproject.toml").write_text('[project]\nname = "probe"\n', encoding="utf-8")
+
+
+def test_the_pycache_check_asks_git_about_a_probe_name(monkeypatch, repo):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    _python_project(repo)
+    named = FakeProc(replies={("check-ignore",): f".gitignore:2:{PYCACHE_IGNORE}\t{PYCACHE_PROBE}"})
+    assert _check_pycache_ignored(repo, named) is None
+    assert named.called_with("check-ignore", "-v", PYCACHE_PROBE)
+    silent = FakeProc(replies={("check-ignore",): Completed(returncode=1)})
+    assert _check_pycache_ignored(repo, silent) == (
+        "git does not ignore __pycache__/ (probed with __pycache__/lean-herdr.probe) -- every test "
+        "run leaves bytecode there, and untracked files stop `wt merge --no-commit` and "
+        "`wt remove`. Add to .gitignore: __pycache__/"
+    )
+
+
+def test_without_pyproject_there_is_no_pycache_question(monkeypatch, repo):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    proc = FakeProc(replies={("check-ignore",): Completed(returncode=1)})
+    assert _check_pycache_ignored(repo, proc) is None
+    assert not proc.called_with("check-ignore"), proc.flat()
+
+
+def test_a_pycache_check_git_cannot_answer_gives_no_verdict(monkeypatch, repo):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    _python_project(repo)
+    fatal = Completed(returncode=128, stderr="fatal: not a git repository\n")
+    assert _check_pycache_ignored(repo, FakeProc(replies={("check-ignore",): fatal})) is None
+    monkeypatch.setattr("shutil.which", lambda binary: None if binary == "git" else "/usr/bin/fake")
+    assert _check_pycache_ignored(repo, FakeProc(default="")) is None
+
+
+@pytest.mark.parametrize(
+    ("gitignore", "warned"),
+    [pytest.param("", True, id="no rule"), pytest.param("__pycache__/\n", False, id="rule")],
+)
+def test_the_pycache_rule_covers_the_probe_with_no_directory_on_disk(
+    monkeypatch, repo, gitignore, warned
+):
+    """Real git, with the operator's own excludes kept out (M4)."""
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(repo / "no-config"))
+    _python_project(repo)
+    (repo / ".gitignore").write_text(gitignore, encoding="utf-8")
+    line = _check_pycache_ignored(repo, subprocess.run)
+    assert (line is not None) is warned, line
+
+
+def test_workspace_check_names_an_unignored_pycache_in_a_python_project(
+    monkeypatch, repo, snapshot
+):
+    initialised(monkeypatch, repo)
+    _python_project(repo)
+    proc = FakeProc(
+        replies={("check-ignore", "-v", PYCACHE_PROBE): Completed(returncode=1)},
+        default=Completed(),
+    )
+    warnings = workspace_check(root=repo, runner=proc)["warnings"]
+    assert any(w.startswith(f"git does not ignore {PYCACHE_IGNORE}") for w in warnings), warnings
 
 
 #: A child that answers with a byte no codec takes.
@@ -466,12 +533,16 @@ def test_an_initialised_project_on_a_healthy_machine_is_ok_and_all_current(
     answer = workspace_check(root=repo, runner=healthy_machine())
     assert answer["ok"] is True, answer
     assert answer["errors"] == []
-    # After `init` no worker has a kind -- the normal case, and check names it.
+    # After `init` no worker has a kind or a model -- the normal case, and check names both.
     assert answer["warnings"] == [
         _kind_unset("builder", "implement"),
+        _model_unset("builder", "implement"),
         _kind_unset("plan-writer", "plan"),
+        _model_unset("plan-writer", "plan"),
         _kind_unset("plan-reviewer", "plan-review"),
+        _model_unset("plan-reviewer", "plan-review"),
         _kind_unset("reviewer", "review"),
+        _model_unset("reviewer", "review"),
     ]
     assert answer["root"] == str(repo)
     assert answer["templates"] == {relative: "current" for relative in LAYOUT.values()}
@@ -641,6 +712,31 @@ def test_only_the_overlay_ignored_names_the_temp_line_whatever_auto_says(
 
 def _kind_unset(role: str, work: str) -> str:
     return f"[roles.{role}].kind unset: `dispatch --work {work}` needs --kind"
+
+
+def _model_unset(role: str, work: str) -> str:
+    return f"[roles.{role}].model unset: `dispatch --work {work}` needs --model"
+
+
+def test_a_worker_with_a_model_is_not_named_and_default_counts(monkeypatch, repo, snapshot):
+    """`[default].model` reaches every role through settings_for -- no line for any of them."""
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text(
+        '[default]\nmodel = "cheap"\n\n[roles.builder]\nmodel = "strong"\n', encoding="utf-8"
+    )
+    warnings = workspace_check(root=repo)["warnings"]
+    assert not any(".model unset" in w for w in warnings), warnings
+
+
+def test_the_orchestrator_is_never_named_for_a_missing_model(monkeypatch, repo, snapshot):
+    """`workspace up` starts the orchestrator without a model -- a work routed to it gets no line."""
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text('[routing]\nsteer = "orchestrator"\n', encoding="utf-8")
+    warnings = workspace_check(root=repo)["warnings"]
+    assert _model_unset("orchestrator", "steer") not in warnings, warnings
+    assert _model_unset("builder", "implement") in warnings, warnings
 
 
 #: A work of the project's own, routed to a role `init` never wrote.
