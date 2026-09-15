@@ -2081,8 +2081,11 @@ Run: `lean-herdr workspace check` (außerhalb eines Repositorys) — Expected: k
 
 ### Schritt 3 — Wegwerf-Repository
 
-1. `mkdir -p ~/Scripts/lh-plan-probe`; darin `git init -q`, `uv init --package --name probe`,
+1. `mkdir -p ~/Scripts/lh-plan-probe`; darin zuerst `uv init --package --name probe`, danach `git init -q`,
    `uv add --dev pytest ruff ty`; `git add -A`, `git commit -m "chore: empty probe project"`.
+   Die Reihenfolge ist Pflicht: Nur `uv init` in einem Verzeichnis ohne Git-Repository legt das Repository
+   samt `.gitignore` an. Andersherum fehlt `__pycache__/` in den Ignore-Regeln, ungetrackte Bytecode-Verzeichnisse
+   liegen im Worktree von `plan/<slug>`, und `wt merge --no-commit` verweigert den Merge.
 2. Darin: `lean-herdr workspace init` — Expected: `"ok": true`, `lean_md.error` ist `null`,
    `lean_md.installed` nennt beide Skills.
 3. In `.lean-ctx/lean-herdr/config.toml` für `orchestrator`, `builder`, `reviewer`, `plan-writer`
