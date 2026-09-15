@@ -732,7 +732,8 @@ def test_up_refuses_force_rather_than_ignoring_it(capsys):
     assert answer["error"] == "usage_error: up does not take --force"
 
 
-@pytest.mark.parametrize(
+#: Every flag only `init` takes -- `up` and `check` each refuse all of them.
+INIT_FLAGS = pytest.mark.parametrize(
     "flags",
     [
         ["--update"],
@@ -743,12 +744,28 @@ def test_up_refuses_force_rather_than_ignoring_it(capsys):
     ],
     ids=["update", "test", "lint", "lang", "trust-claude"],
 )
+
+
+@INIT_FLAGS
 def test_up_refuses_every_init_flag(capsys, flags):
     """Swallowed, an init flag on `up` would look like it did something."""
     assert workspace.main(["up", *flags]) == 0
     answer = json.loads(capsys.readouterr().out)
     assert answer["ok"] is False
     assert answer["error"] == f"usage_error: up does not take {flags[0]}"
+
+
+@INIT_FLAGS
+def test_check_refuses_every_init_flag(monkeypatch, capsys, flags):
+    """Swallowed, an init flag on `check` would look like it did something."""
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("check ran with an init flag")
+
+    monkeypatch.setattr("lean_herdr.checkcmd.workspace_check", refuse)
+    assert workspace.main(["check", *flags]) == 0
+    answer = json.loads(capsys.readouterr().out)
+    assert answer == {"ok": False, "error": f"usage_error: check does not take {flags[0]}"}
 
 
 @pytest.mark.parametrize("command", ["check", "up"])

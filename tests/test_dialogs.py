@@ -146,6 +146,11 @@ def test_a_symlinked_state_stays_a_link_and_its_target_holds_the_key(root, tmp_p
     assert sorted(p.name for p in target.parent.iterdir()) == [CLAUDE_STATE_FILE]
 
 
+def test_the_suite_never_points_at_this_machines_claude_state():
+    """tests/conftest.py moves CLAUDE_CONFIG_DIR for every test, in every module."""
+    assert claude_state_path() != Path.home() / CLAUDE_STATE_FILE
+
+
 @pytest.fixture
 def herdr(monkeypatch) -> tuple[Herdr, FakeProc]:
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))

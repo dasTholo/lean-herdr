@@ -47,12 +47,6 @@ def no_user_lean_ctx_config(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("LEAN_CTX_CONFIG_DIR", str(tmp_path_factory.mktemp("no-lean-ctx")))
 
 
-@pytest.fixture(autouse=True)
-def no_user_claude_state(monkeypatch, tmp_path_factory):
-    """`workspace check` reads claude's state file -- never this machine's own in here."""
-    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("no-claude")))
-
-
 def test_the_allowlist_check_answers_a_line_only_when_the_name_is_missing(monkeypatch):
     monkeypatch.setattr("shutil.which", which_stub(True))
     granted = FakeProc(replies={("allow", "--list"): "Extra (additive): lean-herdr"})
@@ -912,7 +906,7 @@ def test_without_a_claude_role_trust_is_not_asked(monkeypatch, repo, snapshot, t
 
 
 def test_a_claude_state_nobody_can_read_gives_no_verdict(monkeypatch, repo, snapshot):
-    """The autouse CLAUDE_CONFIG_DIR holds no state file at all."""
+    """The suite-wide CLAUDE_CONFIG_DIR (tests/conftest.py) holds no state file at all."""
     initialised(monkeypatch, repo)
     monkeypatch.setattr("shutil.which", which_stub(False))
     (repo / SETTINGS_PATH).write_text(CLAUDE_BUILDER, encoding="utf-8")
