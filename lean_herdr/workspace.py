@@ -373,6 +373,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="init: the pre-merge lint command, and the builder's permission for it",
     )
+    p.add_argument(
+        "--lang",
+        default=None,
+        help="init: the language of the plan files init writes (python)",
+    )
     return p
 
 
@@ -383,6 +388,7 @@ def _init_flags(args: argparse.Namespace) -> str:
         ("--update", args.update),
         ("--test", args.test),
         ("--lint", args.lint),
+        ("--lang", args.lang),
     )
     # Given is not truthy: `--test ""` is a flag on the command line all the same.
     return " and ".join(flag for flag, value in given if value not in (None, False))
@@ -417,7 +423,7 @@ def main(argv: list[str] | None = None) -> int:
             from lean_herdr.initcmd import workspace_init
 
             result = workspace_init(
-                force=args.force, update=args.update, test=args.test, lint=args.lint
+                force=args.force, update=args.update, test=args.test, lint=args.lint, lang=args.lang
             )
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}

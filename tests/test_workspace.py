@@ -675,13 +675,21 @@ def test_main_routes_init_and_hands_every_flag_on(monkeypatch, capsys):
     assert (
         workspace.main(["init", "--update", "--test", "cargo test", "--lint", "cargo clippy"]) == 0
     )
+    assert workspace.main(["init", "--lang", "python"]) == 0
     assert seen == [
-        {"force": False, "update": False, "test": None, "lint": None},
-        {"force": True, "update": False, "test": None, "lint": None},
-        {"force": False, "update": True, "test": "cargo test", "lint": "cargo clippy"},
+        {"force": False, "update": False, "test": None, "lint": None, "lang": None},
+        {"force": True, "update": False, "test": None, "lint": None, "lang": None},
+        {
+            "force": False,
+            "update": True,
+            "test": "cargo test",
+            "lint": "cargo clippy",
+            "lang": None,
+        },
+        {"force": False, "update": False, "test": None, "lint": None, "lang": "python"},
     ]
     lines = capsys.readouterr().out.strip().splitlines()
-    assert len(lines) == 3 and all(json.loads(line)["ok"] for line in lines)
+    assert len(lines) == 4 and all(json.loads(line)["ok"] for line in lines)
 
 
 def test_up_refuses_force_rather_than_ignoring_it(capsys):
@@ -694,8 +702,8 @@ def test_up_refuses_force_rather_than_ignoring_it(capsys):
 
 @pytest.mark.parametrize(
     "flags",
-    [["--update"], ["--test", "cargo test"], ["--lint", "cargo clippy"]],
-    ids=["update", "test", "lint"],
+    [["--update"], ["--test", "cargo test"], ["--lint", "cargo clippy"], ["--lang", "python"]],
+    ids=["update", "test", "lint", "lang"],
 )
 def test_up_refuses_every_init_flag(capsys, flags):
     """Swallowed, an init flag on `up` would look like it did something."""

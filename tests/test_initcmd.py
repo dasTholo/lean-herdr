@@ -741,3 +741,63 @@ def test_init_names_the_generator_through_the_producer_check_uses(monkeypatch, r
     no_generator = FakeProc(replies={("config", "show"): '{"user": {"config": null}}'})
     warnings = workspace_init(root=repo, runner=no_generator)["warnings"]
     assert any("commit.generation.command" in w for w in warnings), warnings
+
+
+def test_init_installs_the_lean_md_skills_locally(monkeypatch, repo):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    proc = FakeProc(default="")
+    answer = workspace_init(root=repo, runner=proc)
+    assert answer["lean_md"] == {
+        "installed": ["lmd-writing-plans", "lmd-brainstorm"],
+        "error": None,
+    }
+    assert [c for c in proc.calls if c[:3] == ["lean-md", "skill", "install"]] == [
+        ["lean-md", "skill", "install", "lmd-writing-plans", "--local"],
+        ["lean-md", "skill", "install", "lmd-brainstorm", "--local"],
+    ]
+
+
+def test_an_installed_skill_is_installed_again_only_on_update(monkeypatch, repo):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    for skill in ("lmd-writing-plans", "lmd-brainstorm"):
+        stub = repo / ".claude" / "skills" / skill / "SKILL.md"
+        stub.parent.mkdir(parents=True)
+        stub.write_text("stub\n", encoding="utf-8")
+    assert workspace_init(root=repo, runner=FakeProc(default=""))["lean_md"] == {
+        "installed": [],
+        "error": None,
+    }
+    answer = workspace_init(root=repo, update=True, runner=FakeProc(default=""))
+    assert answer["lean_md"]["installed"] == ["lmd-writing-plans", "lmd-brainstorm"]
+
+
+def test_without_lean_md_init_says_so_and_still_writes(monkeypatch, repo):
+    quiet(monkeypatch)
+    answer = workspace_init(root=repo)
+    assert answer["ok"] is True
+    assert answer["written"] == sorted(LAYOUT.values())
+    assert answer["lean_md"] == {
+        "installed": [],
+        "error": "lean-md is not on PATH -- see INSTALL.md",
+    }
+
+
+def test_a_failing_install_names_the_skill_and_stops(monkeypatch, repo):
+    monkeypatch.setattr("shutil.which", which_stub(True))
+    refused = Completed(returncode=1, stderr="lean-md skill install: SKILL_FILE_NOT_FOUND\n")
+    proc = FakeProc(replies={("skill", "install", "lmd-writing-plans"): refused}, default="")
+    answer = workspace_init(root=repo, runner=proc)
+    assert answer["lean_md"] == {
+        "installed": [],
+        "error": "lean-md skill install lmd-writing-plans exited 1: lean-md skill install: SKILL_FILE_NOT_FOUND",
+    }
+    assert not proc.called_with("install", "lmd-brainstorm")
+
+
+def test_a_lang_init_does_not_know_is_a_usage_error_and_writes_nothing(monkeypatch, repo):
+    quiet(monkeypatch)
+    assert workspace_init(root=repo, lang="rust") == {
+        "ok": False,
+        "error": "usage_error: --lang 'rust' -- supported: python",
+    }
+    assert not (repo / ".lean-ctx").exists()

@@ -14,9 +14,12 @@ out of `checkcmd.machine_report`, the producer `workspace check` uses too,
 and every foreign command it runs only READS. `init` runs no `lean-ctx
 allow`, no `wt config approvals add` and no `herdr plugin link`: granting a
 machine-wide permission is a gesture that belongs to the human at the
-keyboard. The ONE exception is the warm-up (`_warm_opencode`), and it stays
-inside the rule's intent: it changes nothing on the machine, only opencode's
-own cache for this project, and it is aborted on purpose.
+keyboard. Two exceptions, both inside the rule's intent. The warm-up
+(`_warm_opencode`) changes nothing on the machine, only opencode's own cache for
+this project, and it is aborted on purpose. `lean-md skill install`
+(`_install_lean_md`) writes into this project alone -- skill stubs under
+`.claude/skills/` and lean-md's seeds under `.lean-ctx/lean-md/` -- which is what
+`init` is for.
 """
 
 from __future__ import annotations
@@ -66,6 +69,16 @@ from lean_herdr.workspace import OPENCODE_ORCHESTRATOR
 #: that has to be warmed. Measured 3 of 3 still hanging afterwards.
 WARM_TIMEOUT_S = 8.0
 
+#: The languages `--lang` knows: Python alone in TP2, and the default.
+LANGS = ("python",)
+
+#: The lean-md skills a plan run loads -- the plan writer's, and the brainstorm that
+#: writes the spec. lean-md pulls `lmd-rendering-skills` in with either.
+LEAN_MD_SKILLS = ("lmd-writing-plans", "lmd-brainstorm")
+
+#: `skill install` writes a handful of files; the bound is for a hung binary.
+LEAN_MD_TIMEOUT_S = 60.0
+
 
 def _warm_opencode(root: Path, *, runner: Any) -> bool:
     """One aborted `opencode debug agent` in `root`. True when it ran.
@@ -95,6 +108,47 @@ def _warm_opencode(root: Path, *, runner: Any) -> bool:
     except OSError, subprocess.SubprocessError:
         return False
     return True
+
+
+def _install_lean_md(root: Path, *, refresh: bool, runner: Any) -> dict[str, Any]:
+    """`lean-md skill install <skill> --local` for each skill a plan run needs. Never raises.
+
+    A skill whose stub is there already is left alone, unless `refresh` (--update or
+    --force) asks for every one: lean-md then refreshes only the seeds nobody edited. The
+    first failure ends the run and is reported; the templates are written either way.
+    """
+    report: dict[str, Any] = {"installed": [], "error": None}
+    wanted = [
+        skill
+        for skill in LEAN_MD_SKILLS
+        if refresh or not (root / ".claude" / "skills" / skill / "SKILL.md").is_file()
+    ]
+    if not wanted:
+        return report
+    if shutil.which("lean-md") is None:
+        report["error"] = "lean-md is not on PATH -- see INSTALL.md"
+        return report
+    for skill in wanted:
+        try:
+            proc = runner(
+                ["lean-md", "skill", "install", skill, "--local"],
+                capture_output=True,
+                text=True,
+                errors="replace",
+                timeout=LEAN_MD_TIMEOUT_S,
+                cwd=str(root),
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            report["error"] = f"lean-md skill install {skill}: {exc}"
+            return report
+        if proc.returncode != 0:
+            detail = (proc.stderr or "").strip().splitlines()
+            message = f"lean-md skill install {skill} exited {proc.returncode}"
+            report["error"] = f"{message}: {detail[0]}" if detail else message
+            return report
+        report["installed"].append(skill)
+    return report
 
 
 def _place(root: Path, relative: str, data: bytes, *, force: bool) -> bool:
@@ -180,6 +234,7 @@ def workspace_init(
     update: bool = False,
     test: str | None = None,
     lint: str | None = None,
+    lang: str | None = None,
     runner: Any = subprocess.run,
 ) -> dict[str, Any]:
     """Write the templates into this project, and lock what landed. Never raises.
@@ -203,6 +258,11 @@ def workspace_init(
     """
     if force and update:
         return {"ok": False, "error": "usage_error: --force and --update exclude each other"}
+    if lang is not None and lang not in LANGS:
+        return {
+            "ok": False,
+            "error": f"usage_error: --lang {lang!r} -- supported: {', '.join(LANGS)}",
+        }
     for flag, value in (("--test", test), ("--lint", lint)):
         if value is not None and not VALUE_RE.match(value):
             return {
@@ -261,6 +321,7 @@ def workspace_init(
     # decision. `data` stays `{}` when the file is unreadable -- init has
     # already written its files at this point, and a config we cannot
     # parse is not a reason to lose that report.
+    lean_md = _install_lean_md(base, refresh=update or force, runner=runner)
     warnings: list[str] = []
     try:
         data = read_settings(base / SETTINGS_PATH)
@@ -309,5 +370,6 @@ def workspace_init(
         "values": values,
         "templates": templates,
         "warmed": warmed,
+        "lean_md": lean_md,
         "warnings": warnings,
     }
