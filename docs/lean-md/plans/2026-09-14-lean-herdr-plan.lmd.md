@@ -20,8 +20,8 @@ lean-md-Direktiven, die in einer `.lmd.md`-Datei ausgewertet würden.
 
 ## Voraussetzungen
 
-- TP0: lean-md 0.2.4 mit `outline --json` ist über den Shim installiert (lean-md-Repository,
-  `docs/lean-md/plans/2026-09-14-lmd-outline-json.lmd.md`, danach Tag und lokale Installation).
+- TP0 (erfüllt 2026-09-15): lean-md 0.2.4 mit `outline --json` ist über Shim und Gateway installiert
+  (Tag `v0.2.4` = `3d27803`; Plan im lean-md-Repository `docs/lean-md/plans/2026-09-14-lmd-outline-json.lmd.md`).
   Plan A braucht es nicht, Plan B nur über Doubles, Plan C misst es in Task 1.
 - Jeder Plan beginnt auf einem `main`, auf dem sein Vorgänger gemergt ist.
 

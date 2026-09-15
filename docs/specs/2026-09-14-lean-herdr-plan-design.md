@@ -1,12 +1,12 @@
 # lean-herdr: Planausführung — Teilprojekt 2 „Plan“ — Design v1.0
 
-**Stand:** 2026-09-14 · **Status:** beschlossen, nicht implementiert
+**Stand:** 2026-09-14, TP0-Nachtrag 2026-09-15 · **Status:** beschlossen, nicht implementiert
 **Anlass:** Der Orchestrator soll einen Plan schreiben lassen, ihn prüfen und reviewen lassen
 und ihn danach Task für Task von Agents ausführen lassen. TP1 („Rollen und Routing“) hat die
 Grundlage gelegt; lauffähig ist heute nur die Kette `--work implement` → `--work review` →
 Merge für eine einzelne Aufgabe.
 **Bezug:** `2026-09-14-lean-herdr-rollen-und-routing-design.md` (Teil A Gesamtbild, TP1);
-lean-md `docs/lean-md/specs/2026-09-14-lmd-outline-json-design.md` (TP0, Voraussetzung);
+lean-md `docs/lean-md/specs/2026-09-14-lmd-outline-json-design.md` (TP0, abgeschlossen: Tag `v0.2.4` = `3d27803`);
 lean-md `docs/lean-md/2026-08-31-distributionskanal-entfallen.md`
 **Betrifft:** neu `lean_herdr/plan.py`, `lean_herdr/planrun.py`, `lean_herdr/plancmd.py`;
 geändert `lean_herdr/cli.py`, `dispatch.py`, `llm.py`, `ordercmd.py`, `orders.py`, `report.py`,
@@ -23,7 +23,7 @@ eingecheckten Kopien und Lock; `README.md`, `INSTALL.md`; Tests.
 
 | # | Teilprojekt | Repo | Ergebnis |
 |---|---|---|---|
-| 0 | `lean-md outline --json` | lean-md | Phasen, `@call`s, Makro-Signaturen und Prüfbefunde als JSON; lokal als 0.2.4 installiert |
+| 0 | `lean-md outline --json` | lean-md | Phasen, `@call`s, Makro-Signaturen und Prüfbefunde als JSON; abgeschlossen, über Shim und Gateway installiert (2026-09-15, §2.1) |
 | 1 | **TP2 Plan** (dieses Dokument) | lean-herdr | Plan schreiben, prüfen, reviewen, seriell ausführen |
 | 2 | Anbieterwahl | lean-herdr | Endpoint-Rangliste (Preis nach Rabatt, Durchsatz, Latenz, Uptime) mit Fallback |
 | – | FastAPI-Testlauf | neues Repo unter `~/Scripts` | Abnahme des Gesamtablaufs |
@@ -36,8 +36,8 @@ eingecheckten Kopien und Lock; `README.md`, `INSTALL.md`; Tests.
 - Vor dem Merge läuft ein **Review über den ganzen Branch** (A1 Schritt 7, seriell).
 - Die **Längenprüfung** für Agent-Namen wird vorgezogen; die automatische Kürzung bleibt TP3.
 - Die Plan-Struktur liest lean-herdr über `lean-md outline` (TP0), nicht über einen eigenen
-  Parser. E4 („ohne lean-md-Release“) gilt dafür nicht mehr; ein lokaler Release 0.2.4 ist
-  Voraussetzung.
+  Parser. E4 („ohne lean-md-Release“) gilt dafür nicht mehr; der lokale Release 0.2.4 ist
+  installiert (§2.1).
 
 ### 1.3 Entscheidungen
 
@@ -81,6 +81,19 @@ eingecheckten Kopien und Lock; `README.md`, `INSTALL.md`; Tests.
 | `[lsp]` in projekt-lokaler `.lean-ctx.toml` | wird nicht übernommen (`merge.rs`) |
 | Wrapper `pylsp` → `ty server` im `PATH` | `references` (11 Treffer für `role_for_work`, 0,22 s) und `definition` funktionieren; `symbols_overview` liefert keine Symbole |
 | Produktions-LOC | `dispatch.py` 581, `checkcmd.py` 408, `llm.py` 352, `settings.py` 326, `report.py` 209, `initcmd.py` 169, `ordercmd.py` 100 |
+
+### 2.1 Nachtrag TP0, gemessen am 2026-09-15
+
+| Messung | Ergebnis |
+|---|---|
+| lean-md-Stand | Tag `v0.2.4` = `3d27803`, enthält alle `outline`-Fixes nach dem Prepare-Commit `07caf9f`; Shim und Gateway-`command` in `~/.config/lean-ctx/config.toml` zeigen auf `addons/bin/lean-md/0.2.4/` |
+| `lean-md outline - --json` mit leerem stdin | `{"errors":[],"macros":{},"phases":[]}`, Exit 0 |
+| Befundarten | `unknown_macro`, `arity`, `malformed_call`, `embedded_call`, `duplicate_phase`, `nested_phase`, `unterminated_phase`, `unterminated_define`, `import`, `missing_phase`; `arity` nennt lean-md einen Lint (ein Render füllt fehlende Argumente auf), er steht trotzdem in `errors` und ergibt Exit 1 |
+| Schlüssel `phase` | fehlt bei einem Befund außerhalb jeder Phase; `import` trägt die Phase seines `@import`, `missing_phase` den geforderten Namen (`line` = 0) |
+| `@call` in Liste oder Zitat | fehlt in `calls`; Befund `embedded_call` (Marker nach CommonMark) |
+| eingerücktes `@call` | Text wie beim Rendern: fehlt in `calls`, kein Befund |
+| `@import` im Header (ohne Leerzeile davor) | geprüft wird nur der Body nach dem Header: Makros nicht im Scope, jedes `@call` ergibt `unknown_macro` |
+| alle 15 `.lmd.md`-Dateien unter `docs/lean-md/plans/` | Exit 0, keine Befunde; `2026-09-14-lean-herdr-rollen-und-routing.lmd.md` liefert `task-1` … `task-9` (Abnahme der TP0-Spec §12) |
 
 ## 3. Plan-Format
 
@@ -133,6 +146,10 @@ Spec: docs/specs/<…>-design.md
 | dieselbe Datei in zwei Spuren, die nicht voneinander abhängen | **Warnung** `lane_overlap` |
 | eine Datei aus §4 fehlt am Plan-Commit | `missing_on_branch` |
 | `plan/<slug>` ändert gegenüber `main` etwas unter `.lean-ctx/lean-md/` oder `.lean-ctx/lean-herdr/briefs/` | `branch_touches_tooling` |
+
+Jeder Befund von `lean-md outline` (§2.1) ist ein Fehler, `arity` eingeschlossen. Ein `route` in
+einer Liste, einem Zitat oder eingerückt zählt nicht als Aufruf: `no_route`, bei Liste oder Zitat
+zusätzlich `embedded_call`.
 
 ## 4. Ausgelieferte Dateien und lean-md-Einrichtung
 
