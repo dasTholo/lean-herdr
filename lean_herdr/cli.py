@@ -1,7 +1,7 @@
-"""One binary, six verbs: `lean-herdr dispatch | llm | models | plugin | report | workspace`.
+"""One binary, seven verbs: `lean-herdr dispatch | llm | models | plan | plugin | report | workspace`.
 
 A router, nothing more. Every verb hands off to a `main(argv) -> int` that
-already exists and already keeps its own contract. Four keep the house
+already exists and already keeps its own contract. Five keep the house
 contract: one JSON line on stdout, `ok` as the only truth, exit ALWAYS 0. Two
 do not, on purpose, because nobody reading JSON calls them:
 
@@ -36,6 +36,7 @@ VERBS = {
     "dispatch": "lean_herdr.dispatch",
     "llm": "lean_herdr.llm",
     "models": "lean_herdr.catalog",
+    "plan": "lean_herdr.plancmd",
     "plugin": "lean_herdr.__main__",
     "report": "lean_herdr.report",
     "workspace": "lean_herdr.workspace",
@@ -47,8 +48,8 @@ VERBS = {
 PLAIN_VERBS = {"llm": 1, "plugin": 0}
 
 USAGE = (
-    "usage: lean-herdr {dispatch|llm|models|plugin|report|workspace} ...\n"
-    "  dispatch, models, report, workspace: one JSON line on stdout, exit 0\n"
+    "usage: lean-herdr {dispatch|llm|models|plan|plugin|report|workspace} ...\n"
+    "  dispatch, models, plan, report, workspace: one JSON line on stdout, exit 0\n"
     "  llm generate: the commit message on stdout, exit 0\n"
     "  llm prereview: the ruling on stdout, exit 1 on reject\n"
     "  plugin <sub>: Herdr's handlers -- nothing on stdout, errors on stderr, exit 0\n"
