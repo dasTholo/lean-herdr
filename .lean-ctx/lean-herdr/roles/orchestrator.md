@@ -141,8 +141,8 @@ state.
        Read the JSON answer yourself: under `result.worktrees`, find the
        entry whose `branch` is your branch and take its `path` and its
        `open_workspace_id`. Do not pipe the answer through another program.
-       Nothing but `herdr`, `wt`, `git` and `lean-herdr dispatch` is allowed
-       to you.
+       Nothing but `herdr`, `wt`, `git`, `lean-herdr dispatch` and
+       `lean-herdr plan next | show` is allowed to you.
     3. wt -C <path> step squash --stage none --yes
     4. herdr workspace close <workspace_id>
     5. wt -C <path> merge main --yes --no-commit

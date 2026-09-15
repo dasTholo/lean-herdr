@@ -233,7 +233,8 @@ narrow: `builder.json` and `plan-writer.json` deny `git push`, `wt merge` and
 `wt step push`; `reviewer.json` and `plan-reviewer.json` take back the editors,
 `git add`, `git commit`, `wt step commit` and lean-ctx's three write tools and deny
 the same three; `orchestrator.json` takes back the editors and lean-ctx's three
-write tools too, leaving Bash open for `lean-herdr dispatch` and `report`.
+write tools too, leaving Bash open for `lean-herdr dispatch`, `lean-herdr plan`,
+`herdr` and `wt`.
 An opencode worker gets the same per role from its block in
 `opencode.jsonc`. `dispatch` refuses a role whose prompt, opencode block or
 claude file is missing, before it opens a worktree or a pane.
@@ -298,16 +299,18 @@ the workspace the key was pressed in.
 `orch` is the trust anchor: `lean-herdr dispatch order`, `answer` and
 `cancel` stamp that name as the sender from the constant
 `ORCHESTRATOR_AGENT` — never from the pane name — and
-`.lean-ctx/lean-herdr/roles/builder.md` and
-`.lean-ctx/lean-herdr/roles/reviewer.md` carry the line
+`.lean-ctx/lean-herdr/roles/builder.md`,
+`.lean-ctx/lean-herdr/roles/reviewer.md`,
+`.lean-ctx/lean-herdr/roles/plan-writer.md` and
+`.lean-ctx/lean-herdr/roles/plan-reviewer.md` carry the line
 `ORCHESTRATOR = orch`. Start the pane under another name and the constant
 still stamps `orch`: pass `--from <name>` on every `order`, `answer` and
-`cancel` call, and set `ORCHESTRATOR = <name>` in both role files. The two
-must agree, or every order is refused.
+`cancel` call, and set `ORCHESTRATOR = <name>` in all four role files. The
+four must agree, or every order is refused.
 
 That rename turns one test red:
 `tests/test_roles.py::test_the_role_prompts_trust_the_name_dispatch_actually_stamps`
-holds the `ORCHESTRATOR = …` line of both role files against the constant
+holds the `ORCHESTRATOR = …` line of all four role files against the constant
 `dispatch.ORCHESTRATOR_AGENT`, and the rename moves only the role files.
 Either rename the anchor itself — `ORCHESTRATOR_AGENT` in
 `lean_herdr/settings.py`, which the constant is imported from — and then
