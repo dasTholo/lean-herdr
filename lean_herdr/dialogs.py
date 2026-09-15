@@ -76,11 +76,16 @@ def claude_trusts(root: Path, *, state: Path | None = None) -> bool | None:
 
 
 def _replace(path: Path, text: str) -> str:
-    """`text` into `path` atomically and with the file's own mode: `written` or `failed: <why>`."""
+    """`text` into `path` atomically and with the file's own mode: `written` or `failed: <why>`.
+
+    A symlinked `path` is written through: the temp file lands beside the link's
+    target and replaces the target, so the link stays a link.
+    """
     try:
+        path = path.resolve()
         mode = path.stat().st_mode & 0o7777
         fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.lean-herdr-")
-    except OSError as exc:
+    except (OSError, RuntimeError) as exc:
         return f"failed: {exc}"
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:

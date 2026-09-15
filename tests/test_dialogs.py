@@ -132,6 +132,20 @@ def test_the_written_file_keeps_its_mode(root, tmp_path):
     assert path.stat().st_mode & 0o777 == 0o640
 
 
+def test_a_symlinked_state_stays_a_link_and_its_target_holds_the_key(root, tmp_path):
+    """A dotfile manager's link is written through, in the target's own directory."""
+    target = state_file(tmp_path, {})
+    link = tmp_path / "home" / CLAUDE_STATE_FILE
+    link.parent.mkdir()
+    link.symlink_to(target)
+    assert trust_root(root, state=link) == "written"
+    assert link.is_symlink()
+    assert link.resolve() == target.resolve()
+    assert read(target)["projects"] == {str(root): {TRUST_KEY: True}}
+    assert sorted(p.name for p in link.parent.iterdir()) == [CLAUDE_STATE_FILE]
+    assert sorted(p.name for p in target.parent.iterdir()) == [CLAUDE_STATE_FILE]
+
+
 @pytest.fixture
 def herdr(monkeypatch) -> tuple[Herdr, FakeProc]:
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
