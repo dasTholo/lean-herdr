@@ -205,25 +205,39 @@ def compose_brief(
 
 
 def _brief_failed(message: str) -> int:
-    sys.stderr.write(message + "\n")
+    """One line on stderr, however many the message spans -- git's stderr can span several."""
+    sys.stderr.write(" ".join(message.split()) + "\n")
     return 1
 
 
-def brief_main(argv: list[str]) -> int:
+def _worktree_top(cwd: Path, *, runner: Any) -> Path:
+    """The top of the worktree `cwd` lies in; `cwd` itself when git does not say.
+
+    A worker may run `plan brief` from a subdirectory, and every render path is relative
+    to the top of its worktree.
+    """
+    lines = _lines(cwd, "rev-parse", "--show-toplevel", runner=runner)
+    top = lines[0].strip() if lines else ""
+    return Path(top) if top else cwd
+
+
+def brief_main(argv: list[str], *, runner: Any = subprocess.run) -> int:
     """`plan brief --task o-…`: the brief on stdout and exit 0, or one line on stderr and exit 1."""
     try:
         args = build_parser().parse_args(argv)
         complaint = missing_flags(args)
         if complaint:
             return _brief_failed(f"usage_error: {complaint}")
-        cwd = Path.cwd()
+        cwd = _worktree_top(Path.cwd(), runner=runner)
         root = canonical_root(cwd)
         orders_dir = state_dir(root)
         order = fold(read_events(args.task, orders=orders_dir))
         if not order.state:
             return _brief_failed(f"task_not_found: {args.task}")
         data = _settings(root)
-        text = compose_brief(order, root=root, cwd=cwd, orders_dir=orders_dir, data=data)
+        text = compose_brief(
+            order, root=root, cwd=cwd, orders_dir=orders_dir, data=data, runner=runner
+        )
     except UsageError as exc:
         return _brief_failed(f"usage_error: {exc}")
     except SettingsError as exc:
@@ -442,12 +456,13 @@ class PrereviewInput:
 
 
 def _worktree_path(worktree_list: Any, branch: str | None) -> Path | None:
+    """Where `branch` is checked out -- None unless the list names a non-empty text path."""
     try:
         entry = find_worktree(worktree_list or {}, branch or "")
     except AttributeError, TypeError:
         return None
     path = entry.get("path") if isinstance(entry, dict) else None
-    return Path(path) if path else None
+    return Path(path) if isinstance(path, str) and path else None
 
 
 def prereview_input(

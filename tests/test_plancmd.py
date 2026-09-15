@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 
 from lean_herdr import plancmd
+from lean_herdr.bus import BusError
 from lean_herdr.orderlog import append, read_events
 from lean_herdr.orders import Order, fold
 from lean_herdr.plancmd import (
@@ -69,14 +70,24 @@ class Repo:
 
     `files` maps `<ref>:<path>` to what `git show` prints; `outlines` maps a plan text to
     what `lean-md outline` prints for it -- a text without one gets lean-md 0.2.3's refusal.
-    `lean-md render` echoes what it was asked for. Every other git call succeeds with nothing
+    `lean-md render` echoes what it was asked for. `toplevel` is what `git rev-parse
+    --show-toplevel` prints; None makes it fail. Every other git call succeeds with nothing
     on stdout: `cat-file -e` finds the file, `diff --name-only` names no change.
     """
 
     def __init__(
-        self, files=None, outlines=None, *, log="", status="", merge_base="", broken_render=None
+        self,
+        files=None,
+        outlines=None,
+        *,
+        log="",
+        status="",
+        merge_base="",
+        broken_render=None,
+        toplevel=None,
     ):
         self.files = files or {}
+        self.toplevel = toplevel
         self.outlines = outlines or {}
         self.log = log
         self.status = status
@@ -94,6 +105,10 @@ class Repo:
                 if text is not None
                 else Completed(returncode=128, stderr="fatal: bad object")
             )
+        if cmd[:3] == ["git", "rev-parse", "--show-toplevel"]:
+            if self.toplevel is None:
+                return Completed(returncode=128, stderr="fatal: not a git repository")
+            return Completed(stdout=self.toplevel)
         if head == ["git", "log"]:
             return Completed(stdout=self.log)
         if head == ["git", "status"]:
@@ -152,9 +167,13 @@ def order(
 
 @pytest.fixture
 def cwd_repo(monkeypatch, tmp_path):
-    """`main` resolves the root and the log itself; both point at tmp_path here."""
+    """`main` resolves the root and the log itself; both point at tmp_path here.
+
+    No git runs either: `git rev-parse --show-toplevel` cannot, so the cwd stands in.
+    """
     monkeypatch.setattr(plancmd, "canonical_root", lambda cwd=None: tmp_path)
     monkeypatch.setattr(plancmd, "state_dir", lambda root=None: tmp_path)
+    monkeypatch.setattr(plancmd, "run_git", lambda *_a, **_kw: None)
     return tmp_path
 
 
@@ -497,6 +516,20 @@ def test_an_order_outside_a_plan_gets_no_brief(tmp_path):
         brief(tmp_path, "o-1", Repo())
 
 
+def test_renders_run_in_the_worktree_and_the_plan_is_read_in_the_root(tmp_path):
+    order(tmp_path, "o-1", "review", task="branch")
+    order(tmp_path, "o-2", "plan-review")
+    repo = Repo({f"plan/shop:{PLAN_FILE}": "clean"}, {"clean": CLEAN})
+    brief(tmp_path, "o-1", repo)
+    brief(tmp_path, "o-2", repo)
+    renders = {cwd for cmd, cwd in repo.calls if cmd[:2] == ["lean-md", "render"]}
+    others = {cwd for cmd, cwd in repo.calls if cmd[:2] != ["lean-md", "render"]}
+    assert renders == {"/wt/shop"}
+    assert others == {"/repo"}
+    kinds = {tuple(cmd[:2]) for cmd, _cwd in repo.calls}
+    assert {("git", "show"), ("lean-md", "outline"), ("git", "cat-file"), ("git", "diff")} <= kinds
+
+
 def test_a_failing_render_names_the_file_and_the_phase(tmp_path):
     order(tmp_path, "o-1", "implement", task="1")
     with pytest.raises(BriefError) as caught:
@@ -525,6 +558,50 @@ def test_brief_prints_plain_text_and_exits_zero(cwd_repo, monkeypatch, capsys):
 def test_a_failed_brief_is_one_stderr_line_and_exit_one(cwd_repo, capsys, argv, line):
     assert main(argv) == 1
     assert capsys.readouterr() == ("", line + "\n")
+
+
+@pytest.mark.parametrize(
+    ("error", "line"),
+    [
+        (
+            BusError("git rev-parse --git-common-dir failed: fatal: not a git repository\nhint: x"),
+            "git rev-parse --git-common-dir failed: fatal: not a git repository hint: x",
+        ),
+        (RuntimeError("boom\n  in line two"), "brief_crashed: boom in line two"),
+    ],
+    ids=["bus", "crash"],
+)
+def test_a_multi_line_error_is_still_one_stderr_line(cwd_repo, monkeypatch, capsys, error, line):
+    order(cwd_repo, "o-1", "implement", task="1")
+
+    def broken(*_a, **_kw):
+        raise error
+
+    monkeypatch.setattr(plancmd, "compose_brief", broken)
+    assert main(["brief", "--task", "o-1"]) == 1
+    assert capsys.readouterr() == ("", line + "\n")
+
+
+@pytest.mark.parametrize(
+    ("toplevel", "top"),
+    [("/wt/shop\n", "/wt/shop"), ("", None), (None, None)],
+    ids=["toplevel", "no-answer", "git-fails"],
+)
+def test_brief_renders_in_the_worktree_top_from_a_subdirectory(
+    monkeypatch, tmp_path, capsys, toplevel, top
+):
+    monkeypatch.setattr(plancmd, "canonical_root", lambda cwd=None: tmp_path)
+    monkeypatch.setattr(plancmd, "state_dir", lambda root=None: tmp_path)
+    order(tmp_path, "o-1", "implement", task="1")
+    (tmp_path / "app").mkdir()
+    monkeypatch.chdir(tmp_path / "app")
+    here = str(Path.cwd())
+    repo = Repo(toplevel=toplevel)
+    assert plancmd.brief_main(["brief", "--task", "o-1"], runner=repo) == 0
+    assert capsys.readouterr().err == ""
+    assert (["git", "rev-parse", "--show-toplevel"], here) in repo.calls
+    renders = {cwd for cmd, cwd in repo.calls if cmd[:2] == ["lean-md", "render"]}
+    assert renders == {top or here}
 
 
 def test_brief_behind_a_flag_is_a_usage_error_and_no_show(cwd_repo, capsys):
@@ -590,8 +667,30 @@ def test_a_task_is_judged_against_its_rendered_task_since_its_start_head():
             Repo(broken_render=f"{PLAN_FILE} --phase task-1"),
             "render_failed",
         ),
+        (
+            plan_order(step="implement", plan_task="1", start_head="aaa1111"),
+            {"result": {"worktrees": [{"branch": "plan/shop", "path": 5}]}},
+            Repo(),
+            "worktree_unresolved",
+        ),
+        (
+            plan_order(step="implement", plan_task="1", start_head="aaa1111"),
+            {"result": {"worktrees": [{"branch": "plan/shop", "path": ""}]}},
+            Repo(),
+            "worktree_unresolved",
+        ),
     ],
-    ids=["no-plan", "no-spec", "branch", "review", "no-start-head", "no-worktree", "render"],
+    ids=[
+        "no-plan",
+        "no-spec",
+        "branch",
+        "review",
+        "no-start-head",
+        "no-worktree",
+        "render",
+        "path-not-str",
+        "path-empty",
+    ],
 )
 def test_what_gets_no_pre_review_says_why(order_, worktree_list, repo, skip):
     assert picked(order_, repo, worktree_list) == PrereviewInput(skip=skip)
