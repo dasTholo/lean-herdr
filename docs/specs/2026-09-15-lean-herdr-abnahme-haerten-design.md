@@ -1,6 +1,8 @@
-# lean-herdr: Befunde der TP2-Abnahme härten — Design v1.0
+# lean-herdr: Befunde der TP2-Abnahme härten — Design v1.1
 
-**Stand:** 2026-09-15 · **Status:** entworfen, nicht implementiert
+**Stand:** 2026-09-15 · **Status:** entworfen, nicht implementiert · **v1.1:** M1 und M2 gemessen
+(§2). Ein Worktree erbt claudes Ordner-Vertrauen vom Repository-Root; das Vertrauen erteilt einmal
+`workspace init --trust-claude`, `dispatch` schreibt nichts.
 **Anlass:** Die Abnahme von TP2 (Plan C, Task 9) lief in `~/Scripts/lh-plan-probe` bis `done` —
 aber nur mit Eingriffen. Ein claude-Worker hing im frischen Worktree am Ordner-Vertrauensdialog,
 und der Orchestrator bestätigte ihn selbst per Tastendruck. Der Merge scheiterte an ungetrackten
@@ -11,9 +13,9 @@ geschlossen war. Rollen ohne `model` fielen erst beim ersten `dispatch` auf, und
 Plan C `docs/lean-md/plans/2026-09-14-lean-herdr-plan-c-ausliefern.lmd.md` (Task 9);
 `2026-09-13-lean-herdr-haerten-und-uv-tool-design.md` (`_check_temp_ignored`).
 **Betrifft:** neu `lean_herdr/dialogs.py`; geändert `lean_herdr/herdr.py`, `dispatch.py`,
-`checkcmd.py`; `lean_herdr/templates/` (`roles/orchestrator.md`, `roles/builder.md`,
-`briefs/implement.lmd.md`, `briefs/review.lmd.md`, `opencode.jsonc`, `claude/orchestrator.json`)
-samt eingecheckten Kopien und Lock; `README.md`, `INSTALL.md`; Tests.
+`checkcmd.py`, `initcmd.py`, `workspace.py`; `lean_herdr/templates/` (`roles/orchestrator.md`,
+`roles/builder.md`, `briefs/implement.lmd.md`, `briefs/review.lmd.md`, `opencode.jsonc`,
+`claude/orchestrator.json`) samt eingecheckten Kopien und Lock; `README.md`, `INSTALL.md`; Tests.
 
 ---
 
@@ -27,18 +29,22 @@ scheitert nicht an Artefakten; ein gescheiterter Merge lässt den Zustand für d
 
 1. `uv run pytest -q` grün; `lean-herdr workspace check` in diesem Repository ohne neue Fehler.
 2. Ein Ein-Task-Plan läuft in einem frischen Wegwerf-Repository nach dem Rezept in §9 bis `done`,
-   ohne jeden Eingriff außer der worktrunk-Freigabe, die das Rezept vorab erteilt. Kein Worker
-   blockiert an einem Dialog, der Orchestrator sendet keine Taste und keinen Prompt in einen
-   Worker-Pane, der Merge scheitert nicht an ungetrackten Dateien.
-3. `workspace check` meldet im Wegwerf-Repository vor dem Lauf keine Zeile zu `__pycache__/` und
-   keine Zeile `model unset`.
+   ohne jeden Eingriff außer den beiden Freigaben, die das Rezept vorab erteilt (worktrunk,
+   `workspace init --trust-claude`). Kein Worker blockiert an einem Dialog, der Orchestrator sendet
+   keine Taste und keinen Prompt in einen Worker-Pane, der Merge scheitert nicht an ungetrackten
+   Dateien.
+3. `workspace check` meldet im Wegwerf-Repository vor dem Lauf keine Zeile zu `__pycache__/`, keine
+   Zeile `model unset` und keine Zeile `claude does not trust`.
 
 ## 2. Ausgangslage, gemessen am 2026-09-15
 
 | Befund | Beleg |
 |---|---|
 | Ein claude-Worker hängt im frischen Worktree am Ordner-Vertrauensdialog | Der Plan-Worktree `~/Scripts/lh-plan-probe.plan-probe` liegt neben dem Repository, nicht darin. Der erste Build scheiterte zweimal (`opencode_stuck`, `no_agent_id`) |
-| Der Orchestrator hat den Dialog selbst bestätigt | Sein Bericht: „Down+Enter on ‚Yes, I trust this folder'“. opencode erlaubt ihm `herdr *` (`opencode.jsonc:42`); `orchestrator.md` verbietet es nirgends |
+| Der Orchestrator hat den Dialog selbst bestätigt | Sein Bericht: „Down+Enter on ‚Yes, I trust this folder'“. opencode erlaubt ihm `herdr *` (`opencode.jsonc:42`); `orchestrator.md` verbietet es nirgends. Kein Code in lean-herdr sendete je Pfeil oder Enter (`git log --all -G "send.keys.*([Dd]own\|[Ee]nter)"` leer; `_free_pane` sendet nur `ctrl-c`) |
+| **M1:** Ein Worktree erbt das Ordner-Vertrauen seines Repository-Roots | claude hält das Vertrauen in `~/.claude.json` unter `projects.<pfad>.hasTrustDialogAccepted`, nicht in Projekt-Settings. Nicht vertrauter Root `lh-trust-probe`: auch der Worktree `lh-trust-probe.w1` zeigt den Dialog (mit seinem eigenen Pfad). Nach „Yes" im Root schreibt claude genau `projects["/home/tholo/Scripts/lh-trust-probe"]` (aufgelöster Pfad); danach startet claude in `.w1` ohne Dialog und ohne eigenen Schlüssel. `~/.claude.json` trägt keinen einzigen `lean-herdr.<branch>`-Worktree trotz vieler Builder-Läufe. Claude Code 2.1.272, `CLAUDE_CONFIG_DIR` ungesetzt |
+| Das TP2-Probe-Repository war nicht vertraut | Niemand hatte claude in seinem Root gestartet; der Dialog galt deshalb jedem Worktree |
+| **M2:** Ein Startdialog lässt `herdr agent start` scheitern | Exit 1 nach 3,8 s, stdout leer, stderr `{"error":{"code":"agent_not_ready","message":"agent m1-root is blocked during startup and is not ready for prompts"}}`. `agent list`: `agent_status = "blocked"`, `launch_pending: true`. `agent read <pane> --source detection` gibt den Bildschirm als reinen Text aus, kein JSON. 3,8 s liegt knapp über `AGENT_START_REFUSAL_S` (3,5 s): `start_agent` hielte den Start für einen Hänger und schickte `ctrl-c` in den Dialog |
 | lean-herdr kennt den Grund eines gescheiterten Starts nicht | `Herdr.agent_start` gibt bei jedem Exit > 0 `{}` zurück und verwirft stderr (`herdr.py:272-287`); `start_agent` meldet dann `agent_start_failed` oder `opencode_stuck` (`herdr.py:476-493`) |
 | Ein blockierter Worker wirkt beim Warten wie Stille | `await_task` fragt `agent list` erst nach der Deadline und antwortet `no_reply` (`dispatch.py:562-576`); `no_reply` wiederholt der Orchestrator, statt zu eskalieren |
 | Der Abschluss schließt den Workspace vor dem Merge | `orchestrator.md:132-148` (Einzel-Task), `:218-222` (Plan). Der Merge scheiterte, `herdr workspace report-metadata` antwortete `workspace_not_found` / `pane_not_found` |
@@ -53,52 +59,59 @@ scheitert nicht an Artefakten; ein gescheiterter Merge lässt den Zustand für d
 
 | # | Entscheidung |
 |---|---|
-| E1 | Vor dem Start eines claude-Workers in einem Worktree desselben Repositorys markiert `dispatch` den Worktree als vertraut — über den gemessenen Mechanismus (§8, M1), nie per Tastendruck. |
-| E2 | Jeder andere Dialog wird erkannt und als `agent_blocked` mit Dialogtext gemeldet, beim Start und in jeder Warterunde. Nichts in lean-herdr beantwortet ihn. |
+| E1 | `workspace init --trust-claude` trägt `projects.<root>.hasTrustDialogAccepted = true` in claudes Zustandsdatei ein — genau diesen Schlüssel, atomar, jeden anderen unverändert. Jeder Worktree erbt das Vertrauen (M1). Ohne den Schalter bleibt die Datei unberührt; `dispatch` schreibt nie hinein, und nichts erteilt Vertrauen per Tastendruck. |
+| E2 | Jeder Dialog wird erkannt und als `agent_blocked` mit Dialogtext gemeldet, beim Start und in jeder Warterunde. Nichts in lean-herdr beantwortet ihn. |
 | E3 | Der Orchestrator beantwortet nie einen Dialog. Seine herdr-Rechte schrumpfen auf `worktree list`, `workspace close` und `workspace report-metadata`. |
 | E4 | Abschluss: Merge mit `--no-remove` bei offenem Workspace, danach den Workspace schließen, danach `wt remove`. |
 | E5 | Ungetrackte, nicht ignorierte Dateien bleiben ein Merge-Stopp. `workspace check` warnt, wenn `__pycache__/` nicht ignoriert ist; `init` schreibt weiterhin keine Ignore-Regeln. |
 | E6 | `workspace check` warnt bei einer Worker-Rolle ohne `model`. |
-| E7 | Abnahme-Rezept: `uv init` vor `git init`, nach dem ersten Commit `git branch -M main`, `wt config approvals add --yes`. |
-| E8 | Findet M1 keinen stabilen Mechanismus für E1, hält der Plan an und legt das dem Betreiber vor. Die Abnahme (§1, Punkt 2) wird nicht aufgeweicht. |
+| E7 | Abnahme-Rezept: `uv init` vor `git init`, nach dem ersten Commit `git branch -M main`, `workspace init --trust-claude`, `wt config approvals add --yes`. |
+| E8 | `workspace check` warnt, wenn eine Rolle `kind = "claude"` hat und claude dem Root nicht vertraut. |
 
 ## 4. Dialoge in Worker-Panes
 
-### 4.1 `lean_herdr/dialogs.py`
+### 4.1 claude-Vertrauen (`lean_herdr/dialogs.py`)
 
 Ein eigenes Modul: `dispatch.py` steht bei 650 Produktions-LOC.
 
-**Vorab-Vertrauen** (`pretrust`):
+- **Zustandsdatei:** `$CLAUDE_CONFIG_DIR/.claude.json`, ohne die Variable `~/.claude.json` (M1).
+  lean-herdr legt sie nie an.
+- **`claude_trusts(root)`:** `True` oder `False` nach `projects.<aufgelöster Root>.hasTrustDialogAccepted`;
+  `None` (kein Urteil), wenn die Datei fehlt oder nicht lesbar ist. Gefragt wird nur der
+  Root-Schlüssel selbst. Ob ein vertrautes Elternverzeichnis zählt, ist nicht gemessen — eine Warnung
+  wäre dann überflüssig, nie falsch-sicher.
+- **`trust_root(root)`:** setzt den Schlüssel und antwortet `written`, `already` oder
+  `failed: <Grund>`. Eine fehlende Datei ist `failed` (claude lief unter dieser Konfiguration nie).
+  Schreibt atomar (Temp-Datei neben der Datei, `os.replace`, Dateimodus bleibt) und bricht nie ab.
+  Eine laufende claude-Sitzung kann die Datei aus ihrem Speicherstand zurückschreiben; einen so
+  verlorenen Eintrag nennt `workspace check`.
+- **`workspace init --trust-claude`** ruft `trust_root` und meldet das Ergebnis als `claude_trust`;
+  `failed` ist eine Warnung, kein Fehler von `init`. Mit `--update` und `--force` kombinierbar; `up`
+  und `check` lehnen den Schalter ab wie jeden `init`-Schalter. Das ist die einzige rechnerweite
+  Freigabe, die `init` erteilt, und nur auf den Schalter hin.
 
-- nur für `kind = "claude"` und nur für einen Worker mit `--worktree`;
-- nur, wenn der Worktree zum Repository gehört: `git rev-parse --git-common-dir` ist für Worktree
-  und `repo_root` dasselbe Verzeichnis;
-- nur, wenn claude dem `repo_root` selbst vertraut — das Vertrauen des Menschen wird auf einen
-  Checkout desselben Repositorys übertragen, nie neu erteilt;
-- es trägt genau diesen einen Pfad ein. Liegt der Mechanismus in einer Datei außerhalb des
-  Repositorys, schreibt es atomar (Temp-Datei, `os.replace`) und lässt jeden anderen Schlüssel
-  unverändert;
-- es bricht nie ab. Scheitert es, startet `dispatch` trotzdem; ein dann erscheinender Dialog läuft
-  über `agent_blocked`.
+### 4.2 Erkennen (`blocked_dialog`)
 
-**Erkennen** (`blocked_dialog`): Steht der Pane in `herdr agent list` auf
-`agent_status = "blocked"`, liefert es die letzten Bildschirmzeilen (höchstens 20) über einen
-neuen Wrapper `Herdr.agent_read` (`herdr agent read <pane> --source detection`), sonst `None`.
+Steht der Pane in `herdr agent list` auf `agent_status = "blocked"`, liefert es die letzten
+Bildschirmzeilen (höchstens 20) über einen neuen Wrapper `Herdr.agent_read`
+(`herdr agent read <pane> --source detection --lines 20`; stdout ist reiner Text, M2), sonst `None`.
 
-### 4.2 `dispatch`
+### 4.3 `dispatch`
 
-- **Start:** `pretrust` läuft vor `start_agent`. `start_agent` prüft `blocked_dialog`, sobald der
-  erste Versuch ohne Agent endet — **vor** `_free_pane`, denn dessen `ctrl-c` wäre ein Tastendruck
-  in den Dialog. Liefert `blocked_dialog` einen Text, gibt es keinen zweiten Versuch, und `dispatch`
-  antwortet `{"ok": false, "error": "agent_blocked", "pane": "<pane>", "dialog": "<Text>"}`.
-  Sonst bleiben die bisherigen Fehler und der zweite Versuch. Nennt Herdr beim Startdialog einen
-  eigenen Grund (M2), darf `Herdr.agent_start` ihn durchreichen; entschieden wird über `agent list`.
+- **Start:** `start_agent` prüft `blocked_dialog`, sobald der erste Versuch ohne Agent endet —
+  **vor** `_free_pane`, denn dessen `ctrl-c` wäre ein Tastendruck in den Dialog. Liefert
+  `blocked_dialog` einen Text, gibt es keinen zweiten Versuch, und `dispatch` antwortet
+  `{"ok": false, "error": "agent_blocked", "pane": "<pane>", "dialog": "<Text>"}`. Sonst bleiben die
+  bisherigen Fehler und der zweite Versuch. Herdr nennt `agent_not_ready` auf stderr (M2); entschieden
+  wird über `agent list`. Endet ein Dialog-Start schneller als `AGENT_START_REFUSAL_S`, wiederholt
+  `agent_start` den Start; `agent start` verlangt einen Pane an der Shell-Eingabe und schreibt in einen
+  belegten Pane nichts. Danach gilt dieselbe Prüfung.
 - **Warten:** Jede Runde von `await_task` sucht den Worker über seinen Namen in `herdr agent list`
-  und prüft dessen Pane mit `blocked_dialog`. Bei `blocked` antwortet es sofort
-  `error: "agent_blocked"` mit `dialog`, statt nach der Deadline `no_reply`. Die Prüfung kostet
-  einen `agent list`-Aufruf je Runde.
+  und prüft dessen Pane mit `blocked_dialog` — vor dem Wecken, denn `agent prompt` tippt in den Pane.
+  Bei `blocked` antwortet es sofort `error: "agent_blocked"` mit `dialog`, statt nach der Deadline
+  `no_reply`. Die Prüfung kostet einen `agent list`-Aufruf je Runde.
 
-### 4.3 Orchestrator
+### 4.4 Orchestrator
 
 - `orchestrator.md`, Abschnitt Escalation: `agent_blocked` ist eine Eskalation mit dem Dialogtext.
   Dazu der Satz (wortgetreu getestet): *You never answer a dialog in a worker's pane: no
@@ -174,23 +187,33 @@ Die erwarteten Warnungen im Healthy-Test ändern sich mit.
 Die neuen Sätze werden wortgetreu getestet. Der Orchestrator ändert nichts; scheitert der Merge
 daran, gilt §5.
 
+### 6.4 claude-Vertrauen
+
+`workspace check` sammelt die Rollen, deren `kind` `claude` ist — den Orchestrator und jede Rolle
+hinter einer Work, `[default]` eingeschlossen — und fragt `claude_trusts(root)`. `False` ergibt:
+*claude does not trust <root> -- a claude worker stops at the folder-trust dialog in every worktree
+of this repository, and dispatch answers agent_blocked. Run: lean-herdr workspace init --trust-claude*
+Keine claude-Rolle oder `None`: keine Zeile.
+
 ## 7. Doku
 
 - `INSTALL.md`, Approvals: Ohne Terminal (Agent, CI) braucht es `wt config approvals add --yes`;
   die Freigabe gilt den Hooks des Projekts.
-- `README.md`: Abschluss-Reihenfolge (§5), Dialoge (Vorab-Vertrauen, `agent_blocked`, der
-  Orchestrator beantwortet keinen Dialog), die zwei neuen Warnungen von `workspace check`.
+- `README.md`: Abschluss-Reihenfolge (§5); Einrichten mit `workspace init --trust-claude` (§4.1);
+  Dialoge (`agent_blocked`, der Orchestrator beantwortet keinen Dialog); die Rechte von
+  `orchestrator.json` ohne `herdr agent`/`herdr pane`; die drei neuen Warnungen von `workspace check`.
 
-## 8. Messungen (erste Task, vor jedem Code)
+## 8. Messungen
 
-| # | Frage | Entscheidet |
-|---|---|---|
-| M1 | Wo legt claude das Ordner-Vertrauen ab, und verhindert ein Eintrag für einen neuen Worktree-Pfad den Dialog beim nächsten Start? Gilt das Vertrauen eines Elternverzeichnisses? | E1 oder E8 |
-| M2 | Was antwortet `herdr agent start` bei einem claude-Startdialog (Exit, stderr, Dauer), und steht der Pane danach in `herdr agent list` auf `blocked`? Was liefert `herdr agent read --source detection`? | §4.1, §4.2 |
-| M3 | `wt -C <path> merge main --yes --no-commit --no-remove` mit ignoriertem `__pycache__/` im Worktree; danach, bei geschlossenem Workspace, `wt -C <root> remove <branch> --yes`: Ist gemergt, sind Worktree und Branch weg? | §5 |
-| M4 | Trifft `git check-ignore -v __pycache__/lean-herdr.probe` die Regel `__pycache__/`, auch wenn kein solches Verzeichnis existiert? | §6.1 |
+| # | Frage | Stand | Entscheidet |
+|---|---|---|---|
+| M1 | Wo legt claude das Ordner-Vertrauen ab, und gilt es für einen Worktree? | gemessen (§2): `~/.claude.json`, der Worktree erbt vom Root | E1 |
+| M2 | Was antwortet `herdr agent start` bei einem claude-Startdialog, steht der Pane auf `blocked`, was liefert `agent read --source detection`? | gemessen (§2) | §4.2, §4.3 |
+| M3 | `wt -C <path> merge main --yes --no-commit --no-remove` mit ignoriertem `__pycache__/` im Worktree; danach, bei geschlossenem Workspace, `wt -C <root> remove <branch> --yes`: Ist gemergt, sind Worktree und Branch weg? | offen | §5 |
+| M4 | Trifft `git check-ignore -v __pycache__/lean-herdr.probe` die Regel `__pycache__/`, auch wenn kein solches Verzeichnis existiert? | offen | §6.1 |
 
-Jede Messung landet als Fakt im Wissen. Weicht ein Ergebnis von diesem Spec ab, hält der Plan an.
+M3 und M4 laufen als erste Task, vor jedem Code. Jede Messung landet als Fakt im Wissen. Weicht ein
+Ergebnis von diesem Spec ab, hält der Plan an.
 
 ## 9. Abnahme-Rezept
 
@@ -201,11 +224,11 @@ In `~/Scripts/<probe>` (Wegwerf-Repository; das Elternverzeichnis ist kein Git-R
    `.gitignore` (mit `__pycache__/`) an.
 2. `uv add --dev pytest ruff ty`; `git add -A`; `git commit -m "chore: empty probe project"`;
    `git branch -M main`.
-3. `lean-herdr workspace init`; in `.lean-ctx/lean-herdr/config.toml` für jede Rolle `kind` **und**
-   `model`.
+3. `lean-herdr workspace init --trust-claude` — `claude_trust` ist `written`; in
+   `.lean-ctx/lean-herdr/config.toml` für jede Rolle `kind` **und** `model`.
 4. `wt config approvals add --yes`; `git add -A`; `git commit -m "chore: lean-herdr workspace"`.
 5. `lean-herdr workspace check` — `"ok": true`, keine Zeile zu `__pycache__/`, `model`,
-   `not committed`, lean-md, Gateway, Skill oder `ty`.
+   `claude does not trust`, `not committed`, lean-md, Gateway, Skill oder `ty`.
 6. Spec anlegen und committen (wie Plan C, Task 9).
 7. `lean-herdr workspace up`; im Orchestrator: `Plan spec <spec> as probe and run it`.
 
@@ -217,7 +240,9 @@ je auf `blocked`; der Orchestrator hat keinen `herdr agent`-Befehl ausgeführt.
 
 | Lage | Antwort |
 |---|---|
-| claude-Worker, Vorab-Vertrauen nicht möglich (fremdes Repository, M1-Mechanismus scheitert) | Start läuft; erscheint der Dialog: `agent_blocked` |
+| claude-Rolle, dem Root nicht vertraut (kein `--trust-claude`, Eintrag verloren) | `workspace check` warnt vorher; beim Start `agent_blocked` |
+| `--trust-claude`, Zustandsdatei fehlt oder ist unlesbar | `claude_trust: "failed: …"` und eine Warnung; `init` bleibt `ok`; die Datei bleibt, wie sie war |
+| `workspace check`, Zustandsdatei fehlt oder ist unlesbar | kein Urteil |
 | Dialog beim Start | `{"ok": false, "error": "agent_blocked", "pane": …, "dialog": …}` |
 | Dialog während der Arbeit | `--await` antwortet `agent_blocked` mit `dialog`, sofort |
 | Start hängt ohne Dialog | `opencode_stuck` wie bisher |
@@ -229,25 +254,34 @@ je auf `blocked`; der Orchestrator hat keinen `herdr agent`-Befehl ausgeführt.
 
 ## 11. Tests
 
-- `tests/test_dialogs.py`: `pretrust` mit Wegwerf-Repositories und einem Double für den
-  M1-Mechanismus (fremdes Repository, nicht vertrauter Root, fremder Schlüssel bleibt,
-  Schreibfehler bricht nicht ab); `blocked_dialog` mit Doubles für `agent list`/`agent read`.
-- `dispatch`: `agent_blocked` beim Start und in einer Warterunde; `opencode_stuck` ohne Dialog.
+- `tests/test_dialogs.py`: `claude_trusts` (vertraut, nicht vertraut, fehlende und unlesbare Datei);
+  `trust_root` (schreibt genau den Schlüssel, `already`, fremde Schlüssel bleiben, Dateimodus bleibt,
+  Schreibfehler hinterlässt nichts, fehlende Datei wird nicht angelegt); `blocked_dialog` mit Doubles
+  für `agent list`/`agent read`.
+- `test_herdr.py`: `agent_read` liest stdout als Text; `start_agent` fragt `blocked` vor `_free_pane`.
+- `dispatch`: `agent_blocked` beim Start und in einer Warterunde, vor dem Wecken; `opencode_stuck` ohne
+  Dialog.
+- `test_initcmd.py`: `--trust-claude` schreibt, meldet `already`, meldet `failed` als Warnung; ohne
+  Schalter bleibt die Datei unberührt. `test_workspace.py`: der Schalter wird durchgereicht, `up` lehnt
+  ihn ab.
 - `test_worker_permissions.py`: Orchestrator ohne `herdr *`, genau die drei Unterbefehle; claude
-  `orchestrator.json` verweigert `herdr agent`/`herdr pane`.
+  `orchestrator.json` verweigert `herdr agent`/`herdr pane`. `test_config_files.py` zieht mit.
 - `test_role_prohibitions.py`: Dialog-Satz; Merge mit `--no-remove` vor `workspace close`,
   `wt remove` nach `workspace close`, für beide Abschlüsse.
 - `test_checkcmd.py`: `__pycache__/`-Warnung (nicht ignoriert, ignoriert, ohne `pyproject.toml`,
-  ohne Urteil); `model unset` je Worker-Rolle, nicht für den Orchestrator.
+  ohne Urteil); `model unset` je Worker-Rolle, nicht für den Orchestrator; claude-Vertrauen
+  (claude-Rolle und nicht vertraut, vertraut, keine claude-Rolle, kein Urteil).
 - `test_plan_templates.py`: die neuen Brief-Sätze.
-- Kein Test ruft echtes `herdr`, `wt`, `claude` oder `lean-md`; Ausnahmen sind nur M1–M4 und die
-  Abnahme.
+- Kein Test ruft echtes `herdr`, `wt`, `claude` oder `lean-md`; Ausnahmen sind nur M3, M4 und die
+  Abnahme. Kein Test liest oder schreibt die echte Zustandsdatei: `CLAUDE_CONFIG_DIR` zeigt dort auf
+  ein Temp-Verzeichnis.
 
 ## 12. Nicht-Ziele
 
 - `init` schreibt keine Ignore-Regeln.
-- Kein automatisches Beantworten eines Dialogs; das Vorab-Vertrauen ist ein Eintrag, kein
-  Tastendruck.
+- Kein automatisches Beantworten eines Dialogs, auch nicht des Vertrauensdialogs: Vertrauen erteilt
+  nur `workspace init --trust-claude`, als Eintrag, nie als Tastendruck.
+- `dispatch` schreibt nie in claudes Zustandsdatei; lean-herdr legt sie nie an.
 - Kein claude-Orchestrator mit eigenen Freigaben für `herdr`/`wt`.
 - Anbieterwahl (eigener Spec auf `docs/anbieterwahl-spec`); Änderungen an `wt` selbst.
 
@@ -256,6 +290,7 @@ je auf `blocked`; der Orchestrator hat keinen `herdr agent`-Befehl ausgeführt.
 - Keine Datei unter `lean_herdr/` über 800 Produktions-LOC (heute: `dispatch.py` 650,
   `checkcmd.py` 500, `herdr.py` 230).
 - Code, Templates, Prompts, Briefs, README und INSTALL: Englisch.
-- Vorgeschlagener Plan: 1 Messungen · 2 `dialogs.py` und Herdr-Wrapper · 3 `dispatch` (Start,
-  Warten) · 4 Orchestrator-Prompt und Rechte (Dialog, Abschluss) · 5 Check-Warnungen, Briefs,
-  Builder-Prompt · 6 README/INSTALL · 7 Abnahme.
+- Vorgeschlagener Plan: 1 Messungen M3/M4 · 2 `dialogs.py` und Herdr-Wrapper · 3 `dispatch` (Start,
+  Warten) · 4 `init --trust-claude` und Check-Vertrauen · 5 Orchestrator-Prompt und Rechte (Dialog,
+  Abschluss) · 6 Check `__pycache__/` und `model` · 7 Briefs und Builder-Prompt · 8 README/INSTALL ·
+  9 Abnahme.
