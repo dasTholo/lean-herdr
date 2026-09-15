@@ -222,8 +222,8 @@ und `branch_touches_tooling`, wenn `plan/<slug>` gegenüber `main` etwas unter
 | Rolle | opencode (`opencode.jsonc`) | claude (`claude/<rolle>.json`, `deny`) |
 |---|---|---|
 | orchestrator | + `lean-herdr plan next *`, `plan show *`, `plan check *` | unverändert |
-| builder | + `lean-herdr plan brief *` | + `Bash(git push:*)`, `Bash(wt merge:*)`, `Bash(wt step push:*)` |
-| reviewer | + `lean-herdr plan brief *`, `wt step diff *` | bisher + push/merge |
+| builder | + `lean-herdr plan brief *`, `uv run ruff format*`, `uv run ty check*` | + `Bash(git push:*)`, `Bash(wt merge:*)`, `Bash(wt step push:*)` |
+| reviewer | + `lean-herdr plan brief *`, `wt step diff *` | bisher + push/merge, dazu Lint und Formatter (`ruff check --fix` und `ruff format` schreiben) |
 | plan-writer | Schreiben erlaubt; `lean-herdr report …`, `plan brief *`, `plan check *`, `git add*`, `wt step commit *`, `git status*`, `git diff*`, `git log*` | push/merge |
 | plan-reviewer | wie reviewer + `plan check *` | wie reviewer + push/merge |
 
@@ -231,6 +231,11 @@ und `branch_touches_tooling`, wenn `plan/<slug>` gegenüber `main` etwas unter
   `Bash(lean-herdr plan check:*)`, `Bash(lean-herdr plan next:*)`, `Bash(lean-herdr plan show:*)`
   und `Bash(wt step diff:*)` — damit läuft auch ein Orchestrator mit `kind = "claude"`; alle
   vier `plan`-Befehle lesen nur.
+- `.claude/settings.json` erlaubt außerdem `Bash(uv run ruff format:*)` und
+  `Bash(uv run ty check:*)` — fest, nicht über `{{lean-herdr:...}}`, weil `--lang python` den
+  Formatter vorgibt. `ty check` liest nur und bleibt daher auch reviewer und plan-reviewer
+  erlaubt; Lint und Formatter schreiben (`--fix` bzw. `ruff format`) und werden ihnen per
+  `deny` genommen (Tabelle oben).
 - Nicht schreibende Rollen (orchestrator, reviewer, plan-reviewer) sperren in opencode
   weiterhin `edit`, `write` und die lean-ctx-Schreibwerkzeuge.
 - **Bekannte Lücke:** `ctx_shell` bleibt offen (global `mcp__lean-ctx__*`); ein Push über
@@ -300,7 +305,7 @@ unverändert; `plancmd` wählt die Ausgabeart je Unterbefehl.
 |---|---|
 | Plan-Datei liegt auf `main` | `{done: true}` |
 | kein Plan-Auftrag | `{step: plan, work: plan, round: 1}` |
-| offener Auftrag (nicht terminal) | `{step: await, work, task_id, task, round, of}`; `of` ist der `step` des wartenden Auftrags (`plan` \| `plan-review` \| `implement` \| `review`) (Nachtrag Final-Review Plan B 2026-09-15) |
+| offener Auftrag (nicht terminal) | `{step: await, work, task_id, task, round, of}`; `of` ist der `step` des wartenden Auftrags (`plan` \| `plan-review` \| `implement` \| `review`) (Nachtrag Final-Review Plan B 2026-09-15). Ist `of` = `plan`, trägt die Antwort zusätzlich `spec` = das `spec` dieses Plan-Auftrags — der Orchestrator braucht es für einen Folgeauftrag `--step plan` nach einem Neustart (Nachtrag Final-Review Plan C 2026-09-15) |
 | Plan-Auftrag `failed` oder `canceled` | `{escalate: true, reason, task_id}` |
 | Plan-Auftrag `done`, `plan check` fehlerhaft | `{step: plan, reason: check, errors, round, after, spec}`, `spec` = das `spec` des letzten Plan-Auftrags (Nachtrag Final-Review Plan B 2026-09-15). Geprüft wird der Stand am `head` aus dem `report done` dieses Auftrags (`git show <head>:<pfad>`); `plancmd` prüft jeden erledigten Plan-Auftrag so und übergibt die Ergebnisse an `planrun` — **außer** einem, dem im Log bereits ein erledigtes `plan-review` folgt: der bekommt keinen erneuten Check (leere Fehlerliste, kein `load_plan`), weil das Review nur nach einem sauberen Check dispatcht wurde und ein später geänderter `[routing]`, ein geändertes lean-md oder ein weitergezogener Branch-Kopf einen bereits freigegebenen Plan nicht in die Planung zurückwerfen darf (Nachtrag Final-Review Plan B 2026-09-15). Sind die letzten zwei geprüften Plan-Aufträge beide fehlerhaft → `{escalate: true, reason: check×2}` |
 | Check ok, kein Plan-Review | `{step: plan-review, work: plan-review}` |
@@ -328,7 +333,7 @@ unverändert; `plancmd` wählt die Ausgabeart je Unterbefehl.
 
 | `step` | Inhalt von `plan brief` |
 |---|---|
-| implement (Task) | Render von `briefs/implement` + Render von `task-N` |
+| implement (Task) | Render von `briefs/implement` + `constraints` + Render von `task-N` (Plan C Final-Review F2: der Builder baut sonst ohne die globalen Vorgaben) |
 | implement (branch) | `briefs/implement` + `constraints` + Auftragstext mit den Befunden des Branch-Reviews |
 | review (Task) | `briefs/review` + `constraints` + `task-N` + „Diff: `wt step diff <head>`“ mit `head` aus dem `report start` des **ersten** `implement`-Auftrags der Task + Commit-Liste + ungetrackte Dateien aus `git status --porcelain --untracked-files=all` im Worktree |
 | review (branch) | `briefs/review` + `constraints` + Tasks mit Titeln + „Diff: `wt step diff`“ |
