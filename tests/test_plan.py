@@ -202,6 +202,7 @@ def test_a_clean_plan_has_no_findings():
 @pytest.mark.parametrize(
     ("plan", "expected"),
     [
+        (plan_of(), [Finding("no_tasks", "the plan has no task-N phase")]),
         (
             plan_of(routed(2)),
             [Finding("task_order", "task-2 stands where task-1 belongs", 20, "task-2")],
@@ -276,7 +277,7 @@ def test_a_clean_plan_has_no_findings():
             ],
         ),
     ],
-    ids=["order", "route", "stage", "work", "lane", "files", "dep", "cycle", "deps"],
+    ids=["tasks", "order", "route", "stage", "work", "lane", "files", "dep", "cycle", "deps"],
 )
 def test_each_rule_names_its_finding(plan, expected):
     errors, warnings = rule_findings(plan, {})

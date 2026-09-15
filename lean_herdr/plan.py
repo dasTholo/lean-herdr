@@ -233,6 +233,8 @@ def rule_findings(plan: Plan, data: dict[str, Any]) -> tuple[list[Finding], list
     """The rules of spec section 3 that need no git: `(errors, warnings)`."""
     errors: list[Finding] = []
     warnings: list[Finding] = []
+    if not plan.tasks:
+        errors.append(Finding("no_tasks", "the plan has no task-N phase"))
     for index, task in enumerate(plan.tasks, start=1):
         phase = f"task-{task.number}"
         if task.number != index:
