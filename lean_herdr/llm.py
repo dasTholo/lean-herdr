@@ -32,6 +32,7 @@ from typing import Any
 from lean_herdr import openrouter
 from lean_herdr.bus import BusError, canonical_root
 from lean_herdr.openrouter import ENDPOINT, api_key
+from lean_herdr.orders import COMMIT_RE
 from lean_herdr.settings import (
     EFFORTS,
     SETTINGS_PATH,
@@ -730,6 +731,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"lean-herdr llm: {exc}", file=sys.stderr)
             message = fallback_message(prompt)
         sys.stdout.write(message.rstrip("\n") + "\n")
+        return 0
+    if args.base is not None and not COMMIT_RE.fullmatch(args.base):
+        # A commit id or nothing: `wt step diff <base>` would read a leading `-` as an
+        # option of its own. `skipped` and exit 0, like the failed diff below.
+        print(f"lean-herdr llm: --base {args.base!r} is no commit id", file=sys.stderr)
+        skip = _skip("bad_base")
+        sys.stdout.write(f"{skip['prereview']}\n{skip['prereview_note']}\n")
         return 0
     diff = wt_diff(args.path, base=args.base, timeout_s=args.timeout or DIFF_TIMEOUT_S)
     if diff is None:

@@ -1125,6 +1125,16 @@ def test_prereview_result_hands_base_and_prompt_on(no_store):
     assert "expensive plan reviewer" in json.dumps(spy.json_body())
 
 
+@pytest.mark.parametrize("base", ["--config=/x", "HEAD", "abc123"])
+def test_the_cli_skips_a_base_that_is_no_commit_and_never_reaches_wt(monkeypatch, capsys, base):
+    monkeypatch.setattr(llm, "wt_diff", lambda *a, **kw: pytest.fail("a bad base reached wt"))
+    monkeypatch.setattr(llm, "prereview", lambda *a, **kw: pytest.fail("nothing may be judged"))
+    assert llm.main(["prereview", f"--base={base}"]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "skipped\nbad_base\n"
+    assert "--base" in captured.err
+
+
 def test_the_cli_takes_base_and_plan(monkeypatch):
     fetched: dict[str, object] = {}
     judged_with: dict[str, object] = {}
@@ -1139,6 +1149,6 @@ def test_the_cli_takes_base_and_plan(monkeypatch):
 
     monkeypatch.setattr(llm, "wt_diff", fake_wt_diff)
     monkeypatch.setattr(llm, "prereview", fake_prereview)
-    assert llm.main(["prereview", "--base", "abc123", "--plan", "--order", "the spec"]) == 0
-    assert fetched["base"] == "abc123"
+    assert llm.main(["prereview", "--base", "abc1234", "--plan", "--order", "the spec"]) == 0
+    assert fetched["base"] == "abc1234"
     assert judged_with["plan"] is True

@@ -135,12 +135,12 @@ def _text(value: Any) -> str | None:
 #: `main` is not a head, because those move. Hex-only also keeps the value safe at
 #: `git show <head>:…`, `git log <head>..HEAD` and `wt step diff <head>`, where a
 #: leading `-` would read as an option.
-_COMMIT_RE = re.compile(r"[0-9a-f]{7,64}")
+COMMIT_RE = re.compile(r"[0-9a-f]{7,64}")
 
 
 def _commit(value: Any) -> str | None:
     """A payload head, or None for an absent one and for one no commit id looks like."""
-    return value if isinstance(value, str) and _COMMIT_RE.fullmatch(value) else None
+    return value if isinstance(value, str) and COMMIT_RE.fullmatch(value) else None
 
 
 def _apply(order: Order, event: Event) -> Order:
