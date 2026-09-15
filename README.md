@@ -9,13 +9,15 @@ Installing it, keeping it current and working on this repository:
 
 ## How it works
 
-Three roles, each an agent in a Herdr pane of its own:
+Five roles, each an agent in a Herdr pane of its own:
 
 | Role | Runtime as set up here | Job |
 |---|---|---|
 | orchestrator | opencode, a cheap model | takes the task from you, hands out orders, merges -- writes no code, reads no project files |
 | builder | Claude Code | carries out one order in a worktree of its own |
 | reviewer | opencode, another model than the builder's | rules on the builder's branch: `result` or `reject` |
+| plan-writer | Claude Code, a strong model | writes one implementation plan on `plan/<slug>` from a spec |
+| plan-reviewer | opencode, another model than the plan writer's | rules on the plan before any task of it runs: `result` or `reject` |
 
 One task, start to finish:
 
@@ -47,6 +49,24 @@ the Herdr plugin shows each pane's context and starts the orchestrator with
 one keystroke. Which runtime and model each role gets is set in
 `.lean-ctx/lean-herdr/config.toml`, see [Configuration](#configuration).
 
+### Plan mode
+
+A spec becomes a plan, and the plan runs task by task, serially, on one branch `plan/<slug>`:
+
+1. You tell the orchestrator: "Plan spec `docs/specs/<…>.md` as `<slug>` and run it".
+2. `plan`: the plan writer writes `docs/lean-md/plans/<slug>.lmd.md` from
+   `.lean-ctx/lean-md/herdr-plan-template.lmd.md` and commits it, and `lean-herdr plan check <slug>`
+   holds it to the rules. A small model pre-reviews it against the spec.
+3. `plan-review`: the plan reviewer rules on it.
+4. Per task: `implement` on the work its `route` names, then `review` of exactly that task's
+   change -- `wt step diff` from the head the task started on.
+5. A review of the whole branch, then the merge into `main`, without a squash: every task
+   commit passed its own review.
+
+`lean-herdr plan next <slug>` names each step from the order log, so the orchestrator counts
+nothing. Two failed checks or two rejections in a row end in an escalation. Every worker
+fetches its brief with `lean-herdr plan brief --task o-…`.
+
 ## The work-order path
 
 Orders live in an append-only, hash-chained event log under
@@ -54,6 +74,8 @@ Orders live in an append-only, hash-chained event log under
 registration, no MCP identity, no cleanup. The orchestrator drives it with
 
     lean-herdr dispatch order    --to <agent> [--after o-…] --message "…"
+    lean-herdr dispatch order    --to <agent> --plan <slug> --step plan|plan-review|implement|review \
+                                     [--plan-task N|branch] [--spec <path>] [--after o-…] --message "…"
     lean-herdr dispatch answer   --task-id o-… --message "…"
     lean-herdr dispatch cancel   --task-id o-… --message "…"
     lean-herdr dispatch remember --key lean-herdr/<branch> --message "…"
@@ -61,6 +83,15 @@ registration, no MCP identity, no cleanup. The orchestrator drives it with
 and the worker answers with
 
     lean-herdr report next | show | start | done | fail | ask
+
+`report start` and `report done` stamp the worktree's `head` and `changes` (read from
+`wt list --format=json`) into the event; a failing `wt` leaves `wt_error` instead, and the
+report still succeeds. A plan run reads them:
+
+    lean-herdr plan check <slug>          # the committed plan against the rules
+    lean-herdr plan next <slug>           # the next step, one JSON line
+    lean-herdr plan show <slug>           # every task with its state, rounds and orders
+    lean-herdr plan brief --task o-…      # plain text: what a worker works from
 
 Nothing removes an order. A non-terminal one left lying is the evidence
 that a run broke off; `cancel` closes it.
@@ -77,6 +108,11 @@ Only `reject` changes anything. `pass` and `skipped` are the same to the
 orchestrator: the strong reviewer runs either way. Every failure of the
 pre-review itself -- no key, timeout, an unresolvable worktree -- is
 `skipped` with a reason, never a rejection.
+
+An order of a plan gives the judge a sharper picture: a `plan` order is judged against the
+spec, read from `main`, and the plan rules; an `implement` order of a task against that
+task's rendered phase, on the diff since the task's own `report start` head. By hand:
+`lean-herdr llm prereview --base <sha>`, and `--plan` for the plan prompt.
 
 `--timeout-ms` does not cover the pre-review. The judgement runs only where
 the wait ended in `completed` -- a run that hits the timeout never reaches it
@@ -160,21 +196,29 @@ missing evidence is not a pass.
   into a project. The copies in this repository are copies of exactly
   these files, and `tests/test_templates.py` keeps them byte-identical.
 
+- For plan runs: `.lean-ctx/lean-md/herdr-plan-template.lmd.md` and
+  `.lean-ctx/lean-md/herdr-recipes.lmd.md` (the macros `route`, `lane`, `commit` and `gate`),
+  `.lean-ctx/lean-md/lang/python.lmd.md` for the plan writer, four briefs under
+  `.lean-ctx/lean-herdr/briefs/`, and `.lean-ctx/lean-herdr/bin/pylsp`, which hands
+  lean-ctx's Python language server to `ty server`.
+
 ## Setting up a project
 
 In a repository that has never seen lean-herdr:
 
     lean-herdr workspace init
 
-It writes eleven files -- the config, the three role prompts and three claude role settings under
-`.lean-ctx/lean-herdr/`, and `opencode.jsonc`, `.claude/settings.json`,
+It writes twenty-three files -- the config, five role prompts, five claude role settings,
+four briefs and `bin/pylsp` under `.lean-ctx/lean-herdr/`, the plan template, the recipes
+and the Python pack under `.lean-ctx/lean-md/`, and `opencode.jsonc`, `.claude/settings.json`,
 `.config/wt.toml` and `.opencode/plugins/lean-ctx-policy.js` where their
 owners look for them. An existing file is skipped and named in the result;
 `--force` overwrites. It needs a git repository and does not create one.
 
-Three of the eleven carry this project's own commands: `.config/wt.toml` runs
-them as the pre-merge gate, and `.claude/settings.json` and `opencode.jsonc`
-let the builder run the same two first. Name them on the first run:
+Five of them carry this project's own commands: `.config/wt.toml` runs
+them as the pre-merge gate, `.claude/settings.json` and `opencode.jsonc`
+let the builder run the same two first, and the plan template and the
+recipes bake them into every task's gate. Name them on the first run:
 
     lean-herdr workspace init --test "cargo test" --lint "cargo clippy"
 
@@ -185,10 +229,11 @@ the builder's gate is your call.
 A claude worker also gets `--settings .lean-ctx/lean-herdr/claude/<role>.json`
 beside `.claude/settings.json`. Claude Code merges the permission lists of
 every source and a `deny` beats every `allow`, so a role file can only
-narrow: `builder.json` is empty, `reviewer.json` takes back the editors,
-`git add`, `git commit`, `wt step commit` and lean-ctx's three write tools, and
-`orchestrator.json` takes back the editors and lean-ctx's three write tools
-too, leaving Bash open for `lean-herdr dispatch` and `report`.
+narrow: `builder.json` and `plan-writer.json` deny `git push`, `wt merge` and
+`wt step push`; `reviewer.json` and `plan-reviewer.json` take back the editors,
+`git add`, `git commit`, `wt step commit` and lean-ctx's three write tools and deny
+the same three; `orchestrator.json` takes back the editors and lean-ctx's three
+write tools too, leaving Bash open for `lean-herdr dispatch` and `report`.
 An opencode worker gets the same per role from its block in
 `opencode.jsonc`. `dispatch` refuses a role whose prompt, opencode block or
 claude file is missing, before it opens a worktree or a pane.
@@ -201,14 +246,28 @@ needs the ignore line for its temp file:
 
     .lean-ctx/lean-herdr/.tmp-*
 
+`init` also sets lean-md up in the project: `lean-md skill install --local` for
+`lmd-writing-plans` and `lmd-brainstorm` writes the skill stubs under `.claude/skills/` and
+lean-md's seeds under `.lean-ctx/lean-md/`. The result reports it as `lean_md`; without
+lean-md on PATH the templates land all the same. `--update` runs the installation again,
+and lean-md refreshes only the seeds nobody edited. `--lang python`, the default and so far
+the only choice, names the language of the plan files.
+
+Commit what `init` wrote, on `main`, before the first plan run: a worker renders its brief
+in a worktree of `plan/<slug>`, which branches off `main`.
+
 `lean-herdr workspace check` answers, without starting or writing anything,
 whether `up` and `dispatch` will run here and what gets quietly worse: the
 config, each template's state, the install, the plugin link, the commit
 generator and the ignore rules.
 
+For plan runs it also names a lean-md without `outline --json`, a missing lean-md gateway
+entry or skills directory, a missing `lmd-writing-plans` stub, a missing `ty`, and every file
+`init` or lean-md wrote that is not committed.
+
 It also spends one aborted opencode bootstrap in the project, up to eight
 seconds. opencode's first bootstrap in a project that carries a project
-plugin hangs -- and one of the eleven files is such a plugin. The aborted
+plugin hangs -- and one of these files is such a plugin. The aborted
 run is the cure: every start after it takes about three seconds. The
 result reports it as `warmed` once the warm-up RAN -- not that it
 succeeded: a project whose `opencode.jsonc` never named the orchestrator
@@ -287,7 +346,7 @@ keys of its own — see the work-order section. `models.auto.toml` is what
 hand. A broken `models.auto.toml` costs the overlay alone, a broken `config.toml` the defaults -- neither costs the commit.
 
 Which model and which runtime each role gets is configured per role, in
-`[roles.orchestrator]`, `[roles.builder]` and `[roles.reviewer]`:
+`[roles.orchestrator]`, `[roles.builder]`, `[roles.reviewer]`, `[roles.plan-writer]` and `[roles.plan-reviewer]`:
 
     [roles.builder]
     kind  = "claude"
@@ -298,8 +357,16 @@ Which model and which runtime each role gets is configured per role, in
     model = "<a different one>"   # different blind spots is the point
     # shares_reviewed_model = true # confirm the same model on purpose
 
+    [roles.plan-writer]
+    kind  = "claude"
+    model = "<a strong model>"
+
+    [roles.plan-reviewer]
+    kind  = "opencode"
+    model = "<a different one>"
+
 `shares_reviewed_model` belongs to the role behind `review` and silences the
-warning for every role it reviews. It used to be called
+warning for every role it reviews. The role behind `plan-review` is held to the role behind `plan` the same way. It used to be called
 `shares_builder_model`; that name is an unknown key now, and a config
 carrying it fails with `config_error:` until the line is renamed.
 
@@ -312,8 +379,9 @@ is what the keystroke has always done. `dispatch orchestrator` is not a
 start and has no such exception — it needs `--model` or a set `model`.
 
 Which role does which kind of work is set in `[routing]`. Without the table
-the two built-in works apply -- `implement` goes to `builder`, `review` to
-`reviewer` -- and a work of your own needs a line and a role:
+the four built-in works apply -- `implement` goes to `builder`, `review` to
+`reviewer`, `plan` to `plan-writer`, `plan-review` to `plan-reviewer` -- and a work
+of your own needs a line and a role:
 
     [routing]
     rename = "refactorer"
@@ -325,9 +393,11 @@ the two built-in works apply -- `implement` goes to `builder`, `review` to
 `lean-herdr dispatch --work rename` then builds the `refactorer` with
 `.lean-ctx/lean-herdr/roles/refactorer.md`; an opencode role also needs its
 block under `agent` in `opencode.jsonc`, a claude role its
-`.lean-ctx/lean-herdr/claude/refactorer.json`. `plan`, `plan-review` and
-`integrate` are reserved and have no built-in role yet: a call without a
-`[routing]` line for one is `config_error: no role for work 'plan'`. A work
+`.lean-ctx/lean-herdr/claude/refactorer.json`. `integrate` is reserved and has no
+built-in role yet: a call without a `[routing]` line for it is
+`config_error: no role for work 'integrate'`. A plan's task may route to a work of the
+project's own -- `implement-small = "builder-small"` sends small tasks to a cheaper
+model. A work
 is spelled `[a-z][a-z0-9-]*`, a role `[a-z][a-z0-9_-]*`.
 `lean-herdr workspace check` names every work whose role lacks its prompt,
 its runtime, its file or a sentence the worker cannot run without.

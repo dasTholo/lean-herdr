@@ -86,6 +86,10 @@ def test_install_names_every_runtime_dependency():
         "--reinstall",
         # The hooks this repository gates its own commits and pushes with.
         "pre-commit install",
+        # Plan runs: lean-md reads the plan's structure, ty serves Python workers.
+        "`lean-md` >= 0.2.4",
+        "uv tool install ty",
+        "seven verbs",
     ):
         assert requirement in text, f"INSTALL.md does not name {requirement!r}"
 
@@ -99,6 +103,9 @@ def test_readme_names_the_work_order_path():
         "lean-herdr dispatch order",
         "lean-herdr report",
         "ORCHESTRATOR = orch",
+        "lean-herdr plan next <slug>",
+        "lean-herdr plan brief --task o-…",
+        "--plan <slug> --step",
     ):
         assert requirement in text, f"README does not name {requirement!r}"
 

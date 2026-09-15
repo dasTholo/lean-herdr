@@ -11,9 +11,11 @@ Herdr installs no toolchains — these things must be present:
 
 | What | What for | Installation |
 |---|---|---|
-| `lean-herdr` (this project) | one binary, six verbs: dispatch, llm, models, plugin, report, workspace | `uv tool install --reinstall "lean-herdr @ git+file:///home/tholo/Scripts/lean-herdr@main"` — a snapshot of `main`, see [Updating](#updating) |
+| `lean-herdr` (this project) | one binary, seven verbs: dispatch, llm, models, plan, plugin, report, workspace | `uv tool install --reinstall "lean-herdr @ git+file:///home/tholo/Scripts/lean-herdr@main"` — a snapshot of `main`, see [Updating](#updating) |
 | `herdr` >= 0.8.0 (measured on 0.8.2 in this tree) | panes, agents, workspaces | see the Herdr project |
 | `lean-ctx` >= 3.10.1 | agent bus, project memory, tool profiles | `cargo install lean-ctx` |
+| `lean-md` >= 0.2.4 | a plan's structure (`lean-herdr plan`), the briefs, the skills behind the lean-ctx gateway | by hand: the release asset under `~/.local/share/lean-ctx/addons/bin/lean-md/<version>/`, then `command` and `binary_sha256` of the `lean-md` gateway entry in `~/.config/lean-ctx/config.toml`, and a lean-ctx restart; `lean-md outline - --json` must answer |
+| `ty` | Python workers: `.lean-ctx/lean-herdr/bin/pylsp` starts `ty server` for lean-ctx's code navigation | `uv tool install ty` |
 | `uv` | development: test runner and dev dependencies | `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
 | `python3` | runs the Claude-Code hooks of the policy adapter | your distribution |
 | `worktrunk` (`wt`) >= 0.75.0 | one worktree per branch, merge, cleanup | `cargo install worktrunk` |
@@ -42,6 +44,11 @@ would then not run at all:
 
     wt config approvals list   # expectation: "state": "approved"
     wt config approvals add    # if "approval_required"
+
+`lean-herdr workspace init --update` brings the permissions for plan runs into
+`opencode.jsonc` and `.claude/settings.json`: `lean-herdr plan brief | check | next | show`
+and `wt step diff`, all of them reading only. A claude worker's role file denies
+`git push`, `wt merge` and `wt step push`.
 
 ## The commit generator
 
@@ -111,6 +118,9 @@ merge, take the new snapshot on purpose -- nothing reinstalls itself:
 Then, in every project that uses it:
 
     lean-herdr workspace init --update
+
+It also runs `lean-md skill install` again for `lmd-writing-plans` and `lmd-brainstorm`;
+lean-md refreshes only the seeds nobody edited. Commit what it changed, on `main`.
 
 If that rewrote `.config/wt.toml`, the changed gate command needs a fresh
 `wt config approvals add` -- until then worktrunk skips it silently.
