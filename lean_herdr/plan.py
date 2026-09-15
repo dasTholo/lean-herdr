@@ -10,9 +10,11 @@ from __future__ import annotations
 import json
 import re
 import subprocess
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+from lean_herdr.settings import STAGES, SettingsError, role_for_work
 
 PLANS_DIR = "docs/lean-md/plans"
 
@@ -23,6 +25,26 @@ TASK_PHASE_RE = re.compile(r"task-([1-9][0-9]*)")
 
 GIT_TIMEOUT_S = 10.0
 OUTLINE_TIMEOUT_S = 30.0
+
+#: What a worker renders or reads inside the plan branch's worktree (spec section 4).
+#: Role prompts and `bin/` are read from the repository root by `dispatch`, not from here.
+BRANCH_FILES = (
+    ".lean-ctx/lean-md.lock",
+    ".lean-ctx/lean-md/plan-recipes.lmd.md",
+    ".lean-ctx/lean-md/herdr-recipes.lmd.md",
+    ".lean-ctx/lean-md/herdr-plan-template.lmd.md",
+    ".lean-ctx/lean-md/lang/python.lmd.md",
+    ".lean-ctx/lean-herdr/briefs/implement.lmd.md",
+    ".lean-ctx/lean-herdr/briefs/review.lmd.md",
+    ".lean-ctx/lean-herdr/briefs/plan.lmd.md",
+    ".lean-ctx/lean-herdr/briefs/plan-review.lmd.md",
+    ".claude/skills/lmd-writing-plans/SKILL.md",
+    ".claude/skills/lmd-rendering-skills/SKILL.md",
+)
+
+#: A plan branch leaves these alone: `plan check` resolves them against the repository
+#: root, a worker against the worktree, and both must read the same files.
+TOOLING_DIRS = (".lean-ctx/lean-md/", ".lean-ctx/lean-herdr/briefs/")
 
 
 class PlanError(Exception):
@@ -189,3 +211,168 @@ def structure(slug: str, ref: str, data: dict[str, Any]) -> Plan:
             )
         )
     return Plan(slug=slug, ref=ref, tasks=tuple(tasks), lanes=lanes, errors=errors)
+
+
+def _reach(lanes: dict[str, tuple[str, ...]]) -> dict[str, set[str]]:
+    """Every declared lane each lane depends on, directly or through another one."""
+    reach: dict[str, set[str]] = {}
+    for lane, deps in lanes.items():
+        seen: set[str] = set()
+        stack = list(deps)
+        while stack:
+            dep = stack.pop()
+            if dep in seen or dep not in lanes:
+                continue
+            seen.add(dep)
+            stack.extend(lanes[dep])
+        reach[lane] = seen
+    return reach
+
+
+def rule_findings(plan: Plan, data: dict[str, Any]) -> tuple[list[Finding], list[Finding]]:
+    """The rules of spec section 3 that need no git: `(errors, warnings)`."""
+    errors: list[Finding] = []
+    warnings: list[Finding] = []
+    for index, task in enumerate(plan.tasks, start=1):
+        phase = f"task-{task.number}"
+        if task.number != index:
+            errors.append(
+                Finding(
+                    "task_order", f"{phase} stands where task-{index} belongs", task.line, phase
+                )
+            )
+        if not task.routed:
+            errors.append(
+                Finding(
+                    "no_route",
+                    f"{phase} does not start with @call route(work, lane, files)",
+                    task.line,
+                    phase,
+                )
+            )
+            continue
+        if task.work in STAGES:
+            errors.append(
+                Finding(
+                    "stage_as_work",
+                    f"{phase}: {task.work!r} is a stage of a plan run, not a work",
+                    task.line,
+                    phase,
+                )
+            )
+        else:
+            try:
+                role_for_work(task.work, data)
+            except SettingsError:
+                errors.append(
+                    Finding(
+                        "unknown_work",
+                        f"{phase}: no role for work {task.work!r} in [routing]",
+                        task.line,
+                        phase,
+                    )
+                )
+        if task.lane not in plan.lanes:
+            errors.append(
+                Finding(
+                    "unknown_lane",
+                    f"{phase}: lane {task.lane!r} is not declared in the lanes phase",
+                    task.line,
+                    phase,
+                )
+            )
+        if not task.files:
+            errors.append(Finding("no_files", f"{phase}: route names no files", task.line, phase))
+    for lane, deps in sorted(plan.lanes.items()):
+        for dep in deps:
+            if dep not in plan.lanes:
+                errors.append(
+                    Finding(
+                        "unknown_lane",
+                        f"lane {lane!r} depends on undeclared lane {dep!r}",
+                        0,
+                        "lanes",
+                    )
+                )
+    reach = _reach(plan.lanes)
+    for lane in sorted(plan.lanes):
+        if lane in reach[lane]:
+            errors.append(Finding("lane_cycle", f"lane {lane!r} depends on itself", 0, "lanes"))
+    for position, task in enumerate(plan.tasks):
+        later = {other.lane for other in plan.tasks[position + 1 :]}
+        blocking = sorted(later & reach.get(task.lane, set()))
+        if task.routed and blocking:
+            errors.append(
+                Finding(
+                    "order_vs_deps",
+                    f"task-{task.number} (lane {task.lane!r}) comes before a task of lane {blocking[0]!r} it depends on",
+                    task.line,
+                    f"task-{task.number}",
+                )
+            )
+    owners: dict[str, set[str]] = {}
+    for task in plan.tasks:
+        for path in task.files:
+            owners.setdefault(path, set()).add(task.lane)
+    for path, lanes in sorted(owners.items()):
+        ordered = sorted(lanes)
+        unrelated = [
+            (a, b)
+            for i, a in enumerate(ordered)
+            for b in ordered[i + 1 :]
+            if b not in reach.get(a, set()) and a not in reach.get(b, set())
+        ]
+        if unrelated:
+            a, b = unrelated[0]
+            warnings.append(
+                Finding(
+                    "lane_overlap",
+                    f"{path} is touched by lanes {a!r} and {b!r}, and neither depends on the other",
+                )
+            )
+    return errors, warnings
+
+
+def branch_findings(root: Path, plan: Plan, *, runner: Any = subprocess.run) -> list[Finding]:
+    """What the plan branch lacks or changes that its workers need unchanged from main."""
+    if plan.ref == "main":
+        return []
+    errors: list[Finding] = []
+    for path in BRANCH_FILES:
+        proc = run_git(root, "cat-file", "-e", f"{plan.ref}:{path}", runner=runner)
+        if proc is None or proc.returncode != 0:
+            errors.append(
+                Finding(
+                    "missing_on_branch",
+                    f"{plan.ref} carries no {path} -- commit the output of `lean-herdr workspace init` on main",
+                )
+            )
+    proc = run_git(
+        root, "diff", "--name-only", f"main...{plan.ref}", "--", *TOOLING_DIRS, runner=runner
+    )
+    changed = proc.stdout.split() if proc is not None and proc.returncode == 0 else []
+    for path in changed:
+        errors.append(
+            Finding(
+                "branch_touches_tooling",
+                f"{plan.ref} changes {path}; plan branches leave the tooling to main",
+            )
+        )
+    return errors
+
+
+def load_plan(
+    root: Path,
+    slug: str,
+    data: dict[str, Any],
+    *,
+    ref: str | None = None,
+    runner: Any = subprocess.run,
+) -> Plan:
+    """Read, outline and check one plan. Raises PlanError when it cannot be read at all."""
+    found, text = read_source(root, slug, ref=ref, runner=runner)
+    plan = structure(slug, found, outline(root, text, runner=runner))
+    errors, warnings = rule_findings(plan, data)
+    errors += branch_findings(root, plan, runner=runner)
+    ordered = sorted([*plan.errors, *errors], key=lambda finding: (finding.line, finding.kind))
+    return replace(plan, errors=tuple(ordered), warnings=tuple(warnings))
