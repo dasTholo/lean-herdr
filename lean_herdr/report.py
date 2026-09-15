@@ -18,7 +18,7 @@ import json
 import os
 import subprocess
 import sys
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -40,6 +40,18 @@ from lean_herdr.settings import (
 )
 
 GIT_TIMEOUT_S = 5.0
+
+
+#: `wt list` is local and fast; it must not hold up a report.
+WT_TIMEOUT_S = 5.0
+
+#: The worktree flags a stamp keeps, in this order (`wt list --format=json`,
+#: `worktree.changes`).
+CHANGE_FLAGS = ("staged", "modified", "untracked", "renamed", "deleted", "conflicted")
+
+#: The two subcommands whose event carries the stamp: `start` fixes the base a review
+#: diffs from, `done` what the worker left behind.
+STAMPED = ("start", "done")
 
 # `AGENT_ENV` and `ROLE_ENV` are IMPORTED, never spelled here: dispatch.py
 # writes exactly these two variables onto the pane it splits, and a second
@@ -210,6 +222,53 @@ def show_order(agent: str, task_id: str, *, orders_dir: str | Path) -> dict[str,
     }
 
 
+def worktree_stamp(
+    cwd: str | Path | None = None, *, runner: Any = subprocess.run
+) -> dict[str, Any]:
+    """`head` and set `changes` of the worktree this process runs in -- or `wt_error`.
+
+    Read from the entry `wt list --format=json` marks `worktree.current`. Never raises:
+    a stamp that cannot be taken is recorded as `wt_error`, and the report goes
+    through anyway.
+    """
+    try:
+        proc = runner(
+            ["wt", "list", "--format=json"],
+            cwd=str(cwd) if cwd is not None else None,
+            capture_output=True,
+            text=True,
+            timeout=WT_TIMEOUT_S,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return {"wt_error": f"wt list failed: {exc}"}
+    if proc.returncode != 0:
+        return {"wt_error": f"wt list exited {proc.returncode}: {(proc.stderr or '').strip()}"}
+    try:
+        data = json.loads(proc.stdout or "")
+    except json.JSONDecodeError as exc:
+        return {"wt_error": f"wt list printed no JSON: {exc}"}
+    # Every level is checked for its shape: a report must not crash on output it did not expect.
+    items = data.get("items") if isinstance(data, dict) else None
+    current: dict[str, Any] = next(
+        (
+            item
+            for item in (items if isinstance(items, list) else [])
+            if isinstance(item, dict)
+            and isinstance(item.get("worktree"), dict)
+            and item["worktree"].get("current") is True
+        ),
+        {},
+    )
+    head = current.get("head")
+    sha = head.get("sha") if isinstance(head, dict) else None
+    if not isinstance(sha, str) or not sha:
+        return {"wt_error": "wt list names no current worktree with a head"}
+    changes = current["worktree"].get("changes")
+    flags = changes if isinstance(changes, dict) else {}
+    return {"head": sha, "changes": [flag for flag in CHANGE_FLAGS if flags.get(flag) is True]}
+
+
 def report(
     agent: str,
     command: str,
@@ -217,6 +276,7 @@ def report(
     message: str,
     *,
     orders_dir: str | Path,
+    stamper: Callable[[], Mapping[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """Append the event this subcommand stands for.
 
@@ -234,13 +294,10 @@ def report(
             "task_id": task_id,
             "error": f"usage_error: {task_id} is already {order.state}",
         }
-    event = append(
-        task_id,
-        KIND_OF[command],
-        agent,
-        {"message": message} if message else {},
-        orders=orders_dir,
-    )
+    payload: dict[str, Any] = {"message": message} if message else {}
+    if stamper is not None and command in STAMPED:
+        payload.update(stamper())
+    event = append(task_id, KIND_OF[command], agent, payload, orders=orders_dir)
     return {"ok": True, "agent": agent, "task_id": task_id, "state": event.kind}
 
 
@@ -317,6 +374,7 @@ def main(argv: list[str] | None = None) -> int:
                     args.task,
                     args.message or "",
                     orders_dir=orders_dir,
+                    stamper=worktree_stamp,
                 )
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}

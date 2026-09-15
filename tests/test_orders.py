@@ -120,6 +120,41 @@ def test_the_plan_fields_are_kept_as_given():
     assert (plain.plan, plain.step, plain.plan_task, plain.spec) == (None, None, None, None)
 
 
+def test_the_stamps_of_start_and_done_are_kept():
+    order = fold(
+        [
+            created(),
+            event("working", seq=2, head="aaa111", changes=[]),
+            event("input-required", seq=3, message="which?"),
+            event("answered", ORCH, 4, message="this"),
+            event("working", seq=5, head="bbb222", changes=[]),
+            event("completed", seq=6, message="done", head="ccc333", changes=["modified"]),
+        ]
+    )
+    assert order.start_head == "aaa111", "the first start is the task's base"
+    assert order.done_head == "ccc333"
+    assert order.done_changes == ("modified",)
+
+
+def test_an_order_without_stamps_knows_nothing_about_its_worktree():
+    order = fold(
+        [created(), event("working", seq=2), event("completed", seq=3, wt_error="wt list exited 1")]
+    )
+    assert (order.start_head, order.done_head, order.done_changes) == (None, None, None)
+
+
+def test_a_head_that_is_no_commit_id_is_no_head():
+    """A head reaches `git show <head>:…` and `wt step diff <head>`; `-` there reads as an option."""
+    order = fold(
+        [
+            created(),
+            event("working", seq=2, head="--output=/tmp/x", changes=[]),
+            event("completed", seq=3, head="HEAD~1", changes=[]),
+        ]
+    )
+    assert (order.start_head, order.done_head) == (None, None)
+
+
 def test_folding_nothing_yields_an_order_with_no_state():
     """A task id that has no events must not look like a fresh order."""
     order = fold([])

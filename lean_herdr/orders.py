@@ -90,6 +90,13 @@ class Order:
     step: str | None = None
     plan_task: str | None = None
     spec: str | None = None
+
+    #: `head` of the first `working` event (`report start`), and `head` and `changes` of
+    #: the `completed` event (`report done`). `done_changes` None: nothing is known --
+    #: no stamp, or a `wt_error` instead of one.
+    start_head: str | None = None
+    done_head: str | None = None
+    done_changes: tuple[str, ...] | None = None
     messages: tuple[tuple[str, str], ...] = ()
 
     @property
@@ -117,6 +124,17 @@ def _text(value: Any) -> str | None:
     return str(value) if value else None
 
 
+#: A head as `wt list` stamps it. Letters and digits only: the value reaches
+#: `git show <head>:…`, `git log <head>..HEAD` and `wt step diff <head>`, where a
+#: leading `-` would read as an option.
+_COMMIT_RE = re.compile(r"[0-9A-Za-z]{1,64}")
+
+
+def _commit(value: Any) -> str | None:
+    """A payload head, or None for an absent one and for one no commit id looks like."""
+    return value if isinstance(value, str) and _COMMIT_RE.fullmatch(value) else None
+
+
 def _apply(order: Order, event: Event) -> Order:
     messages = order.messages
     text = event.message.strip()
@@ -138,11 +156,22 @@ def _apply(order: Order, event: Event) -> Order:
             state=_STATE_OF["created"],
             messages=messages,
         )
+    start_head = order.start_head
+    if event.kind == "working" and start_head is None:
+        start_head = _commit(event.payload.get("head"))
+    done_head, done_changes = order.done_head, order.done_changes
+    if event.kind == "completed":
+        done_head = _commit(event.payload.get("head"))
+        changes = event.payload.get("changes")
+        done_changes = tuple(str(flag) for flag in changes) if isinstance(changes, list) else None
     return replace(
         order,
         id=order.id or event.task_id,
         state=_STATE_OF.get(event.kind, event.kind),
         messages=messages,
+        start_head=start_head,
+        done_head=done_head,
+        done_changes=done_changes,
     )
 
 

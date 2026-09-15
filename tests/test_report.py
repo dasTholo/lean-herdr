@@ -15,8 +15,9 @@ from lean_herdr.report import (
     report,
     resolve_agent,
     show_order,
+    worktree_stamp,
 )
-from tests.doubles import Completed
+from tests.doubles import Completed, FakeProc
 
 ROOT = Path("/repo")
 ME = "builder-feat-x"
@@ -150,6 +151,78 @@ def test_an_unknown_event_kind_never_counts_as_terminal(tmp_path):
 
 def test_an_unknown_order_is_not_found(tmp_path):
     assert report(ME, "start", "o-nope", "", orders_dir=tmp_path)["error"] == "task_not_found"
+
+
+WT_LIST = {
+    "items": [
+        {"branch": "main", "head": {"sha": "0000"}, "worktree": {"current": False, "changes": {}}},
+        {
+            "branch": "plan/shop",
+            "head": {"sha": "abc123"},
+            "worktree": {
+                "current": True,
+                "changes": {"staged": False, "modified": True, "untracked": True},
+            },
+        },
+    ]
+}
+
+
+def test_the_stamp_reads_head_and_set_flags_of_the_current_worktree():
+    runner = FakeProc(replies={("list", "--format=json"): WT_LIST})
+    assert worktree_stamp(runner=runner) == {"head": "abc123", "changes": ["modified", "untracked"]}
+    assert runner.called_with("wt", "list", "--format=json")
+
+
+@pytest.mark.parametrize(
+    ("reply", "error"),
+    [
+        (Completed(returncode=1, stderr="not a repo"), "wt list exited 1: not a repo"),
+        (Completed(stdout="no json"), "wt list printed no JSON"),
+        ({"items": []}, "wt list names no current worktree with a head"),
+        ({"items": "none"}, "wt list names no current worktree with a head"),
+        (
+            {"items": [{"worktree": "current", "head": {"sha": "abc"}}]},
+            "wt list names no current worktree with a head",
+        ),
+        (
+            {"items": [{"worktree": {"current": True}, "head": "abc"}]},
+            "wt list names no current worktree with a head",
+        ),
+    ],
+)
+def test_a_stamp_that_cannot_be_taken_is_a_wt_error(reply, error):
+    stamp = worktree_stamp(runner=FakeProc(replies={("list", "--format=json"): reply}))
+    assert set(stamp) == {"wt_error"}
+    assert stamp["wt_error"].startswith(error)
+
+
+def test_a_missing_wt_is_a_wt_error_too():
+    assert set(worktree_stamp(runner=FakeProc(raises=FileNotFoundError("wt")))) == {"wt_error"}
+
+
+@pytest.mark.parametrize(
+    ("command", "stamped"), [("start", True), ("done", True), ("fail", False), ("ask", False)]
+)
+def test_start_and_done_carry_the_stamp(tmp_path, command, stamped):
+    order(tmp_path, "o-a-1")
+    report(
+        ME,
+        command,
+        "o-a-1",
+        "a word",
+        orders_dir=tmp_path,
+        stamper=lambda: {"head": "abc123", "changes": []},
+    )
+    payload = read_events("o-a-1", orders=tmp_path)[-1].payload
+    assert ("head" in payload) is stamped
+
+
+def test_a_refused_report_takes_no_stamp(tmp_path):
+    order(tmp_path, "o-a-1", to_agent=OTHER)
+    calls = []
+    report(ME, "done", "o-a-1", "x", orders_dir=tmp_path, stamper=lambda: calls.append(1) or {})
+    assert calls == []
 
 
 # -- show -------------------------------------------------------------
