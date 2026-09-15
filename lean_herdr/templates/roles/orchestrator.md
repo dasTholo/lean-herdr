@@ -279,6 +279,9 @@ First set the workspace token, then stop:
 
     herdr workspace report-metadata <id> --source lean.herdr --token esc="<task_id>: <reason>"
 
+`<id>` is the worker's `open_workspace_id` from `herdr worktree list --cwd <repo_root>`,
+the entry whose `branch` is the worker's branch.
+
 Then into your terminal — and after that nothing more:
 
     ESCALATION <task_id>: <reason>

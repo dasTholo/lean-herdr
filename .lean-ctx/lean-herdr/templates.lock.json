@@ -14,7 +14,7 @@
     ".lean-ctx/lean-herdr/claude/reviewer.json": "075dccbd52b16b699a6fc22ea11fa3932a42e30165b3b1407907996bfab5ddf8",
     ".lean-ctx/lean-herdr/config.toml": "8c1b431f4b2e3162f87ec15ae37748cf6704940fcb95c35c18485bc32192ad6f",
     ".lean-ctx/lean-herdr/roles/builder.md": "42bb8e174fd3e9a4a1827a7f05db10c37a8e480cd278befc589df330fbaf7799",
-    ".lean-ctx/lean-herdr/roles/orchestrator.md": "7e9a93288afd9a0cc5478a0888cea24636c963cdf89911d3c98269b9a5298cc4",
+    ".lean-ctx/lean-herdr/roles/orchestrator.md": "8f91d728a9857b14ce67fe01dc771dc5a9f4c5bed909b49cf506cba6390f64b9",
     ".lean-ctx/lean-herdr/roles/plan-reviewer.md": "9453141872b42a9ac206df140ffc5d702274e818e236edd06ef488edf77559f3",
     ".lean-ctx/lean-herdr/roles/plan-writer.md": "44302e742782a8e78b25386a4237181393ead1e1c494ecb782391d7c03cef792",
     ".lean-ctx/lean-herdr/roles/reviewer.md": "c245ddb80405100e6c6592bab576ef2026d454c7b0064f5fce4483f1504a98a1",

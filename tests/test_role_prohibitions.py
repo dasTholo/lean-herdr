@@ -348,6 +348,11 @@ MANDATORY_SENTENCES = [
     ),
     (
         "orchestrator.md",
+        "`<id>` is the worker's `open_workspace_id` from `herdr worktree list --cwd <repo_root>`",
+        "E4: the escalation token lands on the worker's workspace, which is still open",
+    ),
+    (
+        "orchestrator.md",
         "lean-herdr plan next <slug>",
         "D8: the log is the state, and plan next names the next step",
     ),

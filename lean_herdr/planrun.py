@@ -14,7 +14,8 @@ from lean_herdr.orders import PLAN_TASK_RE, Order, message_from
 from lean_herdr.plan import Plan
 
 #: `worktree.changes` flags that mean work was left uncommitted. `untracked` is not one:
-#: a builder leaves the files it did not name untracked on purpose (builder.md).
+#: files the builder did not name stay out of its commits; one git does not ignore is the
+#: review's finding and stops the merge (builder.md, briefs/review.lmd.md).
 TRACKED_CHANGES = ("staged", "modified", "deleted", "renamed", "conflicted")
 
 

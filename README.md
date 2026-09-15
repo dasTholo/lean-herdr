@@ -81,8 +81,9 @@ Any other dialog -- a permission, a login -- is reported, never answered. At the
 and the same when a worker it would reuse waits in a dialog, instead of sending `/clear`;
 while it waits, `dispatch --await` answers `agent_blocked` in the round the dialog appears in,
 instead of `no_reply` after the timeout. The orchestrator escalates it with the dialog's text
-and sends no key into a worker's pane: of `herdr` it may run `worktree list`,
-`workspace close` and `workspace report-metadata`, and nothing else.
+and sends no key into a worker's pane: of `herdr` an opencode orchestrator may run
+`worktree list`, `workspace close` and `workspace report-metadata`, and nothing else; a claude
+orchestrator is denied `herdr agent` and `herdr pane`.
 
 ## The work-order path
 
@@ -302,7 +303,7 @@ line to add. It also names every worker role without a `model`, for which `dispa
 nothing, and -- as soon as a role runs on claude -- a root Claude Code does not trust
 (`claude does not trust <root>`), with the `--trust-claude` line that grants it.
 
-It also spends one aborted opencode bootstrap in the project, up to eight
+`init` also spends one aborted opencode bootstrap in the project, up to eight
 seconds. opencode's first bootstrap in a project that carries a project
 plugin hangs -- and one of these files is such a plugin. The aborted
 run is the cure: every start after it takes about three seconds. The
