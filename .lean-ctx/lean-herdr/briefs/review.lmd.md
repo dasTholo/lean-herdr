@@ -27,8 +27,9 @@ Produce TWO verdicts from this one diff read.
 ## Calibration
 
 Rate every finding Critical, Important or Minor. What the plan explicitly required
-(`plan-mandated`) is no defect. An untracked file is no defect by itself; name one that belongs
-in a commit.
+(`plan-mandated`) is no defect. An ignored file is no defect. An untracked file that git does
+not ignore stops the merge: name it — Important if it belongs in a commit, Minor if only the
+project's ignore rules miss it.
 
 ## Finish
 

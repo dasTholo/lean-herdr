@@ -68,8 +68,10 @@ guarantee, same as the sender check above.
 
    Stage explicitly what the order asked for -- never `git add -A`, never
    `git add .`. Untracked files stay untracked: nothing you did not name
-   reaches the commit. An empty index fails loudly (`✗ Nothing to commit`) --
-   that is the reminder to stage, not an error to work around.
+   reaches the commit. An untracked file that git does not ignore stops the
+   merge — delete what you created, name what a tool generated. An empty
+   index fails loudly (`✗ Nothing to commit`) -- that is the reminder to
+   stage, not an error to work around.
 
    The commit message is written for you by the operator's configured
    generator. You do not pass `-m`, and you do not second-guess it.

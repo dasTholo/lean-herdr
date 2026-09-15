@@ -36,6 +36,13 @@ def test_every_brief_is_a_lean_md_document_with_the_hard_rules(step):
         ("implement", "wt step commit --stage none --yes"),
         ("implement", "Never `git commit -m`, never `git add -A`, never push, never merge."),
         ("implement", "status: DONE | DONE_WITH_CONCERNS"),
+        ("implement", "Leave no untracked file that git does not ignore: it stops the merge."),
+        ("implement", "the project's ignore rules are not yours to change."),
+        ("review", "An ignored file is no defect."),
+        (
+            "review",
+            "Important if it belongs in a commit, Minor if only the project's ignore rules miss it.",
+        ),
         ("review", "Produce TWO verdicts from this one diff read."),
         ("review", "Any Critical or Important finding: `VERDIKT: reject`."),
         ("review", "You write nothing: no file, no commit, not through `ctx_shell` either."),
@@ -49,6 +56,19 @@ def test_every_brief_is_a_lean_md_document_with_the_hard_rules(step):
 def test_each_brief_carries_its_rules(step, sentence):
     text = " ".join(rendered(f"briefs/{step}.lmd.md").split())
     assert sentence in text
+
+
+@pytest.mark.parametrize(
+    ("step", "sentence"),
+    [
+        ("implement", "that is expected."),
+        ("review", "An untracked file is no defect by itself"),
+    ],
+)
+def test_no_brief_calls_an_untracked_file_harmless(step, sentence):
+    """E5: an untracked file git does not ignore stops the merge -- no brief may wave it through."""
+    text = " ".join(rendered(f"briefs/{step}.lmd.md").split())
+    assert sentence not in text
 
 
 def test_the_recipes_define_route_lane_commit_and_gate_each_with_a_description():

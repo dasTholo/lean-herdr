@@ -213,6 +213,14 @@ MANDATORY_SENTENCES = [
         "lean-herdr plan brief --task o-…",
         "D3: the order names the task; the brief carries it",
     ),
+    (
+        "builder.md",
+        (
+            "An untracked file that git does not ignore stops the merge — delete what you created, "
+            "name what a tool generated."
+        ),
+        "E5: untracked files stay a merge stop; the builder leaves none behind",
+    ),
     # --- Reviewer -----------------------------------------------------------
     (
         "reviewer.md",

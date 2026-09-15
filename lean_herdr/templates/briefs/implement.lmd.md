@@ -37,4 +37,6 @@ is, and carries the findings a later round answers.
     concerns: <only with DONE_WITH_CONCERNS>
 
 Tracked changes left uncommitted at `done` send you into another round. Files the task did not
-name stay untracked — that is expected.
+name stay out of your commits. Leave no untracked file that git does not ignore: it stops the
+merge. Delete scratch files you created; if a tool generates such files, name them under
+`concerns:` — the project's ignore rules are not yours to change.
