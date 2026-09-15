@@ -528,6 +528,42 @@ def test_the_role_behind_review_warns_about_each_role_on_its_model(data, pairs):
     assert all("'sonnet'" in line and "different blind spots" in line for line in lines)
 
 
+@pytest.mark.parametrize(
+    ("data", "pairs"),
+    [
+        pytest.param(
+            {"roles": {"plan-writer": {"model": "opus"}, "plan-reviewer": {"model": "opus"}}},
+            ["plan-writer"],
+            id="plan writer and plan reviewer on one model",
+        ),
+        pytest.param(
+            {
+                "roles": {
+                    "plan-writer": {"model": "opus"},
+                    "plan-reviewer": {"model": "opus", "shares_reviewed_model": True},
+                }
+            },
+            [],
+            id="one model, and it is meant",
+        ),
+        pytest.param(
+            {"roles": {"builder": {"model": "opus"}, "plan-reviewer": {"model": "opus"}}},
+            [],
+            id="the plan reviewer judges the plan writer alone",
+        ),
+        pytest.param(
+            {"roles": {"plan-writer": {"model": "opus"}, "reviewer": {"model": "opus"}}},
+            [],
+            id="plan is a stage, so the task reviewer does not judge it",
+        ),
+    ],
+)
+def test_the_role_behind_plan_review_warns_about_the_plan_writer(data, pairs):
+    lines = model_warnings(data)
+    assert [line.split(" and ", 1)[0] for line in lines] == pairs
+    assert all("'opus'" in line and "[roles.plan-reviewer]" in line for line in lines)
+
+
 def test_the_old_opt_out_key_is_unknown_now():
     """Renamed without an alias -- a file carrying it says so instead of going quiet."""
     with pytest.raises(SettingsError, match=r"unknown keys \['shares_builder_model'\]"):
@@ -682,16 +718,24 @@ def test_routing_lists_the_built_in_works_under_the_table():
     assert work_roles({"routing": {"rename": "refactorer"}}) == {
         "implement": "builder",
         "review": "reviewer",
+        "plan": "plan-writer",
+        "plan-review": "plan-reviewer",
         "rename": "refactorer",
     }
 
 
-@pytest.mark.parametrize("work", ["plan", "plan-review", "integrate", "deploy"])
+@pytest.mark.parametrize("work", ["integrate", "deploy"])
 def test_routing_knows_no_role_for_a_work_nobody_named(work):
-    """The stages get their built-in roles with TP2 and TP3 -- until then, no guess."""
+    """`integrate` gets its built-in role with TP3 -- until then, no guess."""
     with pytest.raises(SettingsError) as caught:
         role_for_work(work, {})
     assert str(caught.value) == f"no role for work {work!r}"
+
+
+def test_the_plan_stages_have_built_in_roles():
+    assert role_for_work("plan", {}) == "plan-writer"
+    assert role_for_work("plan-review", {}) == "plan-reviewer"
+    assert role_for_work("plan", {"routing": {"plan": "architect"}}) == "architect"
 
 
 @pytest.mark.parametrize(

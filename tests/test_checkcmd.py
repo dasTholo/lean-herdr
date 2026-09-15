@@ -440,6 +440,8 @@ def test_an_initialised_project_on_a_healthy_machine_is_ok_and_all_current(
     # After `init` no worker has a kind -- the normal case, and check names it.
     assert answer["warnings"] == [
         _kind_unset("builder", "implement"),
+        _kind_unset("plan-writer", "plan"),
+        _kind_unset("plan-reviewer", "plan-review"),
         _kind_unset("reviewer", "review"),
     ]
     assert answer["root"] == str(repo)

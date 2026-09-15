@@ -884,17 +884,20 @@ def _build(
                 f"herdr allows {HERDR_NAME_MAX}"
             ),
         }
-    # Additive, and only where a reader exists: the orchestrator reads
-    # the dispatch line of the role behind `review` -- by `--work review`
-    # or by that role's name. `ok` is untouched: a warning, never a
-    # refusal. Computed BEFORE dispatch(): `model_warnings` reads the table
-    # of every OTHER routed role too, but only when the role behind
-    # `review` has a model AND does not set `shares_reviewed_model` --
-    # otherwise it returns before touching them. Only then can a broken
-    # routed table stop the call while no pane exists yet, instead of
-    # costing the answer of a worker already started.
-    reviewing = args.command == role_for_work("review", raw)
-    notes = model_warnings(raw) if reviewing else []
+    # Additive, and only where a reader exists: the orchestrator reads the
+    # dispatch line of the role behind `review` or `plan-review` -- by `--work`
+    # or by that role's name -- and each carries only the warnings that name it
+    # as the checker, `[roles.<role>]`. `ok` is untouched: a warning, never a
+    # refusal. Computed BEFORE dispatch(): `model_warnings` reads the table of
+    # every OTHER routed role too, but only when a checker has a model AND does
+    # not set `shares_reviewed_model` -- otherwise it returns before touching
+    # them. Only then can a broken routed table stop the call while no pane
+    # exists yet, instead of costing the answer of a worker already started.
+    checkers = {role_for_work("review", raw), role_for_work("plan-review", raw)}
+    marker = f"[roles.{args.command}]"
+    notes = (
+        [line for line in model_warnings(raw) if marker in line] if args.command in checkers else []
+    )
     result = dispatch(
         DispatchRequest(
             role=args.command,

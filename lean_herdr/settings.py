@@ -137,15 +137,21 @@ ROOT_KEYS = ("default", "roles", "llm", "workspace", "models", "routing")
 #: value pass one gate and fail the other (M3).
 KINDS = ("claude", "opencode")
 
-#: The two works TP1 builds in. `[routing]` lays itself over them, so a project
+#: The works lean-herdr builds in. `[routing]` lays itself over them, so a project
 #: without the table dispatches exactly as it did by role name.
-ROUTING_BUILTIN = {"implement": "builder", "review": "reviewer"}
+ROUTING_BUILTIN = {
+    "implement": "builder",
+    "review": "reviewer",
+    "plan": "plan-writer",
+    "plan-review": "plan-reviewer",
+}
 
-#: Works that are stages of a run, not work a plan hands out. `plan`,
-#: `plan-review` and `integrate` get their built-in roles with TP2 and TP3;
-#: until then a call without a `[routing]` line for one is a SettingsError.
-#: `model_warnings` pairs the role behind `review` with the role behind every
-#: work that is NOT one of these.
+#: Works that are stages of a run, not work a plan hands out. `plan` and
+#: `plan-review` have their built-in roles since TP2; `integrate` gets one with
+#: TP3, and until then a call without a `[routing]` line for it is a
+#: SettingsError. `model_warnings` pairs the role behind `review` with the role
+#: behind every work that is NOT one of these, and the role behind `plan-review`
+#: with the role behind `plan`.
 STAGES = ("plan", "plan-review", "review", "integrate")
 
 #: A work name, and a role name. The role becomes part of the herdr agent
@@ -295,6 +301,22 @@ def role_for_work(work: str, data: dict[str, Any] | None = None) -> str:
     return role
 
 
+def _shared_model(checker: str, checked: list[str], data: dict[str, Any] | None) -> list[str]:
+    """One line per role in `checked` that runs on the checker's own, non-empty model."""
+    judge = settings_for(checker, data)
+    if not judge.model or judge.shares_reviewed_model:
+        return []
+    return [
+        (
+            f"{role} and {checker} both run on {judge.model!r} -- the {checker} "
+            "earns its keep by having different blind spots. Set "
+            f"[roles.{checker}].shares_reviewed_model = true if this is meant."
+        )
+        for role in sorted(set(checked))
+        if role != checker and settings_for(role, data).model == judge.model
+    ]
+
+
 def model_warnings(data: dict[str, Any] | None = None) -> list[str]:
     """What a config earns without being wrong. A list, empty is normal.
 
@@ -309,22 +331,14 @@ def model_warnings(data: dict[str, Any] | None = None) -> list[str]:
     Raises whatever `settings_for()` raises. Both callers read the file once and
     validated already; a second, quieter error path here would be a second rule
     for one thing (M3).
+
+    The role behind `plan-review` is compared with the role behind `plan` the same way.
     """
     routes = work_roles(data)
-    checker = routes["review"]
-    judge = settings_for(checker, data)
-    if not judge.model or judge.shares_reviewed_model:
-        return []
-    reviewed = sorted({role for work, role in routes.items() if work not in STAGES})
-    return [
-        (
-            f"{role} and {checker} both run on {judge.model!r} -- the {checker} "
-            "earns its keep by having different blind spots. Set "
-            f"[roles.{checker}].shares_reviewed_model = true if this is meant."
-        )
-        for role in reviewed
-        if role != checker and settings_for(role, data).model == judge.model
-    ]
+    reviewed = [role for work, role in routes.items() if work not in STAGES]
+    return _shared_model(routes["review"], reviewed, data) + _shared_model(
+        routes["plan-review"], [routes["plan"]], data
+    )
 
 
 #: OpenRouter's reasoning levels. A typo would otherwise reach the

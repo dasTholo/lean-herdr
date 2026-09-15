@@ -7,7 +7,7 @@
     ".lean-ctx/lean-herdr/claude/plan-reviewer.json": "91e09c0c1cc8a6193cc84261f2e4defd5f99eecfbdd51eff151878ec930e1340",
     ".lean-ctx/lean-herdr/claude/plan-writer.json": "4f4295c4d2a05923dfc7f11d76fa3dbf7fd88dca96c49e9700badf785685aed0",
     ".lean-ctx/lean-herdr/claude/reviewer.json": "9476941f8c51c1c3b3c1467b57b3349559e1e71a4832c14b2996c09d8e5d80f0",
-    ".lean-ctx/lean-herdr/config.toml": "b73723539fa5f5d2d89f6bfb2e2fbb150e16b45f2a1d4dda39a52a447ef4f7a7",
+    ".lean-ctx/lean-herdr/config.toml": "8c1b431f4b2e3162f87ec15ae37748cf6704940fcb95c35c18485bc32192ad6f",
     ".lean-ctx/lean-herdr/roles/builder.md": "5c874f24d204d7b3b31f4d43e81112db4a9e637dbf107e6d8d43dcf296ff3e53",
     ".lean-ctx/lean-herdr/roles/orchestrator.md": "8a61cc3c068df2b1f4c7632d2175fedcde439d63c5ce96ebeedc22ec7e5c81dc",
     ".lean-ctx/lean-herdr/roles/plan-reviewer.md": "9453141872b42a9ac206df140ffc5d702274e818e236edd06ef488edf77559f3",

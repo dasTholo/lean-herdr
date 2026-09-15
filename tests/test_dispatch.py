@@ -972,9 +972,11 @@ def test_a_work_nobody_routed_is_a_config_error(monkeypatch, tmp_path, capsys):
     _write_config(root, "")
     _no_launch(monkeypatch)
 
-    got = _line(["--work", "plan", "--kind", "claude", "--model", "m"], root, monkeypatch, capsys)
+    got = _line(
+        ["--work", "integrate", "--kind", "claude", "--model", "m"], root, monkeypatch, capsys
+    )
 
-    assert got == {"ok": False, "error": "config_error: no role for work 'plan'"}
+    assert got == {"ok": False, "error": "config_error: no role for work 'integrate'"}
 
 
 @pytest.mark.parametrize(
@@ -1221,6 +1223,25 @@ def test_the_warning_follows_the_role_behind_review(monkeypatch, tmp_path, capsy
     assert "blind spots" in by_work["warnings"][0], by_work
     assert by_name.get("warnings") == by_work["warnings"], by_name
     assert "warnings" not in off_duty, off_duty
+
+
+def test_the_plan_reviewer_build_carries_the_plan_writer_warning(monkeypatch, tmp_path, capsys):
+    """`plan-review` judges the plan writer: the plan reviewer's line is where that warning has a reader."""
+    root = tmp_path / "repo"
+    _write_config(
+        root,
+        '[roles.plan-writer]\nkind = "claude"\nmodel = "opus"\n\n'
+        '[roles.plan-reviewer]\nkind = "claude"\nmodel = "opus"\n',
+    )
+    write_role_fixture(root, "plan-writer", "plan-reviewer")
+    _spy_dispatch(monkeypatch)
+
+    judge = _line(["--work", "plan-review"], root, monkeypatch, capsys)
+    writer = _line(["--work", "plan"], root, monkeypatch, capsys)
+
+    assert len(judge.get("warnings", [])) == 1, judge
+    assert "[roles.plan-reviewer]" in judge["warnings"][0], judge
+    assert "warnings" not in writer, writer
 
 
 def test_a_broken_table_the_warning_reads_stops_the_call_before_any_pane(

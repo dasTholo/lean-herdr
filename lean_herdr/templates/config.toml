@@ -32,10 +32,20 @@
 #                      # blind spots is the whole point of the second pass
 # shares_reviewed_model = false  # true: a role it reviews shares its model, meant
 
+# [roles.plan-writer]
+# kind  = "claude"
+# model = "opus"       # writes the plan every task follows
+
+# [roles.plan-reviewer]
+# kind  = "opencode"
+# model = ""           # a DIFFERENT model than the plan writer
+# shares_reviewed_model = false  # true: the plan writer shares its model, meant
+
 # [routing] names the role behind each kind of work: `lean-herdr dispatch
 # --work <work>` builds that role, with its prompt under roles/ and its
-# [roles.<role>] table. Built in: implement = builder, review = reviewer.
-# Reserved, with no built-in role yet: plan, plan-review, integrate.
+# [roles.<role>] table. Built in: implement = builder, review = reviewer,
+# plan = plan-writer, plan-review = plan-reviewer. Reserved, with no
+# built-in role yet: integrate.
 # A work is [a-z][a-z0-9-]*, a role [a-z][a-z0-9_-]*.
 
 # [routing]
