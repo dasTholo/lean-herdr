@@ -378,6 +378,12 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="init: the language of the plan files init writes (python)",
     )
+    p.add_argument(
+        "--trust-claude",
+        action="store_true",
+        help="init: record claude's folder trust for this repository root, which every worktree "
+        "of it inherits (one key in ~/.claude.json)",
+    )
     return p
 
 
@@ -389,6 +395,7 @@ def _init_flags(args: argparse.Namespace) -> str:
         ("--test", args.test),
         ("--lint", args.lint),
         ("--lang", args.lang),
+        ("--trust-claude", args.trust_claude),
     )
     # Given is not truthy: `--test ""` is a flag on the command line all the same.
     return " and ".join(flag for flag, value in given if value not in (None, False))
@@ -423,7 +430,12 @@ def main(argv: list[str] | None = None) -> int:
             from lean_herdr.initcmd import workspace_init
 
             result = workspace_init(
-                force=args.force, update=args.update, test=args.test, lint=args.lint, lang=args.lang
+                force=args.force,
+                update=args.update,
+                test=args.test,
+                lint=args.lint,
+                lang=args.lang,
+                trust_claude=args.trust_claude,
             )
     except UsageError as exc:
         result = {"ok": False, "error": f"usage_error: {exc}"}

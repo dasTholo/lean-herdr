@@ -801,3 +801,41 @@ def test_a_lang_init_does_not_know_is_a_usage_error_and_writes_nothing(monkeypat
         "error": "usage_error: --lang 'rust' -- supported: python",
     }
     assert not (repo / ".lean-ctx").exists()
+
+
+def test_init_leaves_claudes_state_alone_without_the_flag(monkeypatch, repo, tmp_path_factory):
+    quiet(monkeypatch)
+    config = tmp_path_factory.mktemp("claude")
+    state = config / ".claude.json"
+    state.write_text('{"projects": {}}', encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    answer = workspace_init(root=repo)
+    assert "claude_trust" not in answer
+    assert state.read_text(encoding="utf-8") == '{"projects": {}}'
+
+
+def test_trust_claude_records_the_root_in_claudes_state(monkeypatch, repo, tmp_path_factory):
+    """The human's "Yes" for the root, given up front -- every worktree inherits it."""
+    quiet(monkeypatch)
+    config = tmp_path_factory.mktemp("claude")
+    (config / ".claude.json").write_text('{"projects": {}}', encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    answer = workspace_init(root=repo, trust_claude=True)
+    assert answer["ok"] is True
+    assert answer["claude_trust"] == "written"
+    projects = json.loads((config / ".claude.json").read_text(encoding="utf-8"))["projects"]
+    assert projects == {str(repo.resolve()): {"hasTrustDialogAccepted": True}}
+    assert workspace_init(root=repo, trust_claude=True)["claude_trust"] == "already"
+
+
+def test_a_trust_that_fails_is_a_warning_not_a_failed_init(monkeypatch, repo, tmp_path_factory):
+    quiet(monkeypatch)
+    config = tmp_path_factory.mktemp("claude")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    answer = workspace_init(root=repo, trust_claude=True)
+    assert answer["ok"] is True
+    assert answer["claude_trust"].startswith("failed: no claude state at ")
+    assert any(w.startswith("--trust-claude failed: ") for w in answer["warnings"]), answer[
+        "warnings"
+    ]
+    assert not (config / ".claude.json").exists()

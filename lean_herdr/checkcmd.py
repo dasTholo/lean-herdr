@@ -30,6 +30,7 @@ from typing import Any
 
 import lean_herdr
 from lean_herdr.bus import BusError, GitUnusable, canonical_root
+from lean_herdr.dialogs import claude_trusts
 from lean_herdr.dispatch import LOG_COMMANDS
 from lean_herdr.settings import (
     ORCHESTRATOR_AGENT,
@@ -575,6 +576,28 @@ def _role_warnings(root: Path, data: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _claude_trust_warnings(root: Path, data: dict[str, Any]) -> list[str]:
+    """A role on claude in a repository whose root claude does not trust.
+
+    A worktree inherits the root's trust (measured 2026-09-15), so without it
+    every claude worker stops at the folder-trust dialog and `dispatch` answers
+    `agent_blocked`. Reads only; granting it is `init --trust-claude`. No state
+    file, or one nobody can read: no verdict.
+    """
+    roles = {"orchestrator", *work_roles(data).values()}
+    if not any(settings_for(role, data).kind == "claude" for role in roles):
+        return []
+    if claude_trusts(root) is not False:
+        return []
+    return [
+        (
+            f"claude does not trust {root} -- a claude worker stops at the folder-trust dialog in "
+            "every worktree of this repository, and dispatch answers agent_blocked. "
+            "Run: lean-herdr workspace init --trust-claude"
+        )
+    ]
+
+
 def _template_report(root: Path) -> tuple[dict[str, str], list[str]]:
     """Every template's state, and the lines it earns. A broken lock guesses nothing.
 
@@ -729,6 +752,7 @@ def workspace_check(*, root: Path | None = None, runner: Any = subprocess.run) -
         "errors": errors,
         "warnings": warnings
         + _role_warnings(base, data)
+        + _claude_trust_warnings(base, data)
         + template_lines
         + lean_md_warnings(base, runner=runner),
         "install": install,

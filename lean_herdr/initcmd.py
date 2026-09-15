@@ -14,7 +14,10 @@ out of `checkcmd.machine_report`, the producer `workspace check` uses too,
 and every foreign command it runs only READS. `init` runs no `lean-ctx
 allow`, no `wt config approvals add` and no `herdr plugin link`: granting a
 machine-wide permission is a gesture that belongs to the human at the
-keyboard. Two exceptions, both inside the rule's intent. The warm-up
+keyboard -- and `--trust-claude` is that gesture, spelled out: the one
+machine-wide grant `init` makes, and only on the flag (`dialogs.trust_root`,
+one key in claude's own state file). Two more exceptions, both inside the
+rule's intent. The warm-up
 (`_warm_opencode`) changes nothing on the machine, only opencode's own cache for
 this project, and it is aborted on purpose. `lean-md skill install`
 (`_install_lean_md`) writes into this project alone -- skill stubs under
@@ -31,6 +34,7 @@ from typing import Any
 
 from lean_herdr.bus import BusError, GitUnusable, canonical_root
 from lean_herdr.checkcmd import ROLES, machine_report
+from lean_herdr.dialogs import trust_root
 from lean_herdr.settings import (
     SETTINGS_PATH,
     SettingsError,
@@ -235,6 +239,7 @@ def workspace_init(
     test: str | None = None,
     lint: str | None = None,
     lang: str | None = None,
+    trust_claude: bool = False,
     runner: Any = subprocess.run,
 ) -> dict[str, Any]:
     """Write the templates into this project, and lock what landed. Never raises.
@@ -362,7 +367,13 @@ def workspace_init(
     lock_state = {str(LOCK_PATH): "blocked"} if lock_blocked else {}
     warnings = found + state_warnings({**templates, **lock_state}) + warnings
     warmed = _warm_opencode(base, runner=runner) if kind == "opencode" else False
-    return {
+    # The human's "Yes" to claude's folder-trust dialog, given for the root up
+    # front -- every worktree of it inherits it. Only on the flag, and a failure
+    # costs the warning, never the report of the files that already landed.
+    claude_trust = trust_root(base) if trust_claude else None
+    if claude_trust is not None and claude_trust.startswith("failed"):
+        warnings.append(f"--trust-claude {claude_trust}")
+    answer: dict[str, Any] = {
         "ok": True,
         "root": str(base),
         "written": sorted(written),
@@ -373,3 +384,6 @@ def workspace_init(
         "lean_md": lean_md,
         "warnings": warnings,
     }
+    if claude_trust is not None:
+        answer["claude_trust"] = claude_trust
+    return answer

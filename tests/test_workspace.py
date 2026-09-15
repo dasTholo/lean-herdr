@@ -670,26 +670,30 @@ def test_main_routes_init_and_hands_every_flag_on(monkeypatch, capsys):
         "lean_herdr.initcmd.workspace_init",
         lambda **kwargs: (seen.append(kwargs), {"ok": True, "written": []})[1],
     )
+    base = {
+        "force": False,
+        "update": False,
+        "test": None,
+        "lint": None,
+        "lang": None,
+        "trust_claude": False,
+    }
     assert workspace.main(["init"]) == 0
     assert workspace.main(["init", "--force"]) == 0
     assert (
         workspace.main(["init", "--update", "--test", "cargo test", "--lint", "cargo clippy"]) == 0
     )
     assert workspace.main(["init", "--lang", "python"]) == 0
+    assert workspace.main(["init", "--trust-claude"]) == 0
     assert seen == [
-        {"force": False, "update": False, "test": None, "lint": None, "lang": None},
-        {"force": True, "update": False, "test": None, "lint": None, "lang": None},
-        {
-            "force": False,
-            "update": True,
-            "test": "cargo test",
-            "lint": "cargo clippy",
-            "lang": None,
-        },
-        {"force": False, "update": False, "test": None, "lint": None, "lang": "python"},
+        base,
+        {**base, "force": True},
+        {**base, "update": True, "test": "cargo test", "lint": "cargo clippy"},
+        {**base, "lang": "python"},
+        {**base, "trust_claude": True},
     ]
     lines = capsys.readouterr().out.strip().splitlines()
-    assert len(lines) == 4 and all(json.loads(line)["ok"] for line in lines)
+    assert len(lines) == 5 and all(json.loads(line)["ok"] for line in lines)
 
 
 def test_up_refuses_force_rather_than_ignoring_it(capsys):
@@ -702,8 +706,14 @@ def test_up_refuses_force_rather_than_ignoring_it(capsys):
 
 @pytest.mark.parametrize(
     "flags",
-    [["--update"], ["--test", "cargo test"], ["--lint", "cargo clippy"], ["--lang", "python"]],
-    ids=["update", "test", "lint", "lang"],
+    [
+        ["--update"],
+        ["--test", "cargo test"],
+        ["--lint", "cargo clippy"],
+        ["--lang", "python"],
+        ["--trust-claude"],
+    ],
+    ids=["update", "test", "lint", "lang", "trust-claude"],
 )
 def test_up_refuses_every_init_flag(capsys, flags):
     """Swallowed, an init flag on `up` would look like it did something."""

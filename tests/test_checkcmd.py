@@ -44,6 +44,12 @@ def no_user_lean_ctx_config(monkeypatch, tmp_path_factory):
     monkeypatch.setenv("LEAN_CTX_CONFIG_DIR", str(tmp_path_factory.mktemp("no-lean-ctx")))
 
 
+@pytest.fixture(autouse=True)
+def no_user_claude_state(monkeypatch, tmp_path_factory):
+    """`workspace check` reads claude's state file -- never this machine's own in here."""
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path_factory.mktemp("no-claude")))
+
+
 def test_the_allowlist_check_answers_a_line_only_when_the_name_is_missing(monkeypatch):
     monkeypatch.setattr("shutil.which", which_stub(True))
     granted = FakeProc(replies={("allow", "--list"): "Extra (additive): lean-herdr"})
@@ -740,3 +746,58 @@ def test_a_work_routed_to_the_orchestrators_agent_name_is_named(monkeypatch, rep
         "`dispatch --work cleanup` would /clear the running orchestrator, not build a worker"
         in answer["warnings"]
     ), answer["warnings"]
+
+
+def _claude_state(monkeypatch, tmp_path_factory, projects: dict) -> None:
+    config = tmp_path_factory.mktemp("claude")
+    (config / ".claude.json").write_text(json.dumps({"projects": projects}), encoding="utf-8")
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+
+
+def _untrusted(root: Path) -> str:
+    return (
+        f"claude does not trust {root} -- a claude worker stops at the folder-trust dialog in "
+        "every worktree of this repository, and dispatch answers agent_blocked. "
+        "Run: lean-herdr workspace init --trust-claude"
+    )
+
+
+CLAUDE_BUILDER = '[roles.builder]\nkind = "claude"\n'
+
+
+def test_a_claude_role_in_an_untrusted_root_is_named(monkeypatch, repo, snapshot, tmp_path_factory):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text(CLAUDE_BUILDER, encoding="utf-8")
+    _claude_state(monkeypatch, tmp_path_factory, {})
+    warnings = workspace_check(root=repo)["warnings"]
+    assert _untrusted(repo) in warnings, warnings
+
+
+def test_a_trusted_root_is_not_named(monkeypatch, repo, snapshot, tmp_path_factory):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text(CLAUDE_BUILDER, encoding="utf-8")
+    _claude_state(
+        monkeypatch, tmp_path_factory, {str(repo.resolve()): {"hasTrustDialogAccepted": True}}
+    )
+    warnings = workspace_check(root=repo)["warnings"]
+    assert not any(w.startswith("claude does not trust") for w in warnings), warnings
+
+
+def test_without_a_claude_role_trust_is_not_asked(monkeypatch, repo, snapshot, tmp_path_factory):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text('[roles.builder]\nkind = "opencode"\n', encoding="utf-8")
+    _claude_state(monkeypatch, tmp_path_factory, {})
+    warnings = workspace_check(root=repo)["warnings"]
+    assert not any(w.startswith("claude does not trust") for w in warnings), warnings
+
+
+def test_a_claude_state_nobody_can_read_gives_no_verdict(monkeypatch, repo, snapshot):
+    """The autouse CLAUDE_CONFIG_DIR holds no state file at all."""
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text(CLAUDE_BUILDER, encoding="utf-8")
+    warnings = workspace_check(root=repo)["warnings"]
+    assert not any(w.startswith("claude does not trust") for w in warnings), warnings
