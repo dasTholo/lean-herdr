@@ -113,6 +113,13 @@ def test_the_predecessor_is_kept_as_given():
     assert fold([created()]).after is None
 
 
+def test_the_plan_fields_are_kept_as_given():
+    order = fold([created(plan="shop", step="implement", plan_task="3")])
+    assert (order.plan, order.step, order.plan_task, order.spec) == ("shop", "implement", "3", None)
+    plain = fold([created()])
+    assert (plain.plan, plain.step, plain.plan_task, plain.spec) == (None, None, None, None)
+
+
 def test_folding_nothing_yields_an_order_with_no_state():
     """A task id that has no events must not look like a fresh order."""
     order = fold([])

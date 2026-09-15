@@ -36,7 +36,7 @@ from lean_herdr.orderlog import (
     read_events,
     state_dir,
 )
-from lean_herdr.orders import fold, is_terminal
+from lean_herdr.orders import PLAN_SLUG_RE, PLAN_STEPS, PLAN_TASK_RE, fold, is_terminal
 from lean_herdr.settings import ORCHESTRATOR_AGENT
 
 
@@ -55,6 +55,43 @@ class OrderRequest:
     #: their role prompt trusts, so the default must be the name the
     #: bootstrap actually starts the orchestrator under.
     actor: str = ORCHESTRATOR_AGENT
+    #: The plan run this order belongs to -- see `plan_flag_problem` for what goes together.
+    plan: str | None = None
+    step: str | None = None
+    plan_task: str | None = None
+    spec: str | None = None
+
+
+def plan_flag_problem(
+    plan: str | None, step: str | None, plan_task: str | None, spec: str | None
+) -> str | None:
+    """Why these plan fields cannot go on an order -- None when they can.
+
+    All four absent is an order outside a plan. Otherwise `plan` and `step` come
+    together, `plan_task` belongs to `implement` and `review` and only to them, and
+    `spec` belongs to `plan` and only to it. One producer for `dispatch.missing_flags`
+    and `create_order` (M3).
+    """
+    if plan is None and step is None and plan_task is None and spec is None:
+        return None
+    if plan is None or step is None:
+        return "--plan and --step go together"
+    if not PLAN_SLUG_RE.fullmatch(plan):
+        return f"--plan {plan!r} is no plan slug ({PLAN_SLUG_RE.pattern})"
+    if step not in PLAN_STEPS:
+        return f"--step {step!r} is none of {', '.join(PLAN_STEPS)}"
+    if step in ("implement", "review"):
+        if plan_task is None:
+            return f"--step {step} needs --plan-task"
+        if plan_task != "branch" and not PLAN_TASK_RE.fullmatch(plan_task):
+            return f"--plan-task {plan_task!r} is neither a task number nor branch"
+    elif plan_task is not None:
+        return f"--step {step} does not take --plan-task"
+    if step == "plan" and not spec:
+        return "--step plan needs --spec"
+    if step != "plan" and spec is not None:
+        return f"--step {step} does not take --spec"
+    return None
 
 
 def create_order(
@@ -79,6 +116,9 @@ def create_order(
         return {"ok": False, "error": "usage_error: order needs --to"}
     if not req.message:
         return {"ok": False, "error": "usage_error: order needs --message"}
+    problem = plan_flag_problem(req.plan, req.step, req.plan_task, req.spec)
+    if problem:
+        return {"ok": False, "error": f"usage_error: {problem}"}
     try:
         directory = orders_dir if orders_dir is not None else state_dir(root)
         if req.after and not read_events(req.after, orders=directory):
@@ -90,6 +130,14 @@ def create_order(
         }
         if req.after:
             payload["after"] = req.after
+        for key, value in (
+            ("plan", req.plan),
+            ("step", req.step),
+            ("plan_task", req.plan_task),
+            ("spec", req.spec),
+        ):
+            if value is not None:
+                payload[key] = value
         append(new_id, "created", req.actor, payload, orders=directory)
     except OrderLogError as exc:
         return {"ok": False, "error": str(exc)}

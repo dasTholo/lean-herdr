@@ -18,7 +18,7 @@ from lean_herdr.dispatch import (
 )
 from lean_herdr.herdr import Herdr
 from lean_herdr.leanctx import CtxResponse, LeanCtx
-from lean_herdr.orderlog import append, read_events, state_dir
+from lean_herdr.orderlog import append, read_events, state_dir, task_ids
 from lean_herdr.orders import fold, message_from
 from tests.doubles import FakeProc, which_stub
 
@@ -802,6 +802,57 @@ def test_main_routes_from_and_after_through_to_the_event(main_root, capsys):
     order = fold(read_events(result["task_id"], orders=state_dir(main_root)))
     assert order.from_agent == "reviewer-feat-x"
     assert order.after == first
+
+
+def test_main_routes_the_plan_fields_through_to_the_event(main_root, capsys):
+    code = main(
+        [
+            "order",
+            "--to",
+            WORKER,
+            "--message",
+            "plan it",
+            "--plan",
+            "shop",
+            "--step",
+            "plan",
+            "--spec",
+            "docs/specs/shop-design.md",
+        ]
+    )
+    assert code == 0
+    result = _one_json_line(capsys)
+    order = fold(read_events(result["task_id"], orders=state_dir(main_root)))
+    assert (order.plan, order.step, order.plan_task, order.spec) == (
+        "shop",
+        "plan",
+        None,
+        "docs/specs/shop-design.md",
+    )
+
+
+def test_main_refuses_bad_plan_flags_before_the_log(main_root, capsys):
+    main(["order", "--to", WORKER, "--message", "x", "--plan", "shop", "--step", "implement"])
+    assert _one_json_line(capsys) == {
+        "ok": False,
+        "error": "usage_error: --step implement needs --plan-task",
+    }
+    assert task_ids(orders=state_dir(main_root)) == []
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["answer", "--task-id", TASK_ID, "--message", "m", "--plan", "shop"],
+        ["cancel", "--task-id", TASK_ID, "--message", "m", "--step", "plan"],
+        ["remember", "--key", "k", "--message", "m", "--plan-task", "3"],
+    ],
+)
+def test_plan_flags_belong_to_order_alone(main_root, capsys, argv):
+    main(argv)
+    result = _one_json_line(capsys)
+    assert result["ok"] is False
+    assert "does not take" in result["error"]
 
 
 def test_main_routes_answer_into_answer_order(main_root, capsys):

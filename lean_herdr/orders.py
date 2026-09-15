@@ -7,6 +7,7 @@ list, so the whole order path is testable without a file system.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from dataclasses import dataclass, replace
 from typing import Any
@@ -36,6 +37,18 @@ TERMINAL_STATES = frozenset({"completed", "failed", "canceled"})
 #: name is not its state: the orchestrator answered, so the worker is
 #: working again. Every other kind names its own state.
 _STATE_OF: dict[str, str] = {kind: kind for kind in EVENT_KINDS} | {"answered": "working"}
+
+
+#: The four steps of a plan run an order can belong to (`dispatch order --step`).
+PLAN_STEPS = ("plan", "plan-review", "implement", "review")
+
+#: A plan slug. `plan/<slug>` is the branch, and the longest agent name built on it,
+#: `plan-reviewer-plan-<slug>`, has to stay within herdr's 32 characters.
+PLAN_SLUG_RE = re.compile(r"[a-z][a-z0-9-]{0,11}")
+
+#: A task number on an order: decimal, no leading zero. `str.isdigit` lets "²" through,
+#: and `int("²")` raises.
+PLAN_TASK_RE = re.compile(r"[1-9][0-9]*")
 
 
 def is_terminal(state: str) -> bool:
@@ -71,6 +84,12 @@ class Order:
     state: str = ""
     description: str = ""
     after: str | None = None
+    #: The plan run this order belongs to; all four None for an order outside a plan.
+    #: `plan_task` is a task number as text ("3") or "branch".
+    plan: str | None = None
+    step: str | None = None
+    plan_task: str | None = None
+    spec: str | None = None
     messages: tuple[tuple[str, str], ...] = ()
 
     @property
@@ -93,6 +112,11 @@ def fold(events: Iterable[Event]) -> Order:
     return order
 
 
+def _text(value: Any) -> str | None:
+    """A payload value as text, or None for an absent or empty one."""
+    return str(value) if value else None
+
+
 def _apply(order: Order, event: Event) -> Order:
     messages = order.messages
     text = event.message.strip()
@@ -107,6 +131,10 @@ def _apply(order: Order, event: Event) -> Order:
             to_agent=str(event.payload.get("to_agent", "")),
             description=str(event.payload.get("description", "")),
             after=str(after) if after else None,
+            plan=_text(event.payload.get("plan")),
+            step=_text(event.payload.get("step")),
+            plan_task=_text(event.payload.get("plan_task")),
+            spec=_text(event.payload.get("spec")),
             state=_STATE_OF["created"],
             messages=messages,
         )

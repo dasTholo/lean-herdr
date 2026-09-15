@@ -49,6 +49,7 @@ from lean_herdr.ordercmd import (
     cancel_order,
     create_order,
     order_result,
+    plan_flag_problem,
 )
 from lean_herdr.orderlog import OrderLogError, lean_ctx_data_dir, read_events, state_dir
 from lean_herdr.orders import Order, fold, message_from
@@ -635,6 +636,18 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"the sender stamped into the event (default {ORCHESTRATOR_AGENT})",
     )
     p.add_argument("--key", default=None, help="required with `remember`")
+    p.add_argument(
+        "--plan", default=None, help="only with `order`: the plan slug this order belongs to"
+    )
+    p.add_argument(
+        "--step",
+        default=None,
+        help="only with `order --plan`: plan | plan-review | implement | review",
+    )
+    p.add_argument(
+        "--plan-task", default=None, help="only with `order --plan`: the task number, or branch"
+    )
+    p.add_argument("--spec", default=None, help="only with `order --step plan`: the spec to plan")
     return p
 
 
@@ -717,7 +730,17 @@ def missing_flags(args: argparse.Namespace) -> str | None:
                 for flag, value in (("--to", args.to), ("--message", args.message))
                 if not value
             ]
-            return f"order needs {' and '.join(missing)}" if missing else None
+            if missing:
+                return f"order needs {' and '.join(missing)}"
+            return plan_flag_problem(args.plan, args.step, args.plan_task, args.spec)
+        plan_flags = _given(
+            ("--plan", args.plan),
+            ("--step", args.step),
+            ("--plan-task", args.plan_task),
+            ("--spec", args.spec),
+        )
+        if plan_flags:
+            return f"`{args.command}` does not take {plan_flags}"
         if args.command == "remember":
             stray = _given(
                 ("--task-id", args.task_id),
@@ -758,6 +781,10 @@ def missing_flags(args: argparse.Namespace) -> str | None:
         ("--message", args.message),
         ("--from", args.from_agent),
         ("--key", args.key),
+        ("--plan", args.plan),
+        ("--step", args.step),
+        ("--plan-task", args.plan_task),
+        ("--spec", args.spec),
     )
     if stray:
         return f"{stray} belongs to a log command"
@@ -928,6 +955,10 @@ def main(argv: list[str] | None = None) -> int:
                         message=args.message,
                         after=args.after,
                         actor=sender,
+                        plan=args.plan,
+                        step=args.step,
+                        plan_task=args.plan_task,
+                        spec=args.spec,
                     ),
                     root=root,
                 )

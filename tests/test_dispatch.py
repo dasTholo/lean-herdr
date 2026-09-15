@@ -1360,3 +1360,15 @@ def test_a_missing_worktrunk_reports_worktrunk_missing(world, monkeypatch):
     }
     result = run_dispatch(world, reg=registry(), request=req(worktree="feat/new"))
     assert result["error"] == "worktrunk_missing"
+
+
+def test_plan_flags_belong_to_a_log_command(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "repo"
+    _spy_dispatch(monkeypatch)
+    result = _line(
+        ["builder", "--kind", "claude", "--model", "sonnet", "--plan", "shop"],
+        root,
+        monkeypatch,
+        capsys,
+    )
+    assert result == {"ok": False, "error": "usage_error: --plan belongs to a log command"}
