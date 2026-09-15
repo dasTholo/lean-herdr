@@ -65,7 +65,11 @@ def _round(orders: Sequence[Order], order: Order) -> int:
 def _planning(
     orders: Sequence[Order], checks: Mapping[str, Sequence[dict[str, Any]]]
 ) -> dict[str, Any] | None:
-    """The plan and its review. None once the review said `result`."""
+    """The plan and its review. None once the review said `result`.
+
+    Every plan step after the first carries the last plan order's `spec`: `dispatch order
+    --step plan` needs `--spec`.
+    """
     plans = [o for o in orders if o.step == "plan"]
     if not plans:
         return {"step": "plan", "work": "plan", "round": 1}
@@ -84,6 +88,7 @@ def _planning(
             "errors": errors,
             "round": len(plans) + 1,
             "after": last.id,
+            "spec": last.spec,
         }
     after_last = orders[orders.index(last) + 1 :]
     reviews = [o for o in after_last if o.step == "plan-review"]
@@ -102,7 +107,13 @@ def _planning(
     ]
     if len(rejects) >= 2:
         return {"escalate": True, "reason": "plan-review reject×2", "task_id": review.id}
-    return {"step": "plan", "work": "plan", "round": len(plans) + 1, "after": review.id}
+    return {
+        "step": "plan",
+        "work": "plan",
+        "round": len(plans) + 1,
+        "after": review.id,
+        "spec": last.spec,
+    }
 
 
 def _cycle(orders: Sequence[Order], task: str, work: str) -> dict[str, Any] | None:
@@ -175,6 +186,7 @@ def next_step(
             "task_id": order.id,
             "task": _label(order.plan_task),
             "round": _round(orders, order),
+            "of": order.step,
         }
     answer = _planning(orders, checks)
     if answer is not None:

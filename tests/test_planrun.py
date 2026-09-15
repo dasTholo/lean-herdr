@@ -5,6 +5,7 @@ from lean_herdr.plan import Plan, Task
 from lean_herdr.planrun import next_step, task_summary
 
 WORKER = "worker"
+SPEC = "docs/specs/shop-design.md"
 PLAN = Plan(
     slug="shop",
     ref="plan/shop",
@@ -35,6 +36,7 @@ def o(order_id, step, *, task=None, state="completed", verdict=None, changes=())
         plan="shop",
         step=step,
         plan_task=task,
+        spec=SPEC if step == "plan" else None,
         messages=((WORKER, f"VERDIKT: {verdict}\nbecause"),) if verdict else (),
         done_changes=tuple(changes) if state == "completed" else None,
     )
@@ -60,7 +62,26 @@ UNKNOWN = Order(
         (
             [o("p1", "plan", state="working")],
             {},
-            {"step": "await", "work": "plan", "task_id": "p1", "task": None, "round": 1},
+            {
+                "step": "await",
+                "work": "plan",
+                "task_id": "p1",
+                "task": None,
+                "round": 1,
+                "of": "plan",
+            },
+        ),
+        (
+            [o("p1", "plan"), o("r1", "plan-review", state="working")],
+            {},
+            {
+                "step": "await",
+                "work": "plan-review",
+                "task_id": "r1",
+                "task": None,
+                "round": 1,
+                "of": "plan-review",
+            },
         ),
         (
             [o("p1", "plan", state="failed")],
@@ -82,6 +103,7 @@ UNKNOWN = Order(
                 "errors": ERR,
                 "round": 2,
                 "after": "p1",
+                "spec": SPEC,
             },
         ),
         (
@@ -89,11 +111,29 @@ UNKNOWN = Order(
             {"p1": ERR, "p2": ERR},
             {"escalate": True, "reason": "check×2", "task_id": "p2"},
         ),
+        (
+            [
+                o("p1", "plan"),
+                o("p2", "plan"),
+                o("r1", "plan-review", verdict="reject"),
+                o("p3", "plan"),
+            ],
+            {"p1": ERR, "p2": [], "p3": ERR},
+            {
+                "step": "plan",
+                "work": "plan",
+                "reason": "check",
+                "errors": ERR,
+                "round": 4,
+                "after": "p3",
+                "spec": SPEC,
+            },
+        ),
         ([o("p1", "plan")], {}, {"step": "plan-review", "work": "plan-review"}),
         (
             [o("p1", "plan"), o("r1", "plan-review", verdict="reject")],
             {},
-            {"step": "plan", "work": "plan", "round": 2, "after": "r1"},
+            {"step": "plan", "work": "plan", "round": 2, "after": "r1", "spec": SPEC},
         ),
         (
             [
@@ -126,6 +166,23 @@ UNKNOWN = Order(
             ],
             {},
             {"escalate": True, "reason": "uncommitted×2", "task_id": "i2", "task": 1},
+        ),
+        (
+            [
+                *PLANNED,
+                o("i1", "implement", task="1", changes=["modified"]),
+                o("v1", "review", task="1", verdict="reject"),
+                o("i2", "implement", task="1", changes=["staged"]),
+            ],
+            {},
+            {
+                "step": "implement",
+                "task": 1,
+                "work": "implement",
+                "reason": "uncommitted",
+                "round": 3,
+                "after": "i2",
+            },
         ),
         (
             [*PLANNED, o("i1", "implement", task="1", changes=["untracked"])],
@@ -175,7 +232,14 @@ UNKNOWN = Order(
                 o("i2", "implement", task="2", state="created"),
             ],
             {},
-            {"step": "await", "work": "implement-small", "task_id": "i2", "task": 2, "round": 1},
+            {
+                "step": "await",
+                "work": "implement-small",
+                "task_id": "i2",
+                "task": 2,
+                "round": 1,
+                "of": "implement",
+            },
         ),
         (
             [*PLANNED, o("i1", "implement", task="1", state="failed")],
@@ -233,16 +297,19 @@ UNKNOWN = Order(
     ids=[
         "fresh",
         "await-plan",
+        "await-plan-review",
         "plan-failed",
         "plan-canceled",
         "check",
         "check-twice",
+        "check-not-in-a-row",
         "plan-review",
         "plan-review-reject",
         "plan-review-reject-twice",
         "first-task",
         "uncommitted",
         "uncommitted-twice",
+        "uncommitted-not-in-a-row",
         "untracked-only",
         "changes-unknown",
         "review-reject",

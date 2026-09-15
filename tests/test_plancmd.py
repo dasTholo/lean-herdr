@@ -231,6 +231,7 @@ def test_next_checks_a_plan_order_at_the_head_it_reported_done_on(tmp_path):
         "errors": [UNKNOWN_MACRO],
         "round": 2,
         "after": "o-1",
+        "spec": "docs/specs/shop-design.md",
     }
     assert (["git", "show", f"eee1111:{PLAN_FILE}"], "/repo") in repo.calls
 
