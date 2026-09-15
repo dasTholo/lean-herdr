@@ -248,6 +248,60 @@ def test_next_hands_a_clean_plan_to_the_plan_review(tmp_path):
     }
 
 
+def _load_plan_refs(monkeypatch):
+    """Every `ref` plancmd hands `load_plan`, in call order; the real function still answers."""
+    refs = []
+    real = plancmd.load_plan
+
+    def spy(*args, ref=None, **kwargs):
+        refs.append(ref)
+        return real(*args, ref=ref, **kwargs)
+
+    monkeypatch.setattr(plancmd, "load_plan", spy)
+    return refs
+
+
+def test_next_does_not_recheck_a_plan_its_plan_review_passed(tmp_path, monkeypatch):
+    order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
+    order(tmp_path, "o-2", "plan-review", done="eee1111", message="VERDIKT: result\nfine")
+    order(tmp_path, "o-3", "implement", task="1", start="eee1111", done="fff1111")
+    repo = Repo(
+        {f"eee1111:{PLAN_FILE}": "broken", f"plan/shop:{PLAN_FILE}": "clean"},
+        {"broken": BROKEN, "clean": CLEAN},
+    )
+    refs = _load_plan_refs(monkeypatch)
+    assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {
+        "ok": True,
+        "step": "review",
+        "task": 1,
+        "work": "review",
+        "after": "o-3",
+    }
+    assert refs == [None]
+    assert (["git", "show", f"eee1111:{PLAN_FILE}"], "/repo") not in repo.calls
+
+
+def test_a_plan_round_after_a_rejected_review_is_still_checked(tmp_path, monkeypatch):
+    order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
+    order(tmp_path, "o-2", "plan-review", done="eee1111", message="VERDIKT: reject\nno lanes")
+    order(tmp_path, "o-3", "plan", spec="docs/specs/shop-design.md", done="eee2222")
+    repo = Repo(
+        {f"eee2222:{PLAN_FILE}": "broken", f"plan/shop:{PLAN_FILE}": "broken"}, {"broken": BROKEN}
+    )
+    refs = _load_plan_refs(monkeypatch)
+    assert next_result(ROOT, SLUG, {}, orders_dir=tmp_path, runner=repo) == {
+        "ok": True,
+        "step": "plan",
+        "work": "plan",
+        "reason": "check",
+        "errors": [UNKNOWN_MACRO],
+        "round": 3,
+        "after": "o-3",
+        "spec": "docs/specs/shop-design.md",
+    }
+    assert refs == ["eee2222", None]
+
+
 def test_next_without_lean_md_outline_is_a_config_error(tmp_path):
     order(tmp_path, "o-1", "plan", spec="docs/specs/shop-design.md", done="eee1111")
     repo = Repo({f"eee1111:{PLAN_FILE}": "clean"})

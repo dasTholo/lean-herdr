@@ -270,10 +270,20 @@ def _checks(
 
     Without a stamped head the branch tip stands in. A head that carries no plan is a
     finding of its own; any other PlanError -- lean-md without `outline` -- propagates.
+
+    A plan order a completed plan-review follows is not checked again: that review was only
+    dispatched after a clean check, and today's `[routing]`, lean-md or branch tip must not
+    reopen a plan already under way.
     """
     checks: dict[str, list[dict[str, Any]]] = {}
-    for order in orders:
+    for position, order in enumerate(orders):
         if order.step != "plan" or order.state != "completed":
+            continue
+        if any(
+            later.step == "plan-review" and later.state == "completed"
+            for later in orders[position + 1 :]
+        ):
+            checks[order.id] = []
             continue
         try:
             plan = load_plan(root, slug, data, ref=order.done_head, runner=runner)
