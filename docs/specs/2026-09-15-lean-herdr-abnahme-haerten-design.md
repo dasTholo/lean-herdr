@@ -127,6 +127,8 @@ Plan („Teardown for a plan -- no squash“): Schritte 2, 4, 5, 6.
 - **Schritt 3 oder 4 scheitert:** nichts schließen, nichts entfernen. `esc=` per
   `herdr workspace report-metadata` am noch offenen Worker-Workspace, Eskalation mit `wt`s
   Fehlertext.
+- **Schritt 5 scheitert:** `main` ist gemergt, der Workspace noch offen. Kein `wt remove` — der
+  Pane hätte kein cwd mehr. `esc=` am offenen Workspace, Eskalation mit herdrs Fehlertext.
 - **Schritt 6 scheitert:** `main` ist gemergt. Der Orchestrator meldet den Fehler und entfernt
   nie mit `--force`. Die Entfernung läuft im Hintergrund; nicht darauf prüfen.
 - Der Begründungstext („The reverse is a mistake …“) sagt künftig: Mergen bei offenem Workspace
@@ -220,6 +222,7 @@ je auf `blocked`; der Orchestrator hat keinen `herdr agent`-Befehl ausgeführt.
 | Dialog während der Arbeit | `--await` antwortet `agent_blocked` mit `dialog`, sofort |
 | Start hängt ohne Dialog | `opencode_stuck` wie bisher |
 | Merge scheitert (unsauberer Worktree, Gate rot, Rebase-Konflikt) | nichts geschlossen, nichts entfernt; `esc=` am offenen Workspace; Eskalation |
+| `herdr workspace close` scheitert | `main` gemergt; kein `wt remove`; `esc=` am offenen Workspace; Eskalation |
 | `wt remove` scheitert | gemeldet; nie `--force` |
 | kein `pyproject.toml` | keine `__pycache__/`-Prüfung |
 | `git check-ignore` läuft nicht | kein Urteil |
