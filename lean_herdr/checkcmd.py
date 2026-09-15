@@ -23,6 +23,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tomllib
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
@@ -95,9 +96,31 @@ _OWN = re.compile(rf"(?<![\w.-]){re.escape(PLUGIN_ID)}(?![\w.-])")
 #: A read-only check must not hold up the whole call.
 CHECK_TIMEOUT_S = 10.0
 
+#: Where lean-ctx keeps its config -- and in it the gateway entry that serves
+#: `ctx_md_render` to the agents. `$LEAN_CTX_CONFIG_DIR` moves it, as it moves lean-ctx.
+LEAN_CTX_CONFIG_DIR_ENV = "LEAN_CTX_CONFIG_DIR"
+
+#: The skill stub a plan writer loads, and the one every lmd stub delegates to.
+PLAN_SKILLS = (
+    ".claude/skills/lmd-writing-plans/SKILL.md",
+    ".claude/skills/lmd-rendering-skills/SKILL.md",
+)
+
+#: What a worker in a worktree of `plan/<slug>` needs from main (plan spec, section 4):
+#: every file init writes, the template lock, lean-md's lock, the hard-rules overlay
+#: the briefs include, the seed the recipes import, and the skill stubs.
+COMMITTED_FILES = (
+    *sorted(LAYOUT.values()),
+    LOCK_PATH.as_posix(),
+    ".lean-ctx/lean-md.lock",
+    ".lean-ctx/lean-md/hard-rules.ext.lmd.md",
+    ".lean-ctx/lean-md/plan-recipes.lmd.md",
+    *PLAN_SKILLS,
+)
+
 
 def _run(
-    runner: Any, *cmd: str, cwd: Path | None = None
+    runner: Any, *cmd: str, cwd: Path | None = None, stdin: str | None = None
 ) -> subprocess.CompletedProcess[str] | None:
     """One read-only foreign command, run to its end. None when it cannot run at all.
 
@@ -111,6 +134,7 @@ def _run(
     try:
         return runner(
             list(cmd),
+            input=stdin,
             capture_output=True,
             text=True,
             errors="replace",
@@ -579,6 +603,96 @@ def _template_report(root: Path) -> tuple[dict[str, str], list[str]]:
     return templates, state_warnings({**templates, **lock_state}) + unreadable
 
 
+def _check_outline(runner: Any) -> str | None:
+    """lean-md >= 0.2.4 answers an empty document with a JSON object that carries `phases`."""
+    if shutil.which("lean-md") is None:
+        return "lean-md is not on PATH -- plans need lean-md >= 0.2.4, see INSTALL.md"
+    proc = _run(runner, "lean-md", "outline", "-", "--json", stdin="")
+    if proc is None:
+        return None
+    try:
+        data = json.loads(proc.stdout or "")
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("phases"), list):
+        return None
+    return "lean-md on PATH knows no outline --json (needs >= 0.2.4) -- lean-herdr plan cannot read a plan"
+
+
+def _check_gateway(environ: Mapping[str, str]) -> str | None:
+    """The lean-ctx gateway entry `lean-md`, and the skills directory it hands the server."""
+    base = environ.get(LEAN_CTX_CONFIG_DIR_ENV) or str(Path.home() / ".config" / "lean-ctx")
+    path = Path(base) / "config.toml"
+    try:
+        data: Any = tomllib.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        data = {}
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError) as exc:
+        return f"{path} cannot be read: {exc} -- no verdict on the lean-md gateway entry"
+    gateway = data.get("gateway") if isinstance(data, dict) else None
+    servers = gateway.get("servers") if isinstance(gateway, dict) else None
+    entries = servers if isinstance(servers, list) else []
+    entry = next((s for s in entries if isinstance(s, dict) and s.get("name") == "lean-md"), None)
+    if entry is None:
+        return (
+            f"{path} has no gateway entry lean-md -- agents cannot render a skill (ctx_md_render)"
+        )
+    env = entry.get("env")
+    skills = env.get("LEAN_MD_SKILLS_DIR") if isinstance(env, dict) else None
+    if not isinstance(skills, str) or not Path(skills).is_dir():
+        return (
+            f"LEAN_MD_SKILLS_DIR of the lean-md gateway entry in {path} is no directory: {skills!r}"
+        )
+    return None
+
+
+def _check_committed(root: Path, runner: Any) -> str | None:
+    """Files init and lean-md wrote that git does not track: a plan branch off main lacks them."""
+    present = [path for path in COMMITTED_FILES if (root / path).is_file()]
+    if not present:
+        return None
+    proc = _run(runner, "git", "ls-files", "--", *present, cwd=root)
+    if proc is None or proc.returncode != 0:
+        return None
+    tracked = set(proc.stdout.splitlines())
+    missing = [path for path in present if path not in tracked]
+    if not missing:
+        return None
+    return (
+        f"not committed: {', '.join(missing)} -- a worker's worktree of plan/<slug> "
+        "branches off main and lacks them; commit them on main"
+    )
+
+
+def lean_md_warnings(
+    root: Path, *, runner: Any = subprocess.run, environ: Mapping[str, str] | None = None
+) -> list[str]:
+    """What a plan run needs on this machine and in this repository (plan spec, section 8).
+
+    Warnings only: a single task runs without any of it; `lean-herdr plan` and a worker's
+    brief do not.
+    """
+    env = os.environ if environ is None else environ
+    skill = (
+        None
+        if (root / PLAN_SKILLS[0]).is_file()
+        else ".claude/skills/lmd-writing-plans is missing -- lean-herdr workspace init --update installs it"
+    )
+    ty = (
+        None
+        if shutil.which("ty")
+        else "ty is not on PATH -- .lean-ctx/lean-herdr/bin/pylsp starts ty server for Python workers"
+    )
+    checks = [
+        _check_outline(runner),
+        _check_gateway(env),
+        skill,
+        ty,
+        _check_committed(root, runner),
+    ]
+    return [line for line in checks if line is not None]
+
+
 def _unrooted(error: str, runner: Any) -> dict[str, Any]:
     """The answer without a root: one error, and only what needs no project is asked."""
     install, warnings = machine_report(None, data={}, overlay_auto=False, runner=runner)
@@ -613,7 +727,10 @@ def workspace_check(*, root: Path | None = None, runner: Any = subprocess.run) -
         "ok": not errors,
         "root": str(base),
         "errors": errors,
-        "warnings": warnings + _role_warnings(base, data) + template_lines,
+        "warnings": warnings
+        + _role_warnings(base, data)
+        + template_lines
+        + lean_md_warnings(base, runner=runner),
         "install": install,
         "templates": templates,
     }

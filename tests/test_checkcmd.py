@@ -38,6 +38,12 @@ def repo(tmp_path):
     return tmp_path
 
 
+@pytest.fixture(autouse=True)
+def no_user_lean_ctx_config(monkeypatch, tmp_path_factory):
+    """`lean_md_warnings` reads lean-ctx's config -- never this machine's own in here."""
+    monkeypatch.setenv("LEAN_CTX_CONFIG_DIR", str(tmp_path_factory.mktemp("no-lean-ctx")))
+
+
 def test_the_allowlist_check_answers_a_line_only_when_the_name_is_missing(monkeypatch):
     monkeypatch.setattr("shutil.which", which_stub(True))
     granted = FakeProc(replies={("allow", "--list"): "Extra (additive): lean-herdr"})
@@ -419,6 +425,8 @@ def healthy_machine() -> FakeProc:
             ("config", "show"): wt_show(generation("lean-herdr llm generate")),
             ("plugin", "list"): "- lean.herdr (context) enabled [local:/snap/lean_herdr/plugin]\n",
             ("check-ignore",): ".gitignore:1:rule\tpath",
+            ("outline",): {"phases": [], "macros": {}, "errors": []},
+            ("ls-files",): "\n".join(checkcmd.COMMITTED_FILES) + "\n",
         }
     )
 
@@ -430,8 +438,23 @@ def initialised(monkeypatch, repo):
     monkeypatch.setattr("shutil.which", which_stub(True))
 
 
+@pytest.fixture
+def lean_md_ready(monkeypatch, repo, tmp_path_factory):
+    """What `lean_md_warnings` asks for: the gateway entry, its skills dir, the skill stub."""
+    config = tmp_path_factory.mktemp("lean-ctx")
+    skills = tmp_path_factory.mktemp("skills")
+    (config / "config.toml").write_text(
+        f'[[gateway.servers]]\nname = "lean-md"\n\n[gateway.servers.env]\nLEAN_MD_SKILLS_DIR = "{skills}"\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("LEAN_CTX_CONFIG_DIR", str(config))
+    stub = repo / ".claude" / "skills" / "lmd-writing-plans" / "SKILL.md"
+    stub.parent.mkdir(parents=True)
+    stub.write_text("stub\n", encoding="utf-8")
+
+
 def test_an_initialised_project_on_a_healthy_machine_is_ok_and_all_current(
-    monkeypatch, repo, snapshot
+    monkeypatch, repo, snapshot, lean_md_ready
 ):
     initialised(monkeypatch, repo)
     answer = workspace_check(root=repo, runner=healthy_machine())
