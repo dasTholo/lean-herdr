@@ -208,6 +208,16 @@ class Herdr:
         """
         return self.run("pane", "send-keys", pane, *keys)
 
+    def pane_run(self, pane: str, command: str) -> bool:
+        """`herdr pane run <PANE_ID> <COMMAND>`: one line typed into the pane's shell.
+
+        True when Herdr took it. On success it prints nothing (measured
+        2026-09-15: exit 0, empty stdout), so `run()`'s `{}` cannot tell
+        success from failure here -- the exit code is the answer. The pane id
+        is positional, as with `send-keys`.
+        """
+        return self._run("pane", "run", pane, command)[1] == 0
+
     def agent_start(
         self,
         name: str,

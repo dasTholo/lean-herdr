@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -125,6 +126,14 @@ LOG_COMMANDS = ("order", "answer", "cancel", "remember")
 #: already written carries it -- so it stays as it is, English role prompts or
 #: not. `VERDICT:` is deliberately NOT accepted.
 VERDICT_RE = re.compile(r"VERDIKT:\s*(result|reject)\s*$")
+
+#: herdr's agent names are `[a-z][a-z0-9_-]{0,31}`: 32 characters at most. A longer
+#: name is refused by herdr after the pane already exists, so `_build` checks first.
+HERDR_NAME_MAX = 32
+
+#: A project's own binaries for its workers -- `bin/pylsp` for Python. Present, the
+#: directory goes in front of the worker pane's PATH; absent, the PATH stays as it is.
+WORKER_BIN = Path(".lean-ctx") / "lean-herdr" / "bin"
 
 
 @dataclass(frozen=True)
@@ -316,6 +325,16 @@ def dispatch(
         )
         if not pane:
             return _result(False, None, None, error="pane_split_failed")
+
+        bin_dir = root / WORKER_BIN
+        # Typed into the pane's shell rather than passed as `pane split --env PATH=...`:
+        # zsh's startup files put their own directories in front of an inherited PATH,
+        # and a line typed right after the split runs after them (measured 2026-09-15).
+        # The agent and its lean-ctx server inherit the result. POSIX syntax: zsh, bash.
+        if bin_dir.is_dir() and not herdr.pane_run(
+            pane, f'export PATH={shlex.quote(str(bin_dir))}:"$PATH"'
+        ):
+            return _result(False, pane, None, error="pane_run_failed")
         started = start_agent(
             herdr,
             name,
@@ -835,6 +854,15 @@ def _build(
     problem = role_problem(root, args.command, args.kind, prompt)
     if problem:
         return {"ok": False, "error": f"config_error: {problem}"}
+    name = agent_name(args.command, args.worktree, settings=settings)
+    if len(name) > HERDR_NAME_MAX:
+        return {
+            "ok": False,
+            "error": (
+                f"config_error: agent name {name!r} has {len(name)} characters, "
+                f"herdr allows {HERDR_NAME_MAX}"
+            ),
+        }
     # Additive, and only where a reader exists: the orchestrator reads
     # the dispatch line of the role behind `review` -- by `--work review`
     # or by that role's name. `ok` is untouched: a warning, never a

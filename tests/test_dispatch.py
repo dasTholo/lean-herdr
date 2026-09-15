@@ -1,4 +1,5 @@
 import json
+import shlex
 from itertools import pairwise
 from pathlib import Path
 
@@ -26,7 +27,7 @@ from lean_herdr.settings import (
     role_prompt_path,
     settings_for,
 )
-from tests.doubles import FakeProc, agent_started, which_stub, write_role_fixture
+from tests.doubles import Completed, FakeProc, agent_started, which_stub, write_role_fixture
 
 ROOT = Path("/repo")
 AGENT_ID = "mcp-2018183-70c877bf"
@@ -1372,3 +1373,99 @@ def test_plan_flags_belong_to_a_log_command(monkeypatch, tmp_path, capsys):
         capsys,
     )
     assert result == {"ok": False, "error": "usage_error: --plan belongs to a log command"}
+
+
+def test_an_agent_name_over_32_characters_is_refused_before_any_pane(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "repo"
+    write_role_fixture(root, "builder")
+    _no_launch(monkeypatch)
+    result = _line(
+        [
+            "builder",
+            "--kind",
+            "claude",
+            "--model",
+            "sonnet",
+            "--worktree",
+            "plan/a-slug-far-too-long-x",
+        ],
+        root,
+        monkeypatch,
+        capsys,
+    )
+    assert result == {
+        "ok": False,
+        "error": "config_error: agent name 'builder-plan-a-slug-far-too-long-x' has 34 characters, herdr allows 32",
+    }
+
+
+def test_an_agent_name_of_exactly_32_characters_still_dispatches(monkeypatch, tmp_path, capsys):
+    root = tmp_path / "repo"
+    write_role_fixture(root, "builder")
+    seen = _spy_dispatch(monkeypatch)
+    result = _line(
+        [
+            "builder",
+            "--kind",
+            "claude",
+            "--model",
+            "sonnet",
+            "--worktree",
+            "plan/a-slug-far-too-long",
+        ],
+        root,
+        monkeypatch,
+        capsys,
+    )
+    assert result["ok"] is True
+    assert len(seen) == 1
+
+
+def test_the_worker_bin_is_exported_in_the_pane_before_the_agent_starts(world, tmp_path):
+    h_proc, path = world
+    bin_dir = tmp_path / ".lean-ctx" / "lean-herdr" / "bin"
+    bin_dir.mkdir(parents=True)
+    path.write_text(json.dumps(registry()), encoding="utf-8")
+    dispatch(
+        req(),
+        herdr=Herdr(runner=h_proc),
+        root=tmp_path,
+        registry_path=path,
+        waiter=lambda *a, **kw: AGENT_ID,
+    )
+    verbs = [call[1:3] for call in h_proc.calls]
+    run = verbs.index(["pane", "run"])
+    assert verbs.index(["pane", "split"]) < run < verbs.index(["agent", "start"])
+    assert h_proc.calls[run][3:] == ["w1:p6", f'export PATH={shlex.quote(str(bin_dir))}:"$PATH"']
+    split = h_proc.calls[verbs.index(["pane", "split"])]
+    assert not any(arg.startswith("PATH=") for arg in split), "zsh would push an --env PATH back"
+
+
+def test_without_a_worker_bin_nothing_is_typed_into_the_pane(world, tmp_path):
+    h_proc, path = world
+    path.write_text(json.dumps(registry()), encoding="utf-8")
+    dispatch(
+        req(),
+        herdr=Herdr(runner=h_proc),
+        root=tmp_path,
+        registry_path=path,
+        waiter=lambda *a, **kw: AGENT_ID,
+    )
+    assert not any(call[1:3] == ["pane", "run"] for call in h_proc.calls)
+
+
+def test_a_failed_path_export_starts_no_agent(world, tmp_path):
+    h_proc, path = world
+    (tmp_path / ".lean-ctx" / "lean-herdr" / "bin").mkdir(parents=True)
+    h_proc.replies[("pane", "run")] = Completed(returncode=1, stderr="pane not found")
+    path.write_text(json.dumps(registry()), encoding="utf-8")
+    result = dispatch(
+        req(),
+        herdr=Herdr(runner=h_proc),
+        root=tmp_path,
+        registry_path=path,
+        waiter=lambda *a, **kw: AGENT_ID,
+    )
+    assert result["ok"] is False
+    assert result.get("error") == "pane_run_failed"
+    assert not any(call[1:3] == ["agent", "start"] for call in h_proc.calls)

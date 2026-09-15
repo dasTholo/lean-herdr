@@ -113,6 +113,15 @@ def test_pane_send_keys_puts_the_pane_id_first(fake):
     assert fake.calls == [["herdr", "pane", "send-keys", "w8:p5", "ctrl-c"]]
 
 
+def test_pane_run_puts_the_pane_id_first_and_answers_with_the_exit_code(fake):
+    """`pane run` prints nothing on success (measured 2026-09-15): the exit code is the answer."""
+    fake.replies = {("pane", "run"): Completed()}
+    assert h(fake).pane_run("w8:p5", 'export PATH=/x:"$PATH"') is True
+    assert fake.calls == [["herdr", "pane", "run", "w8:p5", 'export PATH=/x:"$PATH"']]
+    fake.replies = {("pane", "run"): Completed(returncode=1, stderr="pane not found")}
+    assert h(fake).pane_run("w8:p5", "true") is False
+
+
 def test_pane_list_filters_by_workspace(fake):
     fake.replies = {("pane", "list"): {"result": {"panes": [{"pane_id": "w2:p1"}]}}}
     assert h(fake).pane_list("w2") == [{"pane_id": "w2:p1"}]
