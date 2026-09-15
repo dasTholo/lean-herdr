@@ -850,15 +850,36 @@ def _claude_state(monkeypatch, tmp_path_factory, projects: dict) -> None:
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
 
 
-def _untrusted(root: Path) -> str:
+WORKER_UNTRUSTED = (
+    "a claude worker stops at the folder-trust dialog in every worktree of this repository, "
+    "and dispatch answers agent_blocked"
+)
+ORCHESTRATOR_UNTRUSTED = (
+    "the claude orchestrator stops at the folder-trust dialog when workspace up starts it, "
+    "and up answers agent_blocked"
+)
+
+
+def _untrusted(root: Path, consequence: str = WORKER_UNTRUSTED) -> str:
     return (
-        f"claude does not trust {root} -- a claude worker stops at the folder-trust dialog in "
-        "every worktree of this repository, and dispatch answers agent_blocked. "
+        f"claude does not trust {root} -- {consequence}. "
         "Run: lean-herdr workspace init --trust-claude"
     )
 
 
 CLAUDE_BUILDER = '[roles.builder]\nkind = "claude"\n'
+
+
+def test_a_claude_orchestrator_alone_is_named_for_up_not_for_worktrees(
+    monkeypatch, repo, snapshot, tmp_path_factory
+):
+    initialised(monkeypatch, repo)
+    monkeypatch.setattr("shutil.which", which_stub(False))
+    (repo / SETTINGS_PATH).write_text('[roles.orchestrator]\nkind = "claude"\n', encoding="utf-8")
+    _claude_state(monkeypatch, tmp_path_factory, {})
+    warnings = workspace_check(root=repo)["warnings"]
+    assert _untrusted(repo, ORCHESTRATOR_UNTRUSTED) in warnings, warnings
+    assert _untrusted(repo) not in warnings, warnings
 
 
 def test_a_claude_role_in_an_untrusted_root_is_named(monkeypatch, repo, snapshot, tmp_path_factory):

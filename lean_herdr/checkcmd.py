@@ -615,18 +615,30 @@ def _claude_trust_warnings(root: Path, data: dict[str, Any]) -> list[str]:
 
     A worktree inherits the root's trust (measured 2026-09-15), so without it
     every claude worker stops at the folder-trust dialog and `dispatch` answers
-    `agent_blocked`. Reads only; granting it is `init --trust-claude`. No state
-    file, or one nobody can read: no verdict.
+    `agent_blocked`; a claude orchestrator meets the same dialog in the root, and
+    `workspace up` answers `agent_blocked`. The line names the worker case when a
+    worker role runs on claude, the orchestrator case only when none does. Reads
+    only; granting it is `init --trust-claude`. No state file, or one nobody can
+    read: no verdict.
     """
-    roles = {"orchestrator", *work_roles(data).values()}
-    if not any(settings_for(role, data).kind == "claude" for role in roles):
+    workers = set(work_roles(data).values()) - {"orchestrator"}
+    if any(settings_for(role, data).kind == "claude" for role in workers):
+        consequence = (
+            "a claude worker stops at the folder-trust dialog in every worktree of this "
+            "repository, and dispatch answers agent_blocked"
+        )
+    elif settings_for("orchestrator", data).kind == "claude":
+        consequence = (
+            "the claude orchestrator stops at the folder-trust dialog when workspace up "
+            "starts it, and up answers agent_blocked"
+        )
+    else:
         return []
     if claude_trusts(root) is not False:
         return []
     return [
         (
-            f"claude does not trust {root} -- a claude worker stops at the folder-trust dialog in "
-            "every worktree of this repository, and dispatch answers agent_blocked. "
+            f"claude does not trust {root} -- {consequence}. "
             "Run: lean-herdr workspace init --trust-claude"
         )
     ]

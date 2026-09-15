@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from lean_herdr.bus import BusError, canonical_root
+from lean_herdr.dialogs import blocked_dialog
 from lean_herdr.dispatch import UsageError, wait_for_agent_id
 from lean_herdr.herdr import (
     FIRST_START_TIMEOUT_MS,
@@ -242,17 +243,22 @@ def start_orchestrator(
         agent_args=agent_args,
         first_timeout_ms=min(FIRST_START_TIMEOUT_MS, timeout_ms_for(ready_timeout_s)),
         retry_timeout_ms=timeout_ms_for(ready_timeout_s) if retry_on_hang else 0,
+        blocked=lambda started_pane: blocked_dialog(herdr, pane=started_pane),
     )
     if not started["ok"]:
-        # Two failures, two names, and the helper is the one that can tell
+        # Three failures, three names, and the helper is the one that can tell
         # them apart: `agent_start_failed` is Herdr saying no after 0.0 s,
         # `opencode_stuck` is a start that did not reach readiness even on
-        # the second attempt. Both carry the pane, because the tile is still
-        # there and the operator needs to find it -- the helper aborts the
-        # PROCESS, never the pane.
+        # the second attempt, `agent_blocked` is a dialog -- claude's folder
+        # trust, say -- waiting for a human, and carries its `dialog`; nothing
+        # here answers it. All carry the pane, because the tile is still there
+        # and the operator needs to find it -- the helper aborts the PROCESS,
+        # never the pane.
+        dialog = {"dialog": started["dialog"]} if "dialog" in started else {}
         return {
             "ok": False,
             "error": started["error"],
+            **dialog,
             "workspace": target,
             "pane": pane,
         }

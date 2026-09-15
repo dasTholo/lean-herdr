@@ -243,6 +243,34 @@ def test_a_hung_start_is_reported_as_opencode_stuck_with_pane_and_workspace(
     }
 
 
+def test_a_dialog_at_the_orchestrators_start_is_named_with_pane_and_workspace(monkeypatch):
+    """claude's folder trust at `up`: the dialog travels -- no `ctrl-c` into it, no retry."""
+    replies = {
+        ("workspace", "list"): BY_WORKTREE,
+        ("agent", "list"): {
+            "result": {"agents": [{"pane_id": "w3:p9", "agent_status": "blocked"}]}
+        },
+        ("pane", "list"): PANES,
+        ("pane", "split"): SPLIT,
+        ("agent", "start"): {},
+        ("agent", "read"): "Do you trust the files in this folder?\n",
+    }
+    herdr, proc = herdr_with(monkeypatch, replies)
+
+    def waiter(*_a, **_kw):
+        raise AssertionError("the waiter must not run after a dialog")
+
+    assert core(herdr, waiter=waiter) == {
+        "ok": False,
+        "error": "agent_blocked",
+        "dialog": "Do you trust the files in this folder?",
+        "workspace": "w3",
+        "pane": "w3:p9",
+    }
+    assert not proc.called_with("send-keys"), proc.flat()
+    assert len([c for c in proc.calls if c[1:3] == ["agent", "start"]]) == 1, proc.flat()
+
+
 def test_the_orchestrator_start_goes_through_the_shared_helper(monkeypatch):
     """One mechanism, not two -- and the retry gets the configured budget."""
     replies = {
