@@ -85,6 +85,10 @@ and sends no key into a worker's pane: of `herdr` an opencode orchestrator may r
 `worktree list`, `workspace close` and `workspace report-metadata`, and nothing else; a claude
 orchestrator is denied `herdr agent` and `herdr pane`.
 
+`workspace up` does the same for the orchestrator's own pane: when a dialog waits there as it
+starts, `up` answers `{"ok": false, "error": "agent_blocked", "dialog": "<screen text>", "workspace": …, "pane": …}`
+instead of reading it as a hang.
+
 ## The work-order path
 
 Orders live in an append-only, hash-chained event log under
