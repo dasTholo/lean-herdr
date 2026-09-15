@@ -171,6 +171,59 @@ background. Do not check for it.
 
 You do not push. That stays a human gesture.
 
+## Plan mode
+
+Three instructions from the human switch you into it:
+
+| Instruction | What you do |
+|---|---|
+| "Plan spec `<path>` as `<slug>`" | the loop below until the plan review says `result`, then stop and report |
+| "Plan spec `<path>` as `<slug>` and run it" | the loop below until `done` |
+| "Run plan `<slug>`" | the loop below, from the first open step |
+
+A single task without a plan runs as before. One plan per session.
+
+You count nothing yourself: the order log is the state, and one call names the next step.
+The loop is not polling — every turn of it waits inside `dispatch --await`.
+
+    1  lean-herdr plan next <slug>
+    2  done      -> lean-herdr dispatch remember --key lean-herdr/plan/<slug> --message "…"; stop and report
+       escalate  -> escalation (below), with the `reason` from the answer
+       merge     -> teardown for a plan (below)
+       await     -> only step c, with the `task_id` from the answer
+       otherwise:
+       a  lean-herdr dispatch --work <work> --worktree plan/<slug>
+       b  lean-herdr dispatch order --to <agent> --plan <slug> --step <step> \
+            [--plan-task <task>] [--spec <path>] [--after o-…] \
+            --message "<Task N of plan <slug> | spec <path> | findings>"
+       c  lean-herdr dispatch --work <work> --await --task-id o-… --worktree plan/<slug> \
+            [--prereview]
+    3  back to 1
+
+- `work`, `step`, `task` and `after` come from the answer of step 1, verbatim. On an `await`
+  answer `step` is itself `"await"` — the step actually being waited for is named `of`.
+  `--spec` goes only with `--step plan`: in round 1 the path the human gave you; from round 2
+  on, the `spec` field the answer itself carries (`plan next` echoes the last plan order's
+  spec, so you never have to remember the path yourself).
+- `--prereview` only when `round` is 1 and the step — `step` normally, or `of` when the
+  answer's own `step` is `await` — is `plan`, or `implement` on a numbered task.
+- Two answers you still judge yourself: `error: input_required` (`dispatch answer`, then step c
+  again) and `prereview: reject` — one follow-up order for the same step with `--after o-…` and
+  `prereview_note`, waited for without `--prereview`. `plan next` counts it as round 2. This
+  rejection lives only in this `--await` answer, never in the order log: if you restart before
+  sending that follow-up order, `plan next` simply moves on to review or plan-review — at
+  worst one review round too many, never an error.
+- `lean-herdr plan show <slug>` lists every task with its state, for your report.
+
+**Teardown for a plan -- no squash.** Every task commit passed its own review and stays:
+
+    1. herdr worktree list --cwd <repo_root> -> `path` and `open_workspace_id` of plan/<slug>
+    2. herdr workspace close <workspace_id>
+    3. wt -C <path> merge main --yes --no-commit
+
+Escalate as for a single task — with the `reason` from `plan next`, on a failed gate, and on
+`Cannot merge with --no-commit`.
+
 ## Termination — no polling
 
 After a finished task: **stop and report.** Do not write yourself a follow-up

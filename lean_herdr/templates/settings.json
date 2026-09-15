@@ -10,7 +10,12 @@
       "Bash(git add:*)",
       "Bash({{lean-herdr:test}}:*)",
       "Bash({{lean-herdr:lint}}:*)",
-      "Bash(wt step commit:*)"
+      "Bash(wt step commit:*)",
+      "Bash(wt step diff:*)",
+      "Bash(lean-herdr plan brief:*)",
+      "Bash(lean-herdr plan check:*)",
+      "Bash(lean-herdr plan next:*)",
+      "Bash(lean-herdr plan show:*)"
     ]
   }
 }

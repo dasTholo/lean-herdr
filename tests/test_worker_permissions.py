@@ -340,6 +340,8 @@ def test_every_worker_ships_a_claude_role_file():
 def test_a_claude_role_that_writes_nothing_is_denied_every_writing_grant(role):
     """The shared allowlist hands every claude worker `git add` and `wt step commit`.
 
+    The four `plan` commands and `wt step diff` only read, and stay as well.
+
     Everything in it but the report path, the gate's own two commands and skills
     has to be taken back here, together with the editors and lean-ctx's tools.
     """
@@ -351,6 +353,8 @@ def test_a_claude_role_that_writes_nothing_is_denied_every_writing_grant(role):
         if not rule.startswith("Bash(lean-herdr report")
         and rule not in kept
         and not rule.startswith("Skill")
+        and not rule.startswith("Bash(lean-herdr plan ")
+        and rule != "Bash(wt step diff:*)"
     ]
     deny = claude_rules(role, "deny")
     for rule in (*CLAUDE_WRITERS, *shared):
@@ -375,12 +379,12 @@ def test_the_claude_orchestrator_writes_nothing(gate_root):
         assert rule in denied, f"claude/orchestrator.json does not deny {rule}"
 
 
-def test_the_claude_builder_still_blocks_nothing(gate_root):
-    assert claude_rules("builder", "deny", gate_root) == []
+def test_the_claude_builder_blocks_push_and_merge_and_nothing_else(gate_root):
+    assert claude_rules("builder", "deny", gate_root) == list(PUSH_AND_MERGE)
 
 
-@pytest.mark.parametrize("role", ("plan-writer", "plan-reviewer"))
-def test_a_plan_role_may_neither_push_nor_merge(role):
+@pytest.mark.parametrize("role", WORKERS)
+def test_no_claude_worker_may_push_or_merge(role):
     denied = claude_rules(role, "deny")
     for rule in PUSH_AND_MERGE:
         assert rule in denied, f"claude/{role}.json does not deny {rule}"
@@ -406,3 +410,35 @@ def test_the_plan_reviewer_may_check_and_diff_but_not_commit(gate_root):
         assert bash.get(pattern) == "allow", f"the plan reviewer cannot run `{pattern}`"
     for forbidden in ("git add*", "git commit*", "wt step commit *"):
         assert forbidden not in bash, forbidden
+
+
+@pytest.mark.parametrize("role", WORKERS)
+def test_every_worker_may_fetch_its_brief(role, gate_root):
+    bash = opencode(gate_root)["agent"][role]["permission"]["bash"]
+    assert bash.get("lean-herdr plan brief *") == "allow", f"{role} cannot run `plan brief`"
+
+
+@pytest.mark.parametrize("role", ("builder", "reviewer", "plan-reviewer"))
+def test_the_diff_is_open_to_whoever_writes_or_judges_a_task(role, gate_root):
+    bash = opencode(gate_root)["agent"][role]["permission"]["bash"]
+    assert bash.get("wt step diff") == "allow", f"{role} cannot run a bare `wt step diff`"
+    assert bash.get("wt step diff *") == "allow", f"{role} cannot run `wt step diff <sha>`"
+
+
+def test_the_orchestrator_steers_a_plan_and_fetches_no_brief(gate_root):
+    bash = opencode(gate_root)["agent"]["orchestrator"]["permission"]["bash"]
+    for pattern in ("lean-herdr plan next *", "lean-herdr plan show *", "lean-herdr plan check *"):
+        assert bash.get(pattern) == "allow", f"the orchestrator cannot run `{pattern}`"
+    assert "lean-herdr plan brief *" not in bash
+
+
+def test_claude_may_run_the_four_plan_commands_and_the_diff(gate_root):
+    allow = claude_allow(gate_root)
+    for rule in (
+        "Bash(wt step diff:*)",
+        "Bash(lean-herdr plan brief:*)",
+        "Bash(lean-herdr plan check:*)",
+        "Bash(lean-herdr plan next:*)",
+        "Bash(lean-herdr plan show:*)",
+    ):
+        assert rule in allow, f".claude/settings.json does not allow {rule}"

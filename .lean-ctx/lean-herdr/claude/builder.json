@@ -1,1 +1,9 @@
-{}
+{
+  "permissions": {
+    "deny": [
+      "Bash(git push:*)",
+      "Bash(wt merge:*)",
+      "Bash(wt step push:*)"
+    ]
+  }
+}

@@ -7,6 +7,9 @@
       "Bash(git add:*)",
       "Bash(git commit:*)",
       "Bash(wt step commit:*)",
+      "Bash(git push:*)",
+      "Bash(wt merge:*)",
+      "Bash(wt step push:*)",
       "mcp__lean-ctx__ctx_patch",
       "mcp__lean-ctx__ctx_edit",
       "mcp__lean-ctx__ctx_refactor"

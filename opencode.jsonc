@@ -36,6 +36,9 @@
         "bash": {
           "*": "deny",
           "lean-herdr dispatch *": "allow",
+          "lean-herdr plan next *": "allow",
+          "lean-herdr plan show *": "allow",
+          "lean-herdr plan check *": "allow",
           "herdr *": "allow",
           "wt *": "allow",
           "git status*": "allow",
@@ -71,6 +74,9 @@
           "lean-herdr report done *": "allow",
           "lean-herdr report fail *": "allow",
           "lean-herdr report ask *": "allow",
+          "lean-herdr plan brief *": "allow",
+          "wt step diff": "allow",
+          "wt step diff *": "allow",
           // The pre-merge gate's own two commands, rendered by `workspace init`:
           // the builder may run exactly what the merge is measured against.
           "uv run pytest*": "allow",
@@ -106,10 +112,13 @@
           "lean-herdr report done *": "allow",
           "lean-herdr report fail *": "allow",
           "lean-herdr report ask *": "allow",
+          "lean-herdr plan brief *": "allow",
           "git diff*": "allow",
           "git log*": "allow",
           "git show*": "allow",
-          "git status*": "allow"
+          "git status*": "allow",
+          "wt step diff": "allow",
+          "wt step diff *": "allow"
         }
       }
     },

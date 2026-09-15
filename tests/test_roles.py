@@ -105,3 +105,10 @@ def test_the_plan_roles_work_from_their_brief(name):
     text = (ROLES / f"{name}.md").read_text(encoding="utf-8")
     assert "lean-herdr plan brief --task o-…" in text
     assert "lean-herdr plan check <slug>" in text
+
+
+def test_orchestrator_knows_plan_mode():
+    text = (ROLES / "orchestrator.md").read_text(encoding="utf-8")
+    assert "## Plan mode" in text
+    for part in ("lean-herdr plan next", "lean-herdr plan show", "--plan <slug> --step <step>"):
+        assert part in text, part

@@ -10,7 +10,12 @@
       "Bash(git add:*)",
       "Bash(uv run pytest:*)",
       "Bash(uv run ruff check:*)",
-      "Bash(wt step commit:*)"
+      "Bash(wt step commit:*)",
+      "Bash(wt step diff:*)",
+      "Bash(lean-herdr plan brief:*)",
+      "Bash(lean-herdr plan check:*)",
+      "Bash(lean-herdr plan next:*)",
+      "Bash(lean-herdr plan show:*)"
     ]
   }
 }

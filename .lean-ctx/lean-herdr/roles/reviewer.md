@@ -39,10 +39,19 @@ nothing stops you.
    The orchestrator is waiting for this event; without it your run comes back
    as `no_reply`.
 
-3. Check what actually stands in the tree — `git diff`, `git log`, the files.
+3. If the order belongs to a plan, fetch its brief:
+
+       lean-herdr plan brief --task o-…
+
+   It carries the task, the plan's Global Constraints and the diff to judge —
+   `wt step diff <sha>`, with the commits and the untracked files behind it. For
+   an order outside a plan it answers `belongs to no plan` — then the order text
+   is all there is.
+
+4. Check what actually stands in the tree — `git diff`, `git log`, the files.
    You sit in the worktree of the branch; what you see is the work.
 
-4. Finish — **the verdict is on the FIRST line, not in your prose**:
+5. Finish — **the verdict is on the FIRST line, not in your prose**:
 
        lean-herdr report done --task o-… \
          --message "VERDIKT: result
@@ -53,7 +62,7 @@ nothing stops you.
    `done`: a reasoned rejection is your contribution, not a failure. `fail` is
    the other case — you could not check at all.
 
-5. **Then stop.** No second look into the order log, no follow-up order, no
+6. **Then stop.** No second look into the order log, no follow-up order, no
    further model step without a new order.
 
 ## Standard

@@ -53,7 +53,15 @@ guarantee, same as the sender check above.
    whoever skips it leaves the wait sitting on `created` until the timeout, and
    the run comes back as `no_reply`.
 
-3. Work: TDD, no refactoring outside the order. Commit in small steps:
+3. If the order belongs to a plan, fetch its brief:
+
+       lean-herdr plan brief --task o-…
+
+   It carries the task, the plan's Global Constraints and how to finish, and it
+   wins over a shorter order text. For an order outside a plan it answers
+   `belongs to no plan` — then the order text is all there is.
+
+4. Work: TDD, no refactoring outside the order. Commit in small steps:
 
        git add <the paths this order asked for>
        wt step commit --stage none --yes
@@ -66,7 +74,7 @@ guarantee, same as the sender check above.
    The commit message is written for you by the operator's configured
    generator. You do not pass `-m`, and you do not second-guess it.
 
-4. Finish:
+5. Finish:
 
        lean-herdr report done --task o-… --message "<what you built, in three sentences>"
 
@@ -77,7 +85,7 @@ guarantee, same as the sender check above.
 
    — it answers, and you carry on with the same order.
 
-5. **Then stop.** Do not write yourself a follow-up order. Do not ask the log
+6. **Then stop.** Do not write yourself a follow-up order. Do not ask the log
    again whether something new is there — every look costs a full model step.
 
 ## Context
