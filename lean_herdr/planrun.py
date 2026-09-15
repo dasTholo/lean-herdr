@@ -180,7 +180,7 @@ def next_step(
     waiting = [o for o in orders if o.is_open]
     if waiting:
         order = waiting[-1]
-        return {
+        answer = {
             "step": "await",
             "work": _work(plan, order),
             "task_id": order.id,
@@ -188,6 +188,9 @@ def next_step(
             "round": _round(orders, order),
             "of": order.step,
         }
+        if order.step == "plan":
+            answer["spec"] = order.spec
+        return answer
     answer = _planning(orders, checks)
     if answer is not None:
         return answer

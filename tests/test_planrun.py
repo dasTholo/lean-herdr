@@ -69,6 +69,7 @@ UNKNOWN = Order(
                 "task": None,
                 "round": 1,
                 "of": "plan",
+                "spec": SPEC,
             },
         ),
         (
@@ -329,6 +330,28 @@ UNKNOWN = Order(
 )
 def test_next_step(orders, checks, expected):
     assert next_step(PLAN, orders, checks=checks, merged=False) == expected
+
+
+def test_an_await_answer_names_the_spec_only_for_a_plan_order():
+    """F7: a restarted orchestrator resends `--step plan` with `--spec` from this
+    field (ordercmd requires it for that step); an `implement` order carries no
+    spec at all, so its await answer must not gain one.
+    """
+    plan_await = next_step(PLAN, [o("p1", "plan", state="working")], checks={}, merged=False)
+    assert plan_await["spec"] == SPEC
+
+    implement_await = next_step(
+        PLAN,
+        [
+            *PLANNED,
+            o("i1", "implement", task="1"),
+            o("v1", "review", task="1", verdict="result"),
+            o("i2", "implement", task="2", state="created"),
+        ],
+        checks={},
+        merged=False,
+    )
+    assert "spec" not in implement_await
 
 
 def test_a_merged_plan_is_done_whatever_the_log_says():
