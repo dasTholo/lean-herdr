@@ -5,14 +5,17 @@ import pytest
 
 from lean_herdr import plancmd
 from lean_herdr.orderlog import append, read_events
-from lean_herdr.orders import fold
+from lean_herdr.orders import Order, fold
 from lean_herdr.plancmd import (
+    PLAN_RULES_SUMMARY,
     BriefError,
+    PrereviewInput,
     check_result,
     compose_brief,
     main,
     next_result,
     plan_orders,
+    prereview_input,
     show_result,
 )
 from tests.doubles import Completed
@@ -475,3 +478,65 @@ def test_brief_behind_a_flag_is_a_usage_error_and_no_show(cwd_repo, capsys):
         "ok": False,
         "error": "usage_error: brief comes first: lean-herdr plan brief --task o-…",
     }
+
+
+WORKTREES = {"result": {"worktrees": [{"branch": "plan/shop", "path": "/wt/shop"}]}}
+SPEC_FILE = "docs/specs/shop-design.md"
+
+
+def plan_order(**fields):
+    return Order(id="o-1", to_agent=WORKER, state="completed", plan=SLUG, **fields)
+
+
+def picked(order_, repo, worktree_list=WORKTREES):
+    return prereview_input(
+        order_, root=ROOT, branch="plan/shop", worktree_list=worktree_list, runner=repo
+    )
+
+
+def test_a_plan_is_judged_against_its_spec_from_main_and_the_rules():
+    repo = Repo({f"main:{SPEC_FILE}": "# Shop\n\nThe API lists products.\n"})
+    assert picked(plan_order(step="plan", spec=SPEC_FILE), repo) == PrereviewInput(
+        order=f"# Shop\n\nThe API lists products.\n\n{PLAN_RULES_SUMMARY}", plan=True
+    )
+
+
+def test_a_task_is_judged_against_its_rendered_task_since_its_start_head():
+    repo = Repo()
+    got = picked(plan_order(step="implement", plan_task="2", start_head="aaa1111"), repo)
+    assert got == PrereviewInput(
+        order=f"<{PLAN_FILE} --phase constraints>\n\n<{PLAN_FILE} --phase task-2>", base="aaa1111"
+    )
+    assert {cwd for _cmd, cwd in repo.calls} == {"/wt/shop"}
+
+
+@pytest.mark.parametrize(
+    ("order_", "worktree_list", "repo", "skip"),
+    [
+        (Order(id="o-1", state="completed"), WORKTREES, Repo(), "no_plan_order"),
+        (plan_order(step="plan", spec=SPEC_FILE), WORKTREES, Repo(), "spec_unreadable"),
+        (
+            plan_order(step="implement", plan_task="branch", start_head="aaa1111"),
+            WORKTREES,
+            Repo(),
+            "no_prereview_for_step",
+        ),
+        (plan_order(step="review", plan_task="1"), WORKTREES, Repo(), "no_prereview_for_step"),
+        (plan_order(step="implement", plan_task="1"), WORKTREES, Repo(), "no_start_head"),
+        (
+            plan_order(step="implement", plan_task="1", start_head="aaa1111"),
+            {"result": "garbage"},
+            Repo(),
+            "worktree_unresolved",
+        ),
+        (
+            plan_order(step="implement", plan_task="1", start_head="aaa1111"),
+            WORKTREES,
+            Repo(broken_render=f"{PLAN_FILE} --phase task-1"),
+            "render_failed",
+        ),
+    ],
+    ids=["no-plan", "no-spec", "branch", "review", "no-start-head", "no-worktree", "render"],
+)
+def test_what_gets_no_pre_review_says_why(order_, worktree_list, repo, skip):
+    assert picked(order_, repo, worktree_list) == PrereviewInput(skip=skip)

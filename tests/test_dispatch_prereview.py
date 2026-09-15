@@ -12,6 +12,7 @@ import pytest
 from lean_herdr.dispatch import AwaitRequest, await_task, build_parser, main, missing_flags
 from lean_herdr.herdr import Herdr
 from lean_herdr.orderlog import append
+from lean_herdr.plancmd import PrereviewInput
 from lean_herdr.settings import LlmSettings
 from tests.doubles import Completed, FakeProc, which_stub
 
@@ -225,3 +226,86 @@ def test_a_stray_flag_is_a_json_line_not_an_exit_code(capsys):
     answer = json.loads(capsys.readouterr().out)
     assert answer["ok"] is False
     assert "--prereview" in answer["error"]
+
+
+def plan_log(tmp_path):
+    append(
+        TASK_ID,
+        "created",
+        "orchestrator",
+        {
+            "to_agent": WORKER,
+            "description": "Task 1 of plan shop",
+            "plan": "shop",
+            "step": "implement",
+            "plan_task": "1",
+        },
+        orders=tmp_path,
+    )
+    append(TASK_ID, "working", WORKER, {"head": "aaa1111", "changes": []}, orders=tmp_path)
+    append(
+        TASK_ID,
+        "completed",
+        WORKER,
+        {"message": "done", "head": "ddd1111", "changes": []},
+        orders=tmp_path,
+    )
+    return tmp_path
+
+
+def test_a_plan_order_is_judged_with_what_plancmd_picks(herdr, tmp_path, monkeypatch):
+    asked = {}
+
+    def fake_input(order, **kwargs):
+        asked.update(order_id=order.id, **kwargs)
+        return PrereviewInput(order="the rendered task 1", base="aaa1111")
+
+    monkeypatch.setattr("lean_herdr.plancmd.prereview_input", fake_input)
+    runner, request = llm_doubles("PREREVIEW: pass", monkeypatch, tmp_path)
+    seen, bodies = [], []
+
+    def recording_runner(cmd, **kw):
+        seen.append(list(cmd))
+        return runner(cmd, **kw)
+
+    def recording_request(url, **kw):
+        bodies.append(kw.get("body") or "")
+        return request(url, **kw)
+
+    result = wait(
+        herdr,
+        plan_log(tmp_path),
+        prereview=True,
+        runner=recording_runner,
+        request=recording_request,
+    )
+    assert result["prereview"] == "pass"
+    assert seen == [["wt", "-C", "/worktrees/feat-x", "step", "diff", "aaa1111"]]
+    assert "the rendered task 1" in bodies[0]
+    assert "Task 1 of plan shop" not in bodies[0]
+    assert (asked["order_id"], asked["branch"], asked["root"]) == (TASK_ID, BRANCH, ROOT)
+
+
+def test_a_skip_from_plancmd_is_the_answer_and_nothing_runs(herdr, tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "lean_herdr.plancmd.prereview_input",
+        lambda order, **_kw: PrereviewInput(skip="no_start_head"),
+    )
+
+    def runner(*_a, **_kw):
+        raise AssertionError("a skipped pre-review runs no wt")
+
+    result = wait(herdr, plan_log(tmp_path), prereview=True, runner=runner)
+    assert result["ok"] is True
+    assert result["prereview"] == "skipped"
+    assert result["prereview_note"] == "no_start_head"
+
+
+def test_an_order_outside_a_plan_never_asks_plancmd(herdr, tmp_path, monkeypatch):
+    def refuse(*_a, **_kw):
+        raise AssertionError("an order without a plan must not reach plancmd")
+
+    monkeypatch.setattr("lean_herdr.plancmd.prereview_input", refuse)
+    runner, request = llm_doubles("PREREVIEW: pass", monkeypatch, tmp_path)
+    result = wait(herdr, completed_log(tmp_path), prereview=True, runner=runner, request=request)
+    assert result["prereview"] == "pass"

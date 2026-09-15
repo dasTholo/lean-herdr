@@ -991,10 +991,11 @@ def test_the_flags_reach_prereview(monkeypatch):
         "5",
     ]
     assert llm.main(argv) == 0
-    assert fetched == {"path": "/worktrees/feat-x", "timeout_s": 5.0}
+    assert fetched == {"path": "/worktrees/feat-x", "base": None, "timeout_s": 5.0}
     assert judged_with == {
         "order": "add a row parser",
         "diff": "diff --git a/x b/x",
+        "plan": False,
         "model": "vendor/m",
         "effort": "high",
         "timeout_s": 5.0,
@@ -1023,11 +1024,12 @@ def test_the_absent_prereview_flags_stay_none_and_the_defaults_differ(monkeypatc
     monkeypatch.setattr(llm, "wt_diff", fake_wt_diff)
     monkeypatch.setattr(llm, "prereview", fake_prereview)
     assert llm.main(["prereview"]) == 0
-    assert fetched == {"path": ".", "timeout_s": llm.DIFF_TIMEOUT_S}
+    assert fetched == {"path": ".", "base": None, "timeout_s": llm.DIFF_TIMEOUT_S}
     assert judged_with["order"] == ""
     assert judged_with["model"] is None
     assert judged_with["effort"] is None
     assert judged_with["timeout_s"] == llm.PREREVIEW_TIMEOUT_S
+    assert judged_with["plan"] is False
 
 
 @pytest.mark.integration
@@ -1046,3 +1048,97 @@ def test_the_real_chain_answers_at_all(tmp_path):
         effort=llm.GENERATE_EFFORT,
     )
     assert got is not None and "pong" in got.lower()
+
+
+def test_a_base_diffs_since_that_commit():
+    calls = []
+
+    def runner(cmd, **_kw):
+        calls.append(list(cmd))
+        return Completed(stdout="diff --git a/x b/x")
+
+    assert llm.wt_diff("/worktrees/plan-shop", base="abc123", runner=runner) == "diff --git a/x b/x"
+    assert calls == [["wt", "-C", "/worktrees/plan-shop", "step", "diff", "abc123"]]
+
+
+@pytest.mark.parametrize(
+    ("plan", "present", "absent"),
+    [
+        (True, "expensive plan reviewer", "Judge ONLY the diff below"),
+        (False, "Judge ONLY the diff below", "expensive plan reviewer"),
+    ],
+)
+def test_plan_mode_picks_the_plan_prompt(no_store, plan, present, absent):
+    spy = SpyRequest(answer("PREREVIEW: pass"))
+    llm.prereview(
+        "the spec",
+        "diff --git a/p b/p",
+        plan=plan,
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
+        settings=NO_FILE,
+    )
+    sent = json.dumps(spy.json_body())
+    assert present in sent
+    assert absent not in sent
+    assert "the spec" in sent
+
+
+def test_order_and_diff_count_together_against_the_cap(no_store):
+    half = llm.MAX_DIFF_BYTES // 2 + 1
+    spy = SpyRequest(answer("PREREVIEW: reject"))
+    ruling, note = llm.prereview(
+        "o" * half,
+        "d" * half,
+        request=spy,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
+        settings=NO_FILE,
+    )
+    assert (ruling, note) == ("skipped", "diff_too_large")
+    assert spy.urls == []
+
+
+def test_prereview_result_hands_base_and_prompt_on(no_store):
+    seen = []
+
+    def runner(cmd, **_kw):
+        seen.append(list(cmd))
+        return Completed(stdout="diff --git a/p b/p")
+
+    spy = SpyRequest(answer("PREREVIEW: pass"))
+    got = llm.prereview_result(
+        "the spec",
+        branch="plan/shop",
+        worktree_list=worktrees({"branch": "plan/shop", "path": "/worktrees/plan-shop"}),
+        base="abc123",
+        plan=True,
+        runner=runner,
+        request=spy,
+        settings=NO_FILE,
+        env={openrouter.KEY_ENV: "k"},
+        auth_path=no_store,
+    )
+    assert got == {"prereview": "pass", "prereview_note": ""}
+    assert seen == [["wt", "-C", "/worktrees/plan-shop", "step", "diff", "abc123"]]
+    assert "expensive plan reviewer" in json.dumps(spy.json_body())
+
+
+def test_the_cli_takes_base_and_plan(monkeypatch):
+    fetched: dict[str, object] = {}
+    judged_with: dict[str, object] = {}
+
+    def fake_wt_diff(_path, **kwargs):
+        fetched.update(kwargs)
+        return "diff"
+
+    def fake_prereview(_order, _diff, **kwargs):
+        judged_with.update(kwargs)
+        return "pass", ""
+
+    monkeypatch.setattr(llm, "wt_diff", fake_wt_diff)
+    monkeypatch.setattr(llm, "prereview", fake_prereview)
+    assert llm.main(["prereview", "--base", "abc123", "--plan", "--order", "the spec"]) == 0
+    assert fetched["base"] == "abc123"
+    assert judged_with["plan"] is True

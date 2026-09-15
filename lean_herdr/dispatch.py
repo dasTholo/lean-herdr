@@ -521,14 +521,34 @@ def await_task(
                 # to the strong reviewer and its VERDIKT: protocol, and a
                 # second writer on it would be exactly the confusion
                 # VERDICT_RE exists to prevent.
+                worktrees = herdr.worktree_list(root)
+                description = order.description
+                judged: dict[str, Any] = {}
+                if order.plan is not None:
+                    # Imported on the call: plancmd reaches planrun, and planrun imports this module.
+                    from lean_herdr.plancmd import prereview_input
+
+                    chosen = prereview_input(
+                        order,
+                        root=root,
+                        branch=req.worktree,
+                        worktree_list=worktrees,
+                        runner=runner,
+                    )
+                    if chosen.skip is not None:
+                        outcome.update({"prereview": "skipped", "prereview_note": chosen.skip})
+                        return outcome
+                    description = chosen.order
+                    judged = {"base": chosen.base, "plan": chosen.plan}
                 outcome.update(
                     llm.prereview_result(
-                        order.description,
+                        description,
                         branch=req.worktree,
-                        worktree_list=herdr.worktree_list(root),
+                        worktree_list=worktrees,
                         settings=llm_cfg,
                         runner=runner,
                         request=request,
+                        **judged,
                     )
                 )
             return outcome

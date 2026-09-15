@@ -14,6 +14,7 @@ import argparse
 import json
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ from lean_herdr.settings import (
     settings_for,
     work_roles,
 )
+from lean_herdr.worktree import find_worktree
 
 SUBCOMMANDS = ("check", "next", "show", "brief")
 
@@ -404,3 +406,73 @@ def main(argv: list[str] | None = None) -> int:
         result = {"ok": False, "error": f"plan_crashed: {exc}"}
     sys.stdout.write(json.dumps(result, ensure_ascii=False) + "\n")
     return 0
+
+
+#: Spec section 3 in a few lines, for the plan-mode judge.
+PLAN_RULES_SUMMARY = """Plan rules:
+- phases `constraints` and `lanes` exist; tasks are `task-1` ... `task-N`, gapless, in document order
+- the first `@call` of every task is `route(work, lane, files)`, and `files` is not empty
+- `work` is routed in [routing] and is none of the stages plan, plan-review, review, integrate
+- every lane is declared with `@call lane(name, deps)`; deps name declared lanes and form no cycle
+- no task comes before a task of a lane its own lane depends on"""
+
+
+@dataclass(frozen=True)
+class PrereviewInput:
+    """What the judge gets for one plan order (spec section 6.6) -- or why it gets nothing."""
+
+    #: The text the judge reads as the order.
+    order: str = ""
+    #: The commit the diff starts at; None diffs since branching.
+    base: str | None = None
+    #: PLAN_PREREVIEW_PROMPT instead of PREREVIEW_PROMPT.
+    plan: bool = False
+    #: Set when this order gets no pre-review: the note beside `prereview: skipped`.
+    skip: str | None = None
+
+
+def _worktree_path(worktree_list: Any, branch: str | None) -> Path | None:
+    try:
+        entry = find_worktree(worktree_list or {}, branch or "")
+    except AttributeError, TypeError:
+        return None
+    path = entry.get("path") if isinstance(entry, dict) else None
+    return Path(path) if path else None
+
+
+def prereview_input(
+    order: Order,
+    *,
+    root: Path,
+    branch: str | None,
+    worktree_list: Any,
+    runner: Any = subprocess.run,
+) -> PrereviewInput:
+    """The judge's order, diff base and prompt for a plan order. Never raises.
+
+    `plan`: the spec read from main, plus the plan rules; the diff since branching is the
+    plan. `implement` on a task: the rendered constraints and task, diffed from the order's
+    own `report start` head. Every other step gets no pre-review.
+    """
+    if order.plan is None:
+        return PrereviewInput(skip="no_plan_order")
+    if order.step == "plan":
+        spec = show(root, "main", order.spec, runner=runner) if order.spec else None
+        if not spec:
+            return PrereviewInput(skip="spec_unreadable")
+        return PrereviewInput(order=f"{spec.strip()}\n\n{PLAN_RULES_SUMMARY}", plan=True)
+    if order.step != "implement" or order.plan_task == "branch":
+        return PrereviewInput(skip="no_prereview_for_step")
+    if not order.start_head:
+        return PrereviewInput(skip="no_start_head")
+    path = _worktree_path(worktree_list, branch)
+    if path is None:
+        return PrereviewInput(skip="worktree_unresolved")
+    try:
+        text = "\n\n".join(
+            render(path, plan_path(order.plan), phase=phase, runner=runner)
+            for phase in ("constraints", f"task-{order.plan_task}")
+        )
+    except BriefError:
+        return PrereviewInput(skip="render_failed")
+    return PrereviewInput(order=text, base=order.start_head)

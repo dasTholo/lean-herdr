@@ -178,6 +178,32 @@ whole build round.
 </diff>
 """
 
+#: The plan-mode judge (plan spec 6.6): the diff is a plan, the order its spec plus the
+#: plan rules. It rejects only what shows without taste.
+PLAN_PREREVIEW_PROMPT = """You are a cheap pre-check that runs before an expensive plan reviewer.
+The diff below adds an implementation plan. Judge it ONLY against the spec and the plan
+rules given as the order.
+
+Answer with `PREREVIEW: pass` or `PREREVIEW: reject` on the FIRST line, then
+at most three sentences of reason.
+
+Reject ONLY for one of these, and name which one:
+- a requirement of the spec that no task of the plan covers
+- a plan rule from the order that the plan visibly breaks
+
+Never reject for wording, task size or style. When in doubt, pass: a strong
+plan reviewer runs after you either way, and a wrong rejection costs a whole
+planning round.
+
+<order>
+{order}
+</order>
+
+<diff>
+{diff}
+</diff>
+"""
+
 
 def _unfence(text: str) -> str:
     """Strip a markdown fence the model wrapped its answer in.
@@ -413,6 +439,7 @@ def _skip(reason: str) -> dict[str, str]:
 def wt_diff(
     path: Any,
     *,
+    base: str | None = None,
     runner: Any = subprocess.run,
     timeout_s: float = DIFF_TIMEOUT_S,
 ) -> str | None:
@@ -423,13 +450,16 @@ def wt_diff(
     the set `wt merge` would take. `git diff` alone would miss the
     committed part, `git diff main...` the untracked one.
 
+    `base` diffs since that commit instead of since branching: in plan mode one task's
+    changes, without the plan commit and the tasks before it.
+
     Untracked is also why the decode is lenient: a single latin-1 file
     lying in the tree puts a byte on this stdout that `text=True` alone
     refuses, and refusing is the one answer this layer may never give.
     """
     try:
         proc = runner(
-            ["wt", "-C", str(path), "step", "diff"],
+            ["wt", "-C", str(path), "step", "diff", *([base] if base else [])],
             capture_output=True,
             text=True,
             # A foreign byte becomes `�` and gets judged with the
@@ -452,6 +482,7 @@ def prereview(
     order: str,
     diff: str,
     *,
+    plan: bool = False,
     model: str | None = None,
     effort: str | None = None,
     timeout_s: float = PREREVIEW_TIMEOUT_S,
@@ -474,6 +505,9 @@ def prereview(
     back to `[llm].effort` -- that one is the commit generator's
     `minimal`, and inheriting it would
     quietly make the judge as thoughtless as the formatter.
+
+    `plan` judges a plan against its spec with PLAN_PREREVIEW_PROMPT. The cap counts order and
+    diff together: in plan mode the order is a whole spec.
     """
     if not order.strip():
         # Whoever builds the prompt owns this guard. prereview_result()
@@ -486,12 +520,12 @@ def prereview(
         return "skipped", "no_order"
     if not diff.strip():
         return "skipped", "empty_diff"
-    if len(diff.encode("utf-8")) > MAX_DIFF_BYTES:
+    if len(diff.encode("utf-8")) + len(order.encode("utf-8")) > MAX_DIFF_BYTES:
         return "skipped", "diff_too_large"
     environ = os.environ if env is None else env
     cfg = file_settings() if settings is None else settings
     answer = complete(
-        PREREVIEW_PROMPT.format(order=order, diff=diff),
+        (PLAN_PREREVIEW_PROMPT if plan else PREREVIEW_PROMPT).format(order=order, diff=diff),
         effort=_first(effort, cfg.prereview_effort, fallback=PREREVIEW_EFFORT),
         model=_first(
             model,
@@ -520,6 +554,8 @@ def prereview_result(
     *,
     branch: str | None,
     worktree_list: Any,
+    base: str | None = None,
+    plan: bool = False,
     settings: LlmSettings | None = None,
     runner: Any = subprocess.run,
     **kwargs: Any,
@@ -556,7 +592,7 @@ def prereview_result(
     path = entry.get("path") if isinstance(entry, dict) else None
     if not path:
         return _skip("worktree_unresolved")
-    diff = wt_diff(path, runner=runner)
+    diff = wt_diff(path, base=base, runner=runner)
     if diff is None:
         return _skip("diff_failed")
     # `settings` comes in ALREADY VALIDATED from dispatch.main(), which
@@ -568,7 +604,7 @@ def prereview_result(
     # `runner` stops here: it belongs to `wt_diff` above, and the model call
     # takes `request` instead -- which arrives through **kwargs when a caller
     # injects one.
-    ruling, note = prereview(order, diff, settings=settings, **kwargs)
+    ruling, note = prereview(order, diff, plan=plan, settings=settings, **kwargs)
     return {"prereview": ruling, "prereview_note": note}
 
 
@@ -603,6 +639,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--order",
         default="",
         help="prereview: the order text the diff is supposed to answer",
+    )
+    p.add_argument(
+        "--base",
+        default=None,
+        help="prereview: diff since this commit instead of since branching",
+    )
+    p.add_argument(
+        "--plan",
+        action="store_true",
+        help="prereview: judge a plan against the spec given as --order",
     )
     p.add_argument(
         # Both modes, and their chains differ -- the judge has two levels
@@ -685,7 +731,7 @@ def main(argv: list[str] | None = None) -> int:
             message = fallback_message(prompt)
         sys.stdout.write(message.rstrip("\n") + "\n")
         return 0
-    diff = wt_diff(args.path, timeout_s=args.timeout or DIFF_TIMEOUT_S)
+    diff = wt_diff(args.path, base=args.base, timeout_s=args.timeout or DIFF_TIMEOUT_S)
     if diff is None:
         # `skipped`, exactly as prereview_result() answers the same cause
         # on the --await path: one failure, one ruling, whichever entry
@@ -701,6 +747,7 @@ def main(argv: list[str] | None = None) -> int:
     ruling, note = prereview(
         args.order,
         diff,
+        plan=args.plan,
         model=args.model,
         effort=args.effort,
         timeout_s=args.timeout or PREREVIEW_TIMEOUT_S,
