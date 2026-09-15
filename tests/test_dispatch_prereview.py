@@ -11,8 +11,9 @@ import pytest
 
 from lean_herdr.dispatch import AwaitRequest, await_task, build_parser, main, missing_flags
 from lean_herdr.herdr import Herdr
+from lean_herdr.llm import PLAN_PREREVIEW_PROMPT
 from lean_herdr.orderlog import append
-from lean_herdr.plancmd import PrereviewInput
+from lean_herdr.plancmd import PLAN_RULES_SUMMARY, PrereviewInput
 from lean_herdr.settings import LlmSettings
 from tests.doubles import Completed, FakeProc, which_stub
 
@@ -284,6 +285,52 @@ def test_a_plan_order_is_judged_with_what_plancmd_picks(herdr, tmp_path, monkeyp
     assert "the rendered task 1" in bodies[0]
     assert "Task 1 of plan shop" not in bodies[0]
     assert (asked["order_id"], asked["branch"], asked["root"]) == (TASK_ID, BRANCH, ROOT)
+
+
+def test_a_plan_is_judged_against_its_spec_with_the_plan_prompt(herdr, tmp_path, monkeypatch):
+    append(
+        TASK_ID,
+        "created",
+        "orchestrator",
+        {
+            "to_agent": WORKER,
+            "description": "write plan shop",
+            "plan": "shop",
+            "step": "plan",
+            "spec": "docs/specs/shop-design.md",
+        },
+        orders=tmp_path,
+    )
+    append(
+        TASK_ID,
+        "completed",
+        WORKER,
+        {"message": "done", "head": "ddd1111", "changes": []},
+        orders=tmp_path,
+    )
+    _runner, request = llm_doubles("PREREVIEW: pass", monkeypatch, tmp_path)
+    seen, bodies = [], []
+
+    def runner(cmd, **kw):
+        seen.append((list(cmd), kw.get("cwd")))
+        if cmd[:2] == ["git", "show"]:
+            return Completed(stdout="# Shop\n\nThe API lists products.\n")
+        return Completed(stdout="diff --git a/p b/p\n+## task-1")
+
+    def recording_request(url, **kw):
+        bodies.append(kw.get("body") or "")
+        return request(url, **kw)
+
+    result = wait(herdr, tmp_path, prereview=True, runner=runner, request=recording_request)
+    assert result["prereview"] == "pass"
+    assert seen == [
+        (["git", "show", "main:docs/specs/shop-design.md"], "/repo"),
+        (["wt", "-C", "/worktrees/feat-x", "step", "diff"], None),
+    ]
+    assert PLAN_PREREVIEW_PROMPT.splitlines()[0] in bodies[0]
+    assert "The API lists products." in bodies[0]
+    assert PLAN_RULES_SUMMARY.splitlines()[0] in bodies[0]
+    assert "write plan shop" not in bodies[0]
 
 
 def test_a_skip_from_plancmd_is_the_answer_and_nothing_runs(herdr, tmp_path, monkeypatch):

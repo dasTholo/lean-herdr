@@ -525,7 +525,8 @@ def await_task(
                 description = order.description
                 judged: dict[str, Any] = {}
                 if order.plan is not None:
-                    # Imported on the call: plancmd reaches planrun, and planrun imports this module.
+                    # Imported on the call: plancmd imports this module, directly
+                    # and through planrun.
                     from lean_herdr.plancmd import prereview_input
 
                     chosen = prereview_input(
