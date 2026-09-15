@@ -201,6 +201,13 @@ def test_a_missing_wt_is_a_wt_error_too():
     assert set(worktree_stamp(runner=FakeProc(raises=FileNotFoundError("wt")))) == {"wt_error"}
 
 
+def test_undecodable_wt_output_is_a_wt_error_too():
+    """`subprocess.run(..., text=True)` raises UnicodeDecodeError on non-UTF-8 output;
+    `report` must stay successful even when `wt` fails this way too."""
+    runner = FakeProc(raises=UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte"))
+    assert set(worktree_stamp(runner=runner)) == {"wt_error"}
+
+
 @pytest.mark.parametrize(
     ("command", "stamped"), [("start", True), ("done", True), ("fail", False), ("ask", False)]
 )
@@ -325,3 +332,36 @@ def test_done_never_reads_a_broken_log_as_task_not_found(main_root, capsys):
     assert result["error"].startswith("chain_broken")
     assert result != {"ok": False, "task_id": "o-a-1", "error": "task_not_found"}
     assert "o-a-1" in result["error"], result["error"]
+
+
+def test_main_stamps_start_and_done_with_the_real_worktree(main_root, monkeypatch, capsys):
+    """`main` must pass `stamper=worktree_stamp` to `report()` -- removing that keyword
+    leaves every other test in this file green, so it needs a test of its own.
+    """
+    orders_dir = state_dir(main_root)
+    order(orders_dir, "o-a-1")
+    monkeypatch.setattr(
+        "lean_herdr.report.worktree_stamp",
+        lambda *a, **kw: {"head": "abc1234", "changes": ["modified"]},
+    )
+    assert main(["start", "--task", "o-a-1"]) == 0
+    assert _one_json_line(capsys)["ok"] is True
+    assert main(["done", "--task", "o-a-1", "--message", "shipped"]) == 0
+    assert _one_json_line(capsys)["ok"] is True
+    payload = read_events("o-a-1", orders=orders_dir)[-1].payload
+    assert payload["head"] == "abc1234"
+
+
+def test_main_stamps_start_and_done_even_on_a_wt_error(main_root, monkeypatch, capsys):
+    orders_dir = state_dir(main_root)
+    order(orders_dir, "o-a-1")
+    monkeypatch.setattr(
+        "lean_herdr.report.worktree_stamp",
+        lambda *a, **kw: {"wt_error": "wt list exited 1: boom"},
+    )
+    assert main(["start", "--task", "o-a-1"]) == 0
+    assert _one_json_line(capsys)["ok"] is True
+    assert main(["done", "--task", "o-a-1", "--message", "shipped"]) == 0
+    assert _one_json_line(capsys)["ok"] is True
+    payload = read_events("o-a-1", orders=orders_dir)[-1].payload
+    assert "wt_error" in payload

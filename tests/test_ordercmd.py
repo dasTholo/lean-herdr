@@ -8,7 +8,7 @@ from lean_herdr.orders import fold
 
 ROOT = Path("/repo")
 WORKER = "builder-plan-shop"
-SLUG = "[a-z][a-z0-9-]{0,11}"
+SLUG = r"(?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*"
 
 
 @pytest.mark.parametrize(
@@ -25,6 +25,14 @@ SLUG = "[a-z][a-z0-9-]{0,11}"
         (
             ("a-slug-far-too-long", "plan", None, "s.md"),
             f"--plan 'a-slug-far-too-long' is no plan slug ({SLUG})",
+        ),
+        (("a--b", "plan", None, "s.md"), f"--plan 'a--b' is no plan slug ({SLUG})"),
+        (("shop-", "plan", None, "s.md"), f"--plan 'shop-' is no plan slug ({SLUG})"),
+        (("a-b", "plan", None, "s.md"), None),
+        (("abcdefghijkl", "plan", None, "s.md"), None),
+        (
+            ("abcdefghijklm", "plan", None, "s.md"),
+            f"--plan 'abcdefghijklm' is no plan slug ({SLUG})",
         ),
         (
             ("shop", "merge", None, None),

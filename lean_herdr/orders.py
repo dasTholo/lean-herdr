@@ -43,8 +43,12 @@ _STATE_OF: dict[str, str] = {kind: kind for kind in EVENT_KINDS} | {"answered": 
 PLAN_STEPS = ("plan", "plan-review", "implement", "review")
 
 #: A plan slug. `plan/<slug>` is the branch, and the longest agent name built on it,
-#: `plan-reviewer-plan-<slug>`, has to stay within herdr's 32 characters.
-PLAN_SLUG_RE = re.compile(r"[a-z][a-z0-9-]{0,11}")
+#: `plan-reviewer-plan-<slug>`, has to stay within herdr's 32 characters -- hence the
+#: 12-character bound. Single hyphens only, never a run of them nor one at either
+#: end: `agent_name()` squashes runs of `-` and strips them at the ends, so `a--b`
+#: and `a-b` (or `shop-` and `shop`) would name the very same agent, and a dispatch
+#: for one plan would `/clear` and reuse the other plan's running agent.
+PLAN_SLUG_RE = re.compile(r"(?=.{1,12}\Z)[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
 #: A task number on an order: decimal, no leading zero. `str.isdigit` lets "²" through,
 #: and `int("²")` raises.
@@ -91,9 +95,11 @@ class Order:
     plan_task: str | None = None
     spec: str | None = None
 
-    #: `head` of the first `working` event (`report start`), and `head` and `changes` of
-    #: the `completed` event (`report done`). `done_changes` None: nothing is known --
-    #: no stamp, or a `wt_error` instead of one.
+    #: `head` of the first `working` event -- the one that moves the order out of
+    #: `created` -- None when that event carried none (or no commit id). `head` and
+    #: `changes` of the `completed` event (`report done`) follow the same rule for
+    #: `done_head`; `done_changes` None: nothing is known -- no stamp, or a `wt_error`
+    #: instead of one.
     start_head: str | None = None
     done_head: str | None = None
     done_changes: tuple[str, ...] | None = None
@@ -124,10 +130,12 @@ def _text(value: Any) -> str | None:
     return str(value) if value else None
 
 
-#: A head as `wt list` stamps it. Letters and digits only: the value reaches
+#: A head as `wt list` stamps it: an abbreviated or full SHA-1/SHA-256 commit id,
+#: lowercase hex only, the way `wt list` prints it -- a ref name such as `HEAD` or
+#: `main` is not a head, because those move. Hex-only also keeps the value safe at
 #: `git show <head>:…`, `git log <head>..HEAD` and `wt step diff <head>`, where a
 #: leading `-` would read as an option.
-_COMMIT_RE = re.compile(r"[0-9A-Za-z]{1,64}")
+_COMMIT_RE = re.compile(r"[0-9a-f]{7,64}")
 
 
 def _commit(value: Any) -> str | None:
@@ -157,7 +165,7 @@ def _apply(order: Order, event: Event) -> Order:
             messages=messages,
         )
     start_head = order.start_head
-    if event.kind == "working" and start_head is None:
+    if event.kind == "working" and order.state == "created":
         start_head = _commit(event.payload.get("head"))
     done_head, done_changes = order.done_head, order.done_changes
     if event.kind == "completed":

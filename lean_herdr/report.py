@@ -240,7 +240,7 @@ def worktree_stamp(
             timeout=WT_TIMEOUT_S,
             check=False,
         )
-    except (OSError, subprocess.SubprocessError) as exc:
+    except (OSError, subprocess.SubprocessError, UnicodeDecodeError) as exc:
         return {"wt_error": f"wt list failed: {exc}"}
     if proc.returncode != 0:
         return {"wt_error": f"wt list exited {proc.returncode}: {(proc.stderr or '').strip()}"}

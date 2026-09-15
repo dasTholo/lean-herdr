@@ -124,16 +124,33 @@ def test_the_stamps_of_start_and_done_are_kept():
     order = fold(
         [
             created(),
-            event("working", seq=2, head="aaa111", changes=[]),
+            event("working", seq=2, head="aaa1111", changes=[]),
             event("input-required", seq=3, message="which?"),
             event("answered", ORCH, 4, message="this"),
-            event("working", seq=5, head="bbb222", changes=[]),
-            event("completed", seq=6, message="done", head="ccc333", changes=["modified"]),
+            event("working", seq=5, head="bbb2222", changes=[]),
+            event("completed", seq=6, message="done", head="ccc3333", changes=["modified"]),
         ]
     )
-    assert order.start_head == "aaa111", "the first start is the task's base"
-    assert order.done_head == "ccc333"
+    assert order.start_head == "aaa1111", "the first start is the task's base"
+    assert order.done_head == "ccc3333"
     assert order.done_changes == ("modified",)
+
+
+def test_start_head_is_pinned_to_the_event_that_ends_the_created_state():
+    """A `report start` that fails with a `wt_error` still ends `created` -- a LATER
+    `working` event, after the worker was asked something and answered, must not
+    silently become the task's base and drop the commits made before it.
+    """
+    order = fold(
+        [
+            created(),
+            event("working", seq=2),
+            event("input-required", seq=3, message="which?"),
+            event("answered", ORCH, 4, message="this"),
+            event("working", seq=5, head="bbb2222", changes=[]),
+        ]
+    )
+    assert order.start_head is None
 
 
 def test_an_order_without_stamps_knows_nothing_about_its_worktree():
@@ -143,13 +160,16 @@ def test_an_order_without_stamps_knows_nothing_about_its_worktree():
     assert (order.start_head, order.done_head, order.done_changes) == (None, None, None)
 
 
-def test_a_head_that_is_no_commit_id_is_no_head():
-    """A head reaches `git show <head>:…` and `wt step diff <head>`; `-` there reads as an option."""
+@pytest.mark.parametrize("head", ("--output=/tmp/x", "HEAD~1", "HEAD", "main"))
+def test_a_head_that_is_no_commit_id_is_no_head(head):
+    """A head reaches `git show <head>:…` and `wt step diff <head>`; `-` there reads
+    as an option, and a ref name such as `HEAD` or `main` moves, so neither is a
+    base either."""
     order = fold(
         [
             created(),
-            event("working", seq=2, head="--output=/tmp/x", changes=[]),
-            event("completed", seq=3, head="HEAD~1", changes=[]),
+            event("working", seq=2, head=head, changes=[]),
+            event("completed", seq=3, head=head, changes=[]),
         ]
     )
     assert (order.start_head, order.done_head) == (None, None)
