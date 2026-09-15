@@ -601,3 +601,74 @@ def test_a_hang_that_answered_with_a_body_is_still_opencode_stuck(monkeypatch):
     )
     assert _helper(proc, clock) == {"ok": False, "error": "opencode_stuck"}
     assert proc.called_with("pane", "send-keys", "w8:p5", "ctrl-c")
+
+
+def test_agent_read_returns_the_plain_text_herdr_prints(fake):
+    """`agent read` prints the screen, not JSON (M2): stdout is the answer."""
+    screen = " Accessing workspace:\n\n ❯ No, exit\n   Yes, I trust this folder\n"
+    fake.replies = {("agent", "read"): screen}
+    assert h(fake).agent_read("w2:p2", lines=20) == screen
+    assert fake.calls == [
+        ["herdr", "agent", "read", "w2:p2", "--source", "detection", "--lines", "20"]
+    ]
+
+
+def test_agent_read_answers_empty_text_when_herdr_refuses(fake):
+    fake.replies = {
+        ("agent", "read"): Completed(returncode=1, stderr='{"error": {"code": "agent_not_found"}}')
+    }
+    assert h(fake).agent_read("w2:p2") == ""
+
+
+def test_a_blocked_first_attempt_is_named_before_any_key_goes_into_the_pane(monkeypatch):
+    """`ctrl-c` into a dialog is an answer -- the question comes first, and nothing follows it."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(clock=clock, script={("agent", "start"): (12.0, [{}, STARTED])})
+    asked: list[str] = []
+
+    def blocked(pane: str) -> str | None:
+        asked.append(pane)
+        return "Do you trust the files in this folder?"
+
+    result = start_agent(
+        Herdr(runner=proc),
+        "orch",
+        kind="claude",
+        pane="w8:p5",
+        retry_timeout_ms=45_000,
+        sleep=clock.sleep,
+        now=clock.now,
+        blocked=blocked,
+    )
+    assert result == {
+        "ok": False,
+        "error": "agent_blocked",
+        "dialog": "Do you trust the files in this folder?",
+    }
+    assert asked == ["w8:p5"]
+    assert not proc.called_with("pane", "send-keys"), proc.flat()
+    assert len([c for c in proc.calls if c[1:3] == ["agent", "start"]]) == 1
+
+
+def test_without_a_dialog_the_hung_start_keeps_its_second_attempt(monkeypatch):
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={
+            ("agent", "start"): (12.0, [{}, STARTED]),
+            ("agent", "list"): (0.0, [{"result": {"agents": []}}]),
+        },
+    )
+    result = start_agent(
+        Herdr(runner=proc),
+        "orch",
+        kind="opencode",
+        pane="w8:p5",
+        retry_timeout_ms=45_000,
+        sleep=clock.sleep,
+        now=clock.now,
+        blocked=lambda _pane: None,
+    )
+    assert result == {"ok": True, "reply": STARTED, "retried": True}

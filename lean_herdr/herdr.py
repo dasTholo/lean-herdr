@@ -307,6 +307,23 @@ class Herdr:
         agents = self._result(self.run("agent", "list"), "agents")
         return [a for a in (agents or ()) if isinstance(a, dict)]
 
+    def agent_read(self, target: str, *, source: str = "detection", lines: int = 20) -> str:
+        """`herdr agent read <TARGET> --source <source> --lines <N>`: the screen, "" on any failure.
+
+        Unlike the commands `run()` serves, it prints the screen as plain text,
+        not JSON (measured 2026-09-15) -- stdout is the answer. `detection` is
+        the snapshot herdr judges an agent's state on, so a `blocked` agent's
+        dialog is in it.
+        """
+        if not self.is_available():
+            return ""
+        cmd = [self.binary, "agent", "read", target, "--source", source, "--lines", str(lines)]
+        try:
+            proc = self._runner(cmd, capture_output=True, text=True, timeout=self.timeout)
+        except OSError, subprocess.SubprocessError, ValueError:
+            return ""
+        return proc.stdout if proc.returncode == 0 else ""
+
     def pane_process_info(self, pane: str) -> dict[str, Any]:
         return self.run("pane", "process-info", "--pane", pane)
 
@@ -409,6 +426,7 @@ def start_agent(
     retry_timeout_ms: int,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.monotonic,
+    blocked: Callable[[str], str | None] | None = None,
 ) -> dict[str, Any]:
     """Start an agent, with a second attempt for opencode's first bootstrap.
 
@@ -424,11 +442,12 @@ def start_agent(
     documented, and Herdr knows before we do whether the agent is ready
     for input.
 
-    Three answers, because they are three different repairs:
+    Four answers, because they are four different repairs:
 
         {"ok": True, "reply": ...}            it is running
         {"ok": False, "error": "agent_start_failed"}   Herdr refused
         {"ok": False, "error": "opencode_stuck"}       the start hangs
+        {"ok": False, "error": "agent_blocked", "dialog": ...}  a dialog waits for a human
 
     `opencode_stuck` is named after the measured cause, not after the
     runtime: a start of any kind that never reached input-readiness gets
@@ -452,6 +471,15 @@ def start_agent(
     choice -- the aborted first attempt warms the project either way, so
     the next press is the one that carries.
 
+    `blocked` is asked once the first attempt ends without an agent, and
+    BEFORE `_free_pane`: its `ctrl-c` would be a keystroke into a dialog. A
+    text back means a dialog waits for a human -- no second attempt, and
+    nothing here answers it. A claude start that meets its folder-trust
+    dialog ends after 3.8 s (measured 2026-09-15), just past
+    AGENT_START_REFUSAL_S, so without this question it would read as a
+    hang. None, the default, skips the question, as the orchestrator's own
+    start does.
+
     Never raises; the caller reads `ok`.
     """
     # The refusal/hang split below is a DURATION test, so the first attempt
@@ -474,6 +502,9 @@ def start_agent(
     )
     if reply:
         return {"ok": True, "reply": reply}
+    dialog = blocked(pane) if blocked is not None else None
+    if dialog is not None:
+        return {"ok": False, "error": "agent_blocked", "dialog": dialog}
     if now() - started_at < AGENT_START_REFUSAL_S:
         return {"ok": False, "error": "agent_start_failed"}
     if retry_timeout_ms <= 0:
