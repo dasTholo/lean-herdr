@@ -471,14 +471,14 @@ def start_agent(
     choice -- the aborted first attempt warms the project either way, so
     the next press is the one that carries.
 
-    `blocked` is asked once the first attempt ends without an agent, and
-    BEFORE `_free_pane`: its `ctrl-c` would be a keystroke into a dialog. A
-    text back means a dialog waits for a human -- no second attempt, and
-    nothing here answers it. A claude start that meets its folder-trust
+    `blocked` is asked whenever an attempt ends without an agent: after the
+    first one BEFORE `_free_pane`, whose `ctrl-c` would be a keystroke into a
+    dialog, and after the second one before the hang is named. A text back
+    means a dialog waits for a human -- `agent_blocked`, no further attempt,
+    and nothing here answers it. A claude start that meets its folder-trust
     dialog ends after 3.8 s (measured 2026-09-15), just past
     AGENT_START_REFUSAL_S, so without this question it would read as a
-    hang. None, the default, skips the question, as the orchestrator's own
-    start does.
+    hang. None, the default, skips the question.
 
     Never raises; the caller reads `ok`.
     """
@@ -521,4 +521,7 @@ def start_agent(
     )
     if reply:
         return {"ok": True, "reply": reply, "retried": True}
+    dialog = blocked(pane) if blocked is not None else None
+    if dialog is not None:
+        return {"ok": False, "error": "agent_blocked", "dialog": dialog}
     return {"ok": False, "error": "opencode_stuck"}

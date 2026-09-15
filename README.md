@@ -77,7 +77,8 @@ repository root -- so `lean-herdr workspace init --trust-claude` gives that answ
 front (see [Setting up a project](#setting-up-a-project)).
 
 Any other dialog -- a permission, a login -- is reported, never answered. At the start
-`dispatch` answers `{"ok": false, "error": "agent_blocked", "pane": …, "dialog": "<screen text>"}`;
+`dispatch` answers `{"ok": false, "error": "agent_blocked", "pane": …, "dialog": "<screen text>"}`,
+and the same when a worker it would reuse waits in a dialog, instead of sending `/clear`;
 while it waits, `dispatch --await` answers `agent_blocked` in the round the dialog appears in,
 instead of `no_reply` after the timeout. The orchestrator escalates it with the dialog's text
 and sends no key into a worker's pane: of `herdr` it may run `worktree list`,

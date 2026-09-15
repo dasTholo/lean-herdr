@@ -26,7 +26,7 @@ from lean_herdr.bus import (
     canonical_root,
     read_registry,
 )
-from lean_herdr.dialogs import blocked_dialog
+from lean_herdr.dialogs import BLOCKED, blocked_dialog, dialog_text
 from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import (
     FIRST_START_TIMEOUT_MS,
@@ -299,6 +299,12 @@ def dispatch(
     existing = next((a for a in herdr.agent_list() if a.get("name") == name), None)
     if existing:
         pane = str(existing.get("pane_id") or "")
+        # `/clear` goes in through `agent prompt`, which types into the pane: into a
+        # waiting dialog it would answer it. The listing in hand already says so.
+        if existing.get("agent_status") == BLOCKED:
+            return _result(
+                False, pane, None, error="agent_blocked", dialog=dialog_text(herdr, pane)
+            )
         # Reset between two tasks: /clear caps the context at the base load
         # and triggers NO lifecycle change (H4).
         herdr.agent_prompt(name, "/clear", wait=False)

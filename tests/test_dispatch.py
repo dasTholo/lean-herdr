@@ -457,6 +457,35 @@ def test_a_dialog_at_the_start_is_agent_blocked_with_its_text(world):
     assert len([c for c in h_proc.calls if c[1:3] == ["agent", "start"]]) == 1
 
 
+def test_a_worker_waiting_in_a_dialog_is_named_instead_of_reused(world):
+    """`/clear` typed into a dialog would answer it: the dialog travels, and nothing goes in."""
+    h_proc, _ = world
+    h_proc.replies = {
+        ("agent", "list"): {
+            "result": {
+                "agents": [{"name": "builder", "pane_id": "w1:p6", "agent_status": "blocked"}]
+            }
+        },
+        ("agent", "read"): "Allow this command?\n",
+    }
+    result = run_dispatch(
+        world,
+        reg=registry(),
+        waiter=lambda *a, **kw: pytest.fail("no waiter for a worker in a dialog"),
+    )
+    assert result == {
+        "ok": False,
+        "pane": "w1:p6",
+        "agent_id": None,
+        "error": "agent_blocked",
+        "dialog": "Allow this command?",
+    }
+    assert h_proc.called_with("agent", "read", "w1:p6"), h_proc.flat()
+    assert not h_proc.called_with("agent", "prompt"), h_proc.flat()
+    assert not any(c[1:3] in (["agent", "start"], ["pane", "split"]) for c in h_proc.calls)
+    assert len([c for c in h_proc.calls if c[1:3] == ["agent", "list"]]) == 1, h_proc.flat()
+
+
 def test_without_an_agent_id_the_script_reports_an_error(world):
     assert run_dispatch(world, reg=registry(), agent_id=None)["error"] == "no_agent_id"
 

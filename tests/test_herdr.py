@@ -651,6 +651,43 @@ def test_a_blocked_first_attempt_is_named_before_any_key_goes_into_the_pane(monk
     assert len([c for c in proc.calls if c[1:3] == ["agent", "start"]]) == 1
 
 
+def test_a_dialog_behind_the_second_attempt_is_named_too(monkeypatch):
+    """A hang, then a dialog on the retry: a human's question, not `opencode_stuck`."""
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    clock = Clock()
+    proc = ScriptedProc(
+        clock=clock,
+        script={
+            ("agent", "start"): (12.0, [{}]),
+            ("agent", "list"): (0.0, [{"result": {"agents": []}}]),
+        },
+    )
+    answers = iter([None, "Do you trust the files in this folder?"])
+    asked: list[str] = []
+
+    def blocked(pane: str) -> str | None:
+        asked.append(pane)
+        return next(answers)
+
+    result = start_agent(
+        Herdr(runner=proc),
+        "orch",
+        kind="claude",
+        pane="w8:p5",
+        retry_timeout_ms=45_000,
+        sleep=clock.sleep,
+        now=clock.now,
+        blocked=blocked,
+    )
+    assert result == {
+        "ok": False,
+        "error": "agent_blocked",
+        "dialog": "Do you trust the files in this folder?",
+    }
+    assert asked == ["w8:p5", "w8:p5"]
+    assert len([c for c in proc.calls if c[1:3] == ["agent", "start"]]) == 2, proc.flat()
+
+
 def test_without_a_dialog_the_hung_start_keeps_its_second_attempt(monkeypatch):
     monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
     clock = Clock()

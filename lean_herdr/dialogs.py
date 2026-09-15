@@ -125,6 +125,17 @@ def trust_root(root: Path, *, state: Path | None = None) -> str:
     return _replace(path, json.dumps(data, indent=2, ensure_ascii=False))
 
 
+def dialog_text(herdr: Herdr, pane: str) -> str:
+    """The last screen lines of a `blocked` pane, as an `agent_blocked` answer carries them.
+
+    For a caller that already holds herdr's `blocked` verdict out of `agent list`;
+    `blocked_dialog` asks for that verdict first. Reads only.
+    """
+    text = herdr.agent_read(pane, lines=DIALOG_LINES)
+    lines = [line.rstrip() for line in text.splitlines() if line.strip()]
+    return "\n".join(lines[-DIALOG_LINES:]) or "(herdr returned no screen text)"
+
+
 def blocked_dialog(herdr: Herdr, *, pane: str | None = None, name: str | None = None) -> str | None:
     """The last screen lines of an agent that waits for a human -- None for every other state.
 
@@ -142,8 +153,5 @@ def blocked_dialog(herdr: Herdr, *, pane: str | None = None, name: str | None = 
             continue
         if agent.get("agent_status") != BLOCKED:
             return None
-        target = str(agent.get("pane_id") or pane or "")
-        text = herdr.agent_read(target, lines=DIALOG_LINES)
-        lines = [line.rstrip() for line in text.splitlines() if line.strip()]
-        return "\n".join(lines[-DIALOG_LINES:]) or "(herdr returned no screen text)"
+        return dialog_text(herdr, str(agent.get("pane_id") or pane or ""))
     return None
