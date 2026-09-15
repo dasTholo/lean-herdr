@@ -430,6 +430,33 @@ def test_a_hung_worker_start_is_opencode_stuck(world, monkeypatch):
     }
 
 
+def test_a_dialog_at_the_start_is_agent_blocked_with_its_text(world):
+    """`herdr agent list` says `blocked`: no second attempt, no key, and the dialog travels."""
+    h_proc, _ = world
+    h_proc.replies = {
+        ("pane", "split"): {"result": {"pane": {"pane_id": "w1:p6"}}},
+        ("agent", "start"): {},
+        ("agent", "list"): {
+            "result": {"agents": [{"pane_id": "w1:p6", "agent_status": "blocked"}]}
+        },
+        ("agent", "read"): "Do you trust the files in this folder?\n",
+    }
+    result = run_dispatch(
+        world,
+        reg=registry(),
+        waiter=lambda *a, **kw: pytest.fail("no waiter after a dialog"),
+    )
+    assert result == {
+        "ok": False,
+        "pane": "w1:p6",
+        "agent_id": None,
+        "error": "agent_blocked",
+        "dialog": "Do you trust the files in this folder?",
+    }
+    assert not h_proc.called_with("send-keys"), h_proc.flat()
+    assert len([c for c in h_proc.calls if c[1:3] == ["agent", "start"]]) == 1
+
+
 def test_without_an_agent_id_the_script_reports_an_error(world):
     assert run_dispatch(world, reg=registry(), agent_id=None)["error"] == "no_agent_id"
 

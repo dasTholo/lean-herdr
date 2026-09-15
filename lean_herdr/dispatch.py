@@ -26,6 +26,7 @@ from lean_herdr.bus import (
     canonical_root,
     read_registry,
 )
+from lean_herdr.dialogs import blocked_dialog
 from lean_herdr.export import session_error, session_id_from_agent_list
 from lean_herdr.herdr import (
     FIRST_START_TIMEOUT_MS,
@@ -343,14 +344,17 @@ def dispatch(
             agent_args=agent_args(req.kind, req.model, req.role_file, req.role, root=root),
             first_timeout_ms=FIRST_START_TIMEOUT_MS,
             retry_timeout_ms=timeout_ms_for(cfg.ready_timeout_s),
+            blocked=lambda started_pane: blocked_dialog(herdr, pane=started_pane),
         )
         if not started["ok"]:
             # `agent_start_failed` is Herdr refusing after 0.0 s;
             # `opencode_stuck` is opencode's first bootstrap in this project
             # hanging, twice. ONE mechanism with `workspace up` -- a worktree
             # is a new project to opencode, so a worker meets the very same
-            # hang the orchestrator does.
-            return _result(False, pane, None, error=started["error"])
+            # hang the orchestrator does. `agent_blocked` carries the `dialog`
+            # a human has to answer; nothing here answers it.
+            rest = {key: value for key, value in started.items() if key != "ok"}
+            return _result(False, pane, None, **rest)
 
     agent_id = waiter(herdr, name, registry_path=registry_path, timeout_s=cfg.ready_timeout_s)
     if not agent_id:
@@ -553,6 +557,15 @@ def await_task(
                     )
                 )
             return outcome
+        dialog = blocked_dialog(herdr, name=name)
+        if dialog is not None:
+            # Every round, and BEFORE the bell: `agent prompt` types into the pane,
+            # and typed into a dialog it would answer it. The worker waits for a
+            # human -- one `agent list` per round is the price of saying so now
+            # instead of `no_reply` after the deadline.
+            return order_result(
+                False, req.task_id, state=state, error="agent_blocked", dialog=dialog
+            )
         if not has_rung:
             # Exactly once, and without --wait: whoever sleeps through the
             # first ring will not wake for the second. That is what the

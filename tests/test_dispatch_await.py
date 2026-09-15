@@ -20,7 +20,7 @@ from lean_herdr.herdr import Herdr
 from lean_herdr.leanctx import CtxResponse, LeanCtx
 from lean_herdr.orderlog import append, read_events, state_dir, task_ids
 from lean_herdr.orders import fold, message_from
-from tests.doubles import FakeProc, which_stub
+from tests.doubles import FakeProc, ScriptedProc, which_stub
 
 ROOT = Path("/repo")
 WORKER = "builder-feat-x"
@@ -290,6 +290,57 @@ def test_a_crashed_worktree_worker_becomes_agent_error_too(herdr, tmp_path, monk
         now=lambda: next(clock),
     )
     assert result["error"] == "agent_error: APIError: User not found. (401)"
+
+
+def test_a_blocked_worker_is_named_at_once_and_never_rung(herdr, tmp_path):
+    """A dialog is not silence: `agent_blocked` with its text, before the bell, not after the deadline."""
+    h, proc = herdr
+    proc.replies = {
+        ("agent", "list"): {
+            "result": {"agents": [{"name": WORKER, "pane_id": "w1:p6", "agent_status": "blocked"}]}
+        },
+        ("agent", "read"): "Allow this command?\n",
+    }
+    clock = iter([0.0, 0.0, 99.0])
+    result = wait(
+        (h, proc),
+        tmp_path,
+        created(),
+        ("working", WORKER, {}),
+        timeout_ms=1_000,
+        now=lambda: next(clock),
+    )
+    assert result["ok"] is False
+    assert result["error"] == "agent_blocked"
+    assert result["dialog"] == "Allow this command?"
+    assert result["state"] == "working"
+    assert not proc.called_with("agent", "prompt"), proc.flat()
+
+
+def test_a_dialog_that_appears_while_working_ends_the_wait_in_that_round(monkeypatch, tmp_path):
+    monkeypatch.setattr("lean_herdr.herdr.shutil.which", which_stub(True))
+    working = {
+        "result": {"agents": [{"name": WORKER, "pane_id": "w1:p6", "agent_status": "working"}]}
+    }
+    blocked = {
+        "result": {"agents": [{"name": WORKER, "pane_id": "w1:p6", "agent_status": "blocked"}]}
+    }
+    proc = ScriptedProc(
+        script={("agent", "list"): (0.0, [working, blocked])},
+        replies={("agent", "read"): "Allow this command?\n"},
+    )
+    clock = iter([0.0, 0.0, 99.0])
+    result = wait(
+        (Herdr(runner=proc), proc),
+        tmp_path,
+        created(),
+        ("working", WORKER, {}),
+        timeout_ms=1_000,
+        now=lambda: next(clock),
+    )
+    assert result["error"] == "agent_blocked"
+    assert result["dialog"] == "Allow this command?"
+    assert len([c for c in proc.calls if c[1:3] == ["agent", "prompt"]]) == 1
 
 
 def test_timeout_for_a_gone_worktree_creates_nothing(herdr, tmp_path, monkeypatch):
