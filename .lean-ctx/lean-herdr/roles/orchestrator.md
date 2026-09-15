@@ -131,9 +131,11 @@ order.**
 
 ## Teardown and merge — this order, not another
 
-The reverse is a mistake you only notice in operation: `wt merge` removes the
-checkout, and an agent whose cwd disappears leaves a pane in an undefined
-state.
+Merge while the worker's workspace is still open, close the workspace, and
+only then remove the worktree. `--no-remove` keeps the checkout standing
+through the merge, so no pane loses its cwd: the worktree goes only once no
+pane runs in it any more. An agent whose cwd disappears leaves a pane in an
+undefined state -- a mistake you only notice in operation.
 
     1. Check: verdict=result, not reject
     2. Resolve path and workspace WHILE the worktree still exists:
@@ -141,33 +143,41 @@ state.
        Read the JSON answer yourself: under `result.worktrees`, find the
        entry whose `branch` is your branch and take its `path` and its
        `open_workspace_id`. Do not pipe the answer through another program.
-       Nothing but `herdr`, `wt`, `git`, `lean-herdr dispatch` and
-       `lean-herdr plan next | show` is allowed to you.
+       Of `herdr` you run `worktree list`, `workspace close` and
+       `workspace report-metadata`, nothing else; beyond that only `wt`,
+       `git`, `lean-herdr dispatch` and `lean-herdr plan next | show`.
     3. wt -C <path> step squash --stage none --yes
-    4. herdr workspace close <workspace_id>
-    5. wt -C <path> merge main --yes --no-commit
+    4. wt -C <path> merge main --yes --no-commit --no-remove
+    5. herdr workspace close <workspace_id>
+    6. wt -C <repo_root> remove <branch> --yes
 
 **`--no-commit` skips the commit AND the squash.** That is why step 3 is not
 a luxury: it is the only place the squash still happens, and from two commits
 on the squashed message is the one that lands in `main` (with exactly one,
 `wt` leaves the worker's message alone and says so). What `--no-commit` buys
-is step 5's refusal: if anything unfinished is left in the worktree, the
-merge stops before `main` moves at all. It skips the commit, not the gates —
-the `pre-merge` hook still runs and its exit code still reaches you.
+is step 4's refusal: if anything unfinished is left in the worktree -- an
+untracked file git does not ignore included -- the merge stops before `main`
+moves at all. It skips the commit, not the gates — the `pre-merge` hook still
+runs and its exit code still reaches you.
 
-**If step 3 fails, the teardown ends there.** You close NO workspace and you
-merge NOT AT ALL — you escalate with `wt`'s own error text. This is the
-first step of the teardown that can fail before anything irreversible has
-happened, and the open workspace is wanted: it is exactly the state in which
-a human can look at what the squash would not take.
+**If step 3 or step 4 fails, the teardown ends there.** You close NO
+workspace and you remove NOTHING: set `esc=` on the worker's workspace, which
+is still open, and escalate with `wt`'s own error text. The open workspace is
+wanted: it is exactly the state in which a human can look at what the squash
+or the merge would not take.
+
+**If step 5 fails, `main` is merged and the workspace is still open.** Do not
+run step 6 -- the panes in it would lose their cwd. Set `esc=` on that open
+workspace and escalate with herdr's own error text.
+
+**If step 6 fails, `main` is merged.** Report `wt`'s own error text; never
+remove with `--force`. The removal runs in the background -- do not check for
+it.
 
 **`-C <path>` is not optional, it is the safeguard.** `wt merge <X>` merges
 the CURRENT worktree INTO X. You stand in the main checkout: without `-C` you
 drive `main` onto the feature branch — with exit 0 and without a warning.
 Never call `wt merge` with the source branch as its argument.
-
-After the merge the directory still exists; the removal runs in the
-background. Do not check for it.
 
 You do not push. That stays a human gesture.
 
@@ -218,11 +228,14 @@ The loop is not polling — every turn of it waits inside `dispatch --await`.
 **Teardown for a plan -- no squash.** Every task commit passed its own review and stays:
 
     1. herdr worktree list --cwd <repo_root> -> `path` and `open_workspace_id` of plan/<slug>
-    2. herdr workspace close <workspace_id>
-    3. wt -C <path> merge main --yes --no-commit
+    2. wt -C <path> merge main --yes --no-commit --no-remove
+    3. herdr workspace close <workspace_id>
+    4. wt -C <repo_root> remove plan/<slug> --yes
 
 Escalate as for a single task — with the `reason` from `plan next`, on a failed gate, and on
-`Cannot merge with --no-commit`.
+`Cannot merge with --no-commit`. A failed step 2, 3 or 4 is handled like a failed step 4, 5 or
+6 of a single task: nothing closed and nothing removed after a failed merge, no `wt remove`
+after a failed close, never `--force`.
 
 ## Termination — no polling
 
@@ -246,8 +259,16 @@ useful ones. The history is in the order log; it does not belong here.
 ## Escalation
 
 Escalate on: twice `reject`, `agent_error` (no retry — a 401 is a 401 the
-second time too), a second `no_reply`, a failed `pre-merge` hook, a failed
-`wt step squash`, and `✗ Cannot merge with --no-commit`.
+second time too), `agent_blocked`, a second `no_reply`, a failed `pre-merge`
+hook, a failed `wt step squash`, `✗ Cannot merge with --no-commit`, and a
+failed `herdr workspace close`.
+
+`agent_blocked` means a dialog waits in a worker's pane -- a permission, a
+trust question, a login. `dialog` carries its screen text: put it into the
+escalation verbatim. You never answer a dialog in a worker's pane: no
+`herdr agent send-keys`, no `herdr agent prompt`, no keystroke of any kind.
+Do not wait again and do not build another worker for that order -- the
+dialog is the human's to answer.
 
 `Cannot merge with --no-commit` means unfinished work is lying in the
 worktree. That is a finding for the human, not a mess to tidy away: you
@@ -262,7 +283,7 @@ Then into your terminal — and after that nothing more:
 
     ESCALATION <task_id>: <reason>
       Worker: <name> (<pane>, <agent_id>)
-      Last state: <no_reply | agent_error | reject×2>
+      Last state: <no_reply | agent_error | agent_blocked | reject×2>
       I am waiting for a decision.
 
 The `esc` token is yours alone. You never touch the `ctx` token — that one

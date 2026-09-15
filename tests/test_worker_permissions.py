@@ -53,6 +53,13 @@ CLAUDE_WRITERS = (
 #: What stays a human gesture, whatever a role may otherwise run (plan spec 5.3).
 PUSH_AND_MERGE = ("Bash(git push:*)", "Bash(wt merge:*)", "Bash(wt step push:*)")
 
+#: What the orchestrator may run of herdr: find the worktree, close its workspace, set `esc=`.
+ORCHESTRATOR_HERDR = (
+    "herdr worktree list *",
+    "herdr workspace close *",
+    "herdr workspace report-metadata *",
+)
+
 
 def claude_rules(role: str, key: str, root: Path = ROOT) -> list[str]:
     """`permissions.<key>` of `.lean-ctx/lean-herdr/claude/<role>.json`; absent is empty."""
@@ -406,7 +413,7 @@ def test_no_claude_role_takes_the_skill_tool_away(role):
 
 def test_the_claude_orchestrator_writes_nothing(gate_root):
     """`claude/orchestrator.json`: the editors and lean-ctx's three write tools,
-    denied -- unlike reviewer.json, nothing here narrows Bash: the orchestrator's
+    denied -- unlike reviewer.json, Bash stays open but for `herdr agent` and `herdr pane`: the orchestrator's
     whole job is running `lean-herdr dispatch`/`report` through it.
     """
     denied = claude_rules("orchestrator", "deny", gate_root)
@@ -477,3 +484,17 @@ def test_claude_may_run_the_four_plan_commands_and_the_diff(gate_root):
         "Bash(lean-herdr plan show:*)",
     ):
         assert rule in allow, f".claude/settings.json does not allow {rule}"
+
+
+def test_the_opencode_orchestrator_runs_exactly_three_herdr_subcommands(gate_root):
+    """E3: no `herdr agent`, no `herdr pane` -- a keystroke into a worker's pane is not its to send."""
+    bash = opencode(gate_root)["agent"]["orchestrator"]["permission"]["bash"]
+    assert sorted(key for key in bash if key.startswith("herdr")) == sorted(ORCHESTRATOR_HERDR)
+    for pattern in ORCHESTRATOR_HERDR:
+        assert bash[pattern] == "allow", pattern
+
+
+def test_the_claude_orchestrator_is_denied_herdr_agent_and_pane(gate_root):
+    denied = claude_rules("orchestrator", "deny", gate_root)
+    for rule in ("Bash(herdr agent:*)", "Bash(herdr pane:*)"):
+        assert rule in denied, f"claude/orchestrator.json does not deny {rule}"

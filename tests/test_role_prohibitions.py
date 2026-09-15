@@ -95,6 +95,19 @@ PROHIBITIONS = [
         "Teardown for a plan -- no squash.",
         "D11: the task commits stay; each one passed its own review",
     ),
+    (
+        "orchestrator.md",
+        (
+            "You never answer a dialog in a worker's pane: no `herdr agent send-keys`, "
+            "no `herdr agent prompt`, no keystroke of any kind."
+        ),
+        "E3: a dialog is reported, never answered -- by nobody in lean-herdr",
+    ),
+    (
+        "orchestrator.md",
+        "never remove with `--force`",
+        "E4: a worktree that will not go is a finding, not an obstacle",
+    ),
     # --- Builder ------------------------------------------------------------
     (
         "builder.md",
@@ -312,6 +325,21 @@ MANDATORY_SENTENCES = [
     ),
     (
         "orchestrator.md",
+        "wt -C <path> merge main --yes --no-commit --no-remove",
+        "E4: the checkout stays through the merge -- no pane loses its cwd",
+    ),
+    (
+        "orchestrator.md",
+        "wt -C <repo_root> remove <branch> --yes",
+        "E4: the worktree goes only once its workspace is closed",
+    ),
+    (
+        "orchestrator.md",
+        "`agent_blocked` means a dialog waits in a worker's pane",
+        "E2: a dialog in a worker's pane is an escalation, with its text",
+    ),
+    (
+        "orchestrator.md",
         "lean-herdr plan next <slug>",
         "D8: the log is the state, and plan next names the next step",
     ),
@@ -381,3 +409,30 @@ def test_the_orchestrator_dispatches_by_work_and_names_no_role():
     assert "--role-file" not in text
     named = re.findall(r"\b(?:builder|reviewer)\b", text)
     assert not named, f"orchestrator.md still names roles: {named}"
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "remove"),
+    [
+        pytest.param(
+            "## Teardown and merge",
+            "## Plan mode",
+            "wt -C <repo_root> remove <branch> --yes",
+            id="single task",
+        ),
+        pytest.param(
+            "**Teardown for a plan -- no squash.**",
+            "## Termination",
+            "wt -C <repo_root> remove plan/<slug> --yes",
+            id="plan",
+        ),
+    ],
+)
+def test_the_teardown_merges_with_the_workspace_open_and_removes_after_closing_it(
+    start, end, remove
+):
+    """E4: merge with `--no-remove`, close the workspace, only then `wt remove` -- in both."""
+    section = _normalized("orchestrator.md").split(start, 1)[1].split(end, 1)[0]
+    merge = section.index("wt -C <path> merge main --yes --no-commit --no-remove")
+    close = section.index("herdr workspace close <workspace_id>")
+    assert merge < close < section.index(remove), section

@@ -39,7 +39,11 @@
           "lean-herdr plan next *": "allow",
           "lean-herdr plan show *": "allow",
           "lean-herdr plan check *": "allow",
-          "herdr *": "allow",
+          // Of herdr only what the teardown and the escalation need: no `herdr agent`,
+          // no `herdr pane` -- a keystroke into a worker's pane would answer its dialog.
+          "herdr worktree list *": "allow",
+          "herdr workspace close *": "allow",
+          "herdr workspace report-metadata *": "allow",
           "wt *": "allow",
           "git status*": "allow",
           "git log*": "allow"

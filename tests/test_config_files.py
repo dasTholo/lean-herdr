@@ -42,11 +42,17 @@ def test_both_opencode_agents_have_role_text_a_cap_and_a_guard():
         assert perm["bash"]["*"] == "deny", "Guard applies only here (B4)"
 
 
-def test_orchestrator_may_dispatch_wt_and_herdr():
+def test_orchestrator_may_dispatch_wt_and_three_herdr_subcommands():
     bash = opencode()["agent"]["orchestrator"]["permission"]["bash"]
     assert bash["lean-herdr dispatch *"] == "allow"
     assert bash["wt *"] == "allow"
-    assert bash["herdr *"] == "allow"
+    assert "herdr *" not in bash, "E3: no herdr agent, no herdr pane"
+    for pattern in (
+        "herdr worktree list *",
+        "herdr workspace close *",
+        "herdr workspace report-metadata *",
+    ):
+        assert bash[pattern] == "allow", pattern
 
 
 def test_reviewer_may_write_nothing_and_no_wt():
